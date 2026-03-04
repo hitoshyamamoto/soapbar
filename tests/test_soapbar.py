@@ -7,6 +7,8 @@ from lxml import etree
 import soapbar
 from soapbar.core.binding import (
     BindingStyle,
+    DocumentEncodedSerializer,
+    DocumentLiteralSerializer,
     DocumentLiteralWrappedSerializer,
     OperationParameter,
     OperationSignature,
@@ -303,6 +305,56 @@ class TestBinding:
         assert BindingStyle.RPC_ENCODED.is_encoded is True
         assert BindingStyle.DOCUMENT_LITERAL_WRAPPED.is_wrapped is True
         assert BindingStyle.DOCUMENT_LITERAL.is_wrapped is False
+        assert BindingStyle.DOCUMENT_ENCODED.soap_style == "document"
+        assert BindingStyle.DOCUMENT_ENCODED.soap_use == "encoded"
+        assert BindingStyle.DOCUMENT_ENCODED.is_rpc is False
+        assert BindingStyle.DOCUMENT_ENCODED.is_encoded is True
+        assert BindingStyle.DOCUMENT_ENCODED.is_wrapped is False
+
+    def test_document_encoded_xsi_type(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentEncodedSerializer()
+        container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 3, "b": 4}, container)
+        # Params must be direct Body children (no wrapper element)
+        assert len(container) == 2
+        a_elem = container.find("a")
+        b_elem = container.find("b")
+        assert a_elem is not None
+        assert b_elem is not None
+        assert a_elem.get(f"{{{NS.XSI}}}type") == "xsd:int"
+        assert b_elem.get(f"{{{NS.XSI}}}type") == "xsd:int"
+        assert a_elem.text == "3"
+        assert b_elem.text == "4"
+
+    def test_document_encoded_roundtrip(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentEncodedSerializer()
+        container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 7, "b": 13}, container)
+        values = serializer.deserialize_request(sig, container)
+        assert values["a"] == 7
+        assert values["b"] == 13
+
+    def test_document_literal_multi_param_no_parts_wrapper(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentLiteralSerializer()
+        container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 5, "b": 6}, container)
+        # Both params must be direct Body children — no <_parts> wrapper
+        assert len(container) == 2
+        a_elem = container.find("a")
+        b_elem = container.find("b")
+        assert a_elem is not None
+        assert b_elem is not None
+        # Roundtrip
+        values = serializer.deserialize_request(sig, container)
+        assert values["a"] == 5
+        assert values["b"] == 6
+
+    def test_get_serializer_document_encoded(self) -> None:
+        s = get_serializer(BindingStyle.DOCUMENT_ENCODED)
+        assert isinstance(s, DocumentEncodedSerializer)
 
 
 # =============================================================================
