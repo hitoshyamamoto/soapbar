@@ -42,7 +42,7 @@ class HttpTransport:
         body: bytes,
         headers: dict[str, str],
     ) -> tuple[int, str, bytes]:
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")  # noqa: S310
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
                 ct = resp.headers.get("Content-Type", "text/xml")

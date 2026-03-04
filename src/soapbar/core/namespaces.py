@@ -1,6 +1,8 @@
 """SOAP/XML namespace URI constants and helpers."""
 from __future__ import annotations
 
+from typing import ClassVar
+
 
 class _Namespaces:
     # Namespace URI constants
@@ -17,7 +19,7 @@ class _Namespaces:
     WSU = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
     WSA = "http://www.w3.org/2005/08/addressing"
 
-    DEFAULT_PREFIXES: dict[str, str] = {
+    DEFAULT_PREFIXES: ClassVar[dict[str, str]] = {
         SOAP_ENV: "soapenv",
         SOAP_ENC: "soapenc",
         SOAP12_ENV: "soap12",
@@ -32,7 +34,7 @@ class _Namespaces:
         WSA: "wsa",
     }
 
-    REVERSE_PREFIXES: dict[str, str] = {v: k for k, v in DEFAULT_PREFIXES.items()}
+    REVERSE_PREFIXES: ClassVar[dict[str, str]] = {v: k for k, v in DEFAULT_PREFIXES.items()}
 
     def prefix_for(self, ns: str) -> str | None:
         return self.DEFAULT_PREFIXES.get(ns)

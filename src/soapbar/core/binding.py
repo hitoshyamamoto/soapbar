@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from lxml.etree import _Element  # noqa: PLC2701
+from lxml.etree import _Element
 
 from soapbar.core.namespaces import NS
 from soapbar.core.types import XsdType

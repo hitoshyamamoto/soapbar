@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from lxml import etree
-from lxml.etree import _Element  # noqa: PLC2701
+from lxml.etree import _Element
 
 # ---------------------------------------------------------------------------
 # Hardened parser factory
@@ -162,23 +162,23 @@ def clone(elem: _Element) -> _Element:
 
 __all__ = [
     "_Element",
-    "make_element",
-    "sub_element",
-    "parse_xml",
-    "parse_xml_file",
-    "parse_xml_document",
-    "to_string",
-    "to_bytes",
     "build_nsmap",
+    "clone",
     "collect_namespaces",
-    "local_name",
-    "namespace_uri",
+    "compile_schema",
     "find",
     "findall",
     "findtext",
     "get_attr",
+    "local_name",
+    "make_element",
+    "namespace_uri",
+    "parse_xml",
+    "parse_xml_document",
+    "parse_xml_file",
     "set_attr",
-    "compile_schema",
+    "sub_element",
+    "to_bytes",
+    "to_string",
     "validate_schema",
-    "clone",
 ]

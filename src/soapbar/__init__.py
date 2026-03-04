@@ -36,7 +36,7 @@ from soapbar.server.asgi import AsgiSoapApp
 from soapbar.server.service import SoapService, soap_operation
 from soapbar.server.wsgi import WsgiSoapApp
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     "__version__",
     # core
     "NS",

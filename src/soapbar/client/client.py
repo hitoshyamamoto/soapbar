@@ -115,7 +115,7 @@ class SoapClient:
         headers = http_headers(self._soap_version, sig.soap_action)
         headers["Content-Type"] = headers.get("Content-Type", self._soap_version.content_type)
 
-        status, ct, resp_body = self._transport.send(self._address, req_bytes, headers)
+        status, _ct, resp_body = self._transport.send(self._address, req_bytes, headers)
         return self._parse_response(sig, resp_body, status)
 
     async def call_async(self, operation: str, **kwargs: Any) -> Any:
@@ -133,7 +133,7 @@ class SoapClient:
         req_bytes = envelope.to_bytes()
         headers = http_headers(self._soap_version, sig.soap_action)
 
-        status, ct, resp_body = await self._transport.send_async(self._address, req_bytes, headers)
+        status, _ct, resp_body = await self._transport.send_async(self._address, req_bytes, headers)
         return self._parse_response(sig, resp_body, status)
 
     def _get_sig(self, operation: str) -> OperationSignature:

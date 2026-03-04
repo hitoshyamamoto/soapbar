@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lxml.etree import _Element  # noqa: PLC2701
+from lxml.etree import _Element
 
 from soapbar.core.namespaces import NS
 from soapbar.core.wsdl import (
