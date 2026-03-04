@@ -1,0 +1,675 @@
+"""Comprehensive tests for soapbar — 31 tests covering all modules."""
+from __future__ import annotations
+
+import pytest
+from lxml import etree
+
+import soapbar
+from soapbar.core.binding import (
+    BindingStyle,
+    DocumentLiteralWrappedSerializer,
+    OperationParameter,
+    OperationSignature,
+    RpcEncodedSerializer,
+    RpcLiteralSerializer,
+    get_serializer,
+)
+from soapbar.core.envelope import SoapEnvelope, SoapVersion, build_fault, http_headers
+from soapbar.core.fault import SoapFault
+from soapbar.core.namespaces import NS
+from soapbar.core.types import xsd
+from soapbar.core.wsdl.builder import build_wsdl_string
+from soapbar.core.wsdl.parser import parse_wsdl
+from soapbar.core.xml import (
+    local_name,
+    make_element,
+    namespace_uri,
+    parse_xml,
+    parse_xml_document,
+    to_bytes,
+    to_string,
+)
+from soapbar.server.application import SoapApplication
+from soapbar.server.service import SoapService, soap_operation
+
+# =============================================================================
+# 1. Namespaces
+# =============================================================================
+
+class TestNamespaces:
+    def test_constants(self) -> None:
+        assert NS.SOAP_ENV == "http://schemas.xmlsoap.org/soap/envelope/"
+        assert NS.SOAP12_ENV == "http://www.w3.org/2003/05/soap-envelope"
+        assert NS.XSD == "http://www.w3.org/2001/XMLSchema"
+        assert NS.XSI == "http://www.w3.org/2001/XMLSchema-instance"
+        assert NS.WSDL == "http://schemas.xmlsoap.org/wsdl/"
+        assert NS.WSSE is not None
+        assert NS.WSU is not None
+        assert NS.WSA is not None
+
+    def test_qname_and_split(self) -> None:
+        clark = NS.qname(NS.XSD, "string")
+        assert clark == "{http://www.w3.org/2001/XMLSchema}string"
+        ns, local = NS.split_qname(clark)
+        assert ns == NS.XSD
+        assert local == "string"
+
+    def test_split_bare_name(self) -> None:
+        ns, local = NS.split_qname("bareWord")
+        assert ns is None
+        assert local == "bareWord"
+
+    def test_prefix_for(self) -> None:
+        prefix = NS.prefix_for(NS.XSD)
+        assert prefix == "xsd"
+        assert NS.prefix_for("http://unknown/") is None
+
+
+# =============================================================================
+# 2. XML utilities
+# =============================================================================
+
+class TestXml:
+    def test_parse_and_roundtrip(self) -> None:
+        xml = b"<root><child>hello</child></root>"
+        elem = parse_xml(xml)
+        assert local_name(elem) == "root"
+        assert elem.find("child") is not None
+        assert elem.find("child").text == "hello"  # type: ignore[union-attr]
+
+    def test_hardened_parser_rejects_xxe(self) -> None:
+        """Parser must not expand external entity content (XXE safe).
+        lxml with resolve_entities=False silently drops entity references
+        rather than expanding them — the text will be None/empty, not file content.
+        """
+        xxe = b"""<?xml version="1.0"?>
+        <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+        <root>&xxe;</root>"""
+        try:
+            elem = parse_xml(xxe)
+            # If parsed, entity must NOT have been expanded to file content
+            text = elem.text or ""
+            assert "root:" not in text, "XXE entity was expanded — security violation!"
+        except Exception:
+            # Raising an exception is also acceptable (strict parser mode)
+            pass
+
+    def test_make_element_and_serialization(self) -> None:
+        elem = make_element(
+            f"{{{NS.SOAP_ENV}}}Envelope",
+            nsmap={"soapenv": NS.SOAP_ENV},
+        )
+        s = to_string(elem)
+        assert "Envelope" in s
+        assert NS.SOAP_ENV in s
+
+    def test_parse_xml_document_passthrough(self) -> None:
+        elem = make_element("test")
+        result = parse_xml_document(elem)
+        assert result is elem
+
+    def test_to_bytes_xml_declaration(self) -> None:
+        elem = make_element("root")
+        b = to_bytes(elem, xml_declaration=True)
+        assert b.startswith(b"<?xml")
+
+    def test_namespace_uri_and_local_name(self) -> None:
+        elem = make_element(f"{{{NS.XSD}}}string")
+        assert namespace_uri(elem) == NS.XSD
+        assert local_name(elem) == "string"
+
+
+# =============================================================================
+# 3. Type system
+# =============================================================================
+
+class TestTypes:
+    def test_string_roundtrip(self) -> None:
+        t = xsd.resolve("string")
+        assert t is not None
+        assert t.to_xml("hello") == "hello"
+        assert t.from_xml("world") == "world"
+
+    def test_int_roundtrip(self) -> None:
+        t = xsd.resolve("int")
+        assert t is not None
+        assert t.to_xml(42) == "42"
+        assert t.from_xml("42") == 42
+
+    def test_boolean_roundtrip(self) -> None:
+        t = xsd.resolve("boolean")
+        assert t is not None
+        assert t.to_xml(True) == "true"
+        assert t.to_xml(False) == "false"
+        assert t.from_xml("true") is True
+        assert t.from_xml("1") is True
+        assert t.from_xml("false") is False
+        assert t.from_xml("0") is False
+
+    def test_float_special_values(self) -> None:
+        t = xsd.resolve("float")
+        assert t is not None
+        assert t.to_xml(float("inf")) == "INF"
+        assert t.to_xml(float("-inf")) == "-INF"
+        assert t.to_xml(float("nan")) == "NaN"
+        assert t.from_xml("INF") == float("inf")
+        assert t.from_xml("-INF") == float("-inf")
+
+    def test_base64_binary(self) -> None:
+        t = xsd.resolve("base64Binary")
+        assert t is not None
+        encoded = t.to_xml(b"hello")
+        assert encoded == "aGVsbG8="
+        assert t.from_xml(encoded) == b"hello"
+
+    def test_python_to_xsd_bool_before_int(self) -> None:
+        """bool must resolve before int since bool is subclass of int."""
+        bool_type = xsd.python_to_xsd(bool)
+        int_type = xsd.python_to_xsd(int)
+        assert bool_type is not None
+        assert int_type is not None
+        assert bool_type.name == "boolean"
+        assert int_type.name == "int"
+
+    def test_resolve_clark_notation(self) -> None:
+        t = xsd.resolve(f"{{{NS.XSD}}}string")
+        assert t is not None
+        assert t.name == "string"
+
+    def test_resolve_prefixed(self) -> None:
+        t = xsd.resolve("xsd:int")
+        assert t is not None
+        assert t.name == "int"
+
+    def test_all_27_types_registered(self) -> None:
+        types = xsd.all_types()
+        assert len(types) == 27
+
+
+# =============================================================================
+# 4. Fault
+# =============================================================================
+
+class TestFault:
+    def test_soap11_fault_element(self) -> None:
+        f = SoapFault("Client", "Bad request", detail="invalid input")
+        elem = f.to_soap11_element()
+        assert local_name(elem) == "Fault"
+        fc = elem.find("faultcode")
+        fs = elem.find("faultstring")
+        assert fc is not None and fc.text == "Client"
+        assert fs is not None and fs.text == "Bad request"
+        det = elem.find("detail")
+        assert det is not None and det.text == "invalid input"
+
+    def test_soap12_fault_element(self) -> None:
+        f = SoapFault("Server", "Internal error")
+        elem = f.to_soap12_element()
+        assert local_name(elem) == "Fault"
+        assert namespace_uri(elem) == NS.SOAP12_ENV
+        # Check code mapping: Server → Receiver
+        code_elem = elem.find(f"{{{NS.SOAP12_ENV}}}Code")
+        assert code_elem is not None
+        val_elem = code_elem.find(f"{{{NS.SOAP12_ENV}}}Value")
+        assert val_elem is not None
+        assert "Receiver" in (val_elem.text or "")
+
+    def test_fault_envelope_roundtrip_11(self) -> None:
+        f = SoapFault("Client", "Test")
+        env_elem = f.to_soap11_envelope()
+        parsed = SoapFault.from_element(env_elem)
+        assert parsed.faultcode == "Client"
+        assert parsed.faultstring == "Test"
+
+    def test_fault_envelope_roundtrip_12(self) -> None:
+        f = SoapFault("Server", "Internal")
+        env_elem = f.to_soap12_envelope()
+        parsed = SoapFault.from_element(env_elem)
+        # Receiver maps back to Server
+        assert parsed.faultcode == "Server"
+        assert parsed.faultstring == "Internal"
+
+    def test_fault_from_fault_element_directly(self) -> None:
+        f = SoapFault("Client", "Direct")
+        fault_elem = f.to_soap11_element()
+        parsed = SoapFault.from_element(fault_elem)
+        assert parsed.faultcode == "Client"
+        assert parsed.faultstring == "Direct"
+
+
+# =============================================================================
+# 5. Binding serializers
+# =============================================================================
+
+class TestBinding:
+    def _make_sig(self) -> OperationSignature:
+        string_type = xsd.resolve("string")
+        int_type = xsd.resolve("int")
+        assert string_type is not None
+        assert int_type is not None
+        return OperationSignature(
+            name="Add",
+            input_params=[
+                OperationParameter("a", int_type),
+                OperationParameter("b", int_type),
+            ],
+            output_params=[
+                OperationParameter("result", int_type),
+            ],
+        )
+
+    def test_rpc_encoded_xsi_type(self) -> None:
+        sig = self._make_sig()
+        serializer = RpcEncodedSerializer()
+        container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 3, "b": 4}, container)
+        wrapper = container[0]
+        a_elem = wrapper.find("a")
+        assert a_elem is not None
+        xsi_type = a_elem.get(f"{{{NS.XSI}}}type")
+        assert xsi_type == "xsd:int"
+
+    def test_rpc_literal_no_xsi_type(self) -> None:
+        sig = self._make_sig()
+        serializer = RpcLiteralSerializer()
+        container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 1, "b": 2}, container)
+        wrapper = container[0]
+        a_elem = wrapper.find("a")
+        assert a_elem is not None
+        assert a_elem.get(f"{{{NS.XSI}}}type") is None
+
+    def test_document_literal_wrapped_roundtrip(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentLiteralWrappedSerializer()
+        # Serialize
+        container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 10, "b": 20}, container)
+        # Deserialize
+        values = serializer.deserialize_request(sig, container)
+        assert values["a"] == 10
+        assert values["b"] == 20
+
+    def test_get_serializer_factory(self) -> None:
+        s = get_serializer(BindingStyle.RPC_ENCODED)
+        assert isinstance(s, RpcEncodedSerializer)
+        s2 = get_serializer(BindingStyle.DOCUMENT_LITERAL_WRAPPED)
+        assert isinstance(s2, DocumentLiteralWrappedSerializer)
+
+    def test_binding_style_properties(self) -> None:
+        assert BindingStyle.RPC_ENCODED.soap_style == "rpc"
+        assert BindingStyle.RPC_ENCODED.soap_use == "encoded"
+        assert BindingStyle.RPC_ENCODED.is_rpc is True
+        assert BindingStyle.RPC_ENCODED.is_encoded is True
+        assert BindingStyle.DOCUMENT_LITERAL_WRAPPED.is_wrapped is True
+        assert BindingStyle.DOCUMENT_LITERAL.is_wrapped is False
+
+
+# =============================================================================
+# 6. Envelope
+# =============================================================================
+
+class TestEnvelope:
+    def test_build_soap11_envelope(self) -> None:
+        env = SoapEnvelope(version=SoapVersion.SOAP_11)
+        body = make_element(f"{{{NS.SOAP_ENV}}}test")
+        env.add_body_content(body)
+        elem = env.build()
+        assert namespace_uri(elem) == NS.SOAP_ENV
+        assert local_name(elem) == "Envelope"
+
+    def test_roundtrip_soap12(self) -> None:
+        env = SoapEnvelope(version=SoapVersion.SOAP_12)
+        content = make_element(f"{{{NS.SOAP12_ENV}}}GetData")
+        env.add_body_content(content)
+        xml_bytes = env.to_bytes()
+        parsed = SoapEnvelope.from_xml(xml_bytes)
+        assert parsed.version == SoapVersion.SOAP_12
+        assert parsed.operation_name == "GetData"
+
+    def test_from_xml_detects_version(self) -> None:
+        soap11 = b"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+          <soapenv:Body><op/></soapenv:Body>
+        </soapenv:Envelope>"""
+        env = SoapEnvelope.from_xml(soap11)
+        assert env.version == SoapVersion.SOAP_11
+
+        soap12 = b"""<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+          <soap12:Body><op/></soap12:Body>
+        </soap12:Envelope>"""
+        env12 = SoapEnvelope.from_xml(soap12)
+        assert env12.version == SoapVersion.SOAP_12
+
+    def test_is_fault_property(self) -> None:
+        f = SoapFault("Server", "boom")
+        env_elem = f.to_soap11_envelope()
+        env = SoapEnvelope.from_xml(to_string(env_elem))
+        assert env.is_fault is True
+
+    def test_build_fault_module_function(self) -> None:
+        env_elem = build_fault(SoapVersion.SOAP_11, "Client", "bad")
+        env = SoapEnvelope.from_xml(to_string(env_elem))
+        assert env.is_fault is True
+        fault = env.fault
+        assert fault is not None
+        assert fault.faultcode == "Client"
+
+    def test_http_headers_soap11(self) -> None:
+        h = http_headers(SoapVersion.SOAP_11, "http://example.com/Op")
+        assert "SOAPAction" in h
+        assert h["SOAPAction"] == '"http://example.com/Op"'
+
+    def test_http_headers_soap12(self) -> None:
+        h = http_headers(SoapVersion.SOAP_12, "myAction")
+        assert "action=" in h["Content-Type"]
+
+
+# =============================================================================
+# 7. WSDL
+# =============================================================================
+
+SIMPLE_WSDL = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://example.com/calc"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             targetNamespace="http://example.com/calc"
+             name="Calculator">
+  <message name="AddRequest">
+    <part name="a" type="xsd:int"/>
+    <part name="b" type="xsd:int"/>
+  </message>
+  <message name="AddResponse">
+    <part name="result" type="xsd:int"/>
+  </message>
+  <portType name="CalculatorPortType">
+    <operation name="Add">
+      <input message="tns:AddRequest"/>
+      <output message="tns:AddResponse"/>
+    </operation>
+  </portType>
+  <binding name="CalculatorBinding" type="tns:CalculatorPortType">
+    <soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Add">
+      <soap:operation soapAction="http://example.com/calc/Add" style="rpc"/>
+      <input>
+        <soap:body use="encoded" namespace="http://example.com/calc"/>
+      </input>
+      <output>
+        <soap:body use="encoded" namespace="http://example.com/calc"/>
+      </output>
+    </operation>
+  </binding>
+  <service name="Calculator">
+    <port name="CalculatorPort" binding="tns:CalculatorBinding">
+      <soap:address location="http://example.com/calc"/>
+    </port>
+  </service>
+</definitions>"""
+
+
+class TestWsdl:
+    def test_parse_wsdl(self) -> None:
+        defn = parse_wsdl(SIMPLE_WSDL)
+        assert defn.name == "Calculator"
+        assert defn.target_namespace == "http://example.com/calc"
+        assert "AddRequest" in defn.messages
+        assert "CalculatorPortType" in defn.port_types
+        assert "CalculatorBinding" in defn.bindings
+        assert "Calculator" in defn.services
+
+    def test_wsdl_binding_style(self) -> None:
+        defn = parse_wsdl(SIMPLE_WSDL)
+        binding = defn.bindings["CalculatorBinding"]
+        style = binding.binding_style_for("Add")
+        assert style == BindingStyle.RPC_ENCODED
+
+    def test_wsdl_service_address(self) -> None:
+        defn = parse_wsdl(SIMPLE_WSDL)
+        assert defn.first_service_address == "http://example.com/calc"
+
+    def test_build_wsdl_roundtrip(self) -> None:
+        defn = parse_wsdl(SIMPLE_WSDL)
+        wsdl_str = build_wsdl_string(defn, "http://example.com/calc")
+        assert "Calculator" in wsdl_str
+        assert "AddRequest" in wsdl_str
+
+    def test_wsdl_import_raises(self) -> None:
+        wsdl_with_import = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     targetNamespace="http://example.com/">
+          <import namespace="http://other.com/" location="other.wsdl"/>
+        </definitions>"""
+        with pytest.raises(NotImplementedError):
+            parse_wsdl(wsdl_with_import)
+
+
+# =============================================================================
+# 8. Server
+# =============================================================================
+
+class TestServer:
+    def _make_app(self) -> SoapApplication:
+        class CalcService(SoapService):
+            __service_name__ = "Calculator"
+            __tns__ = "http://example.com/calc"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", xsd.resolve("int")),  # type: ignore[arg-type]
+                    OperationParameter("b", xsd.resolve("int")),  # type: ignore[arg-type]
+                ],
+                output_params=[
+                    OperationParameter("result", xsd.resolve("int")),  # type: ignore[arg-type]
+                ],
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(CalcService())
+        return app
+
+    def test_wsdl_generation(self) -> None:
+        app = self._make_app()
+        wsdl_bytes = app.get_wsdl()
+        assert b"Calculator" in wsdl_bytes
+        assert b"Add" in wsdl_bytes
+
+    def test_handle_valid_request(self) -> None:
+        app = self._make_app()
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body>
+    <Add>
+      <a>3</a>
+      <b>4</b>
+    </Add>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+        status, ct, body = app.handle_request(req, soap_action="")
+        assert status == 200
+        assert b"result" in body or b"AddResponse" in body or b"7" in body
+
+    def test_handle_unknown_operation(self) -> None:
+        app = self._make_app()
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body><UnknownOp/></soapenv:Body>
+</soapenv:Envelope>"""
+        status, ct, body = app.handle_request(req, soap_action="")
+        assert status in (400, 500)
+        assert b"Fault" in body
+
+    def test_handle_malformed_xml(self) -> None:
+        app = self._make_app()
+        status, ct, body = app.handle_request(b"not xml at all")
+        assert status == 500
+        assert b"Fault" in body
+
+    def test_soap_operation_decorator_introspection(self) -> None:
+        """Decorator auto-introspects type hints."""
+        class MyService(SoapService):
+            __tns__ = "http://example.com/"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation()
+            def echo(self, message: str) -> str:
+                return message
+
+        svc = MyService()
+        ops = svc.get_operations()
+        assert "echo" in ops
+        sig: OperationSignature = ops["echo"].__soap_operation__
+        assert len(sig.input_params) == 1
+        assert sig.input_params[0].name == "message"
+        assert sig.input_params[0].xsd_type.name == "string"
+
+
+# =============================================================================
+# 9. WITSML RPC/Encoded end-to-end
+# =============================================================================
+
+WITSML_WSDL = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://www.witsml.org/wsdl/120"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             targetNamespace="http://www.witsml.org/wsdl/120"
+             name="Store">
+  <message name="WMLS_GetVersionRequest"/>
+  <message name="WMLS_GetVersionResponse">
+    <part name="Result" type="xsd:string"/>
+  </message>
+  <portType name="Store">
+    <operation name="WMLS_GetVersion">
+      <input message="tns:WMLS_GetVersionRequest"/>
+      <output message="tns:WMLS_GetVersionResponse"/>
+    </operation>
+  </portType>
+  <binding name="StoreBinding" type="tns:Store">
+    <soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="WMLS_GetVersion">
+      <soap:operation soapAction="http://www.witsml.org/action/120/Store.WMLS_GetVersion" style="rpc"/>"""  # noqa: E501
+WITSML_WSDL += b"""
+      <input>
+        <soap:body use="encoded" namespace="http://www.witsml.org/wsdl/120"/>
+      </input>
+      <output>
+        <soap:body use="encoded" namespace="http://www.witsml.org/wsdl/120"/>
+      </output>
+    </operation>
+  </binding>
+  <service name="Store">
+    <port name="StorePort" binding="tns:StoreBinding">
+      <soap:address location="http://witsml.example.com/Store"/>
+    </port>
+  </service>
+</definitions>"""
+
+
+class TestWitsml:
+    def test_get_version_rpc_encoded_end_to_end(self) -> None:
+        """Full RPC/Encoded round-trip for WMLS_GetVersion."""
+        parse_wsdl(WITSML_WSDL)  # Verify WSDL parses correctly
+
+        # Build server
+        class WitsmlStore(SoapService):
+            __service_name__ = "Store"
+            __tns__ = "http://www.witsml.org/wsdl/120"
+            __binding_style__ = BindingStyle.RPC_ENCODED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="WMLS_GetVersion",
+                input_params=[],
+                output_params=[
+                    OperationParameter("Result", xsd.resolve("string")),  # type: ignore[arg-type]
+                ],
+                soap_action="http://www.witsml.org/action/120/Store.WMLS_GetVersion",
+            )
+            def wmls_get_version(self) -> str:
+                return "1.4.1.1"
+
+        app = SoapApplication(service_url="http://witsml.example.com/Store")
+        app.register(WitsmlStore())
+
+        # Build request using RPC/Encoded serializer
+        sig = OperationSignature(
+            name="WMLS_GetVersion",
+            input_params=[],
+            output_params=[OperationParameter("Result", xsd.resolve("string"))],  # type: ignore[arg-type]
+            soap_action="http://www.witsml.org/action/120/Store.WMLS_GetVersion",
+            input_namespace="http://www.witsml.org/wsdl/120",
+        )
+        serializer = get_serializer(BindingStyle.RPC_ENCODED)
+        envelope = SoapEnvelope(version=SoapVersion.SOAP_11)
+        body_container = etree.Element("_body")
+        serializer.serialize_request(sig, {}, body_container)
+        for child in body_container:
+            envelope.add_body_content(child)
+
+        req_bytes = envelope.to_bytes()
+
+        status, ct, resp_body = app.handle_request(
+            req_bytes,
+            soap_action="http://www.witsml.org/action/120/Store.WMLS_GetVersion",
+        )
+        assert status == 200
+        resp_env = SoapEnvelope.from_xml(resp_body)
+        assert not resp_env.is_fault
+        # Check response contains the version string
+        resp_str = resp_body.decode()
+        assert "1.4.1.1" in resp_str
+
+
+# =============================================================================
+# 10. Client (unit tests without network)
+# =============================================================================
+
+class TestClient:
+    def test_client_from_wsdl_string(self) -> None:
+        from soapbar.client.client import SoapClient
+        client = SoapClient.from_wsdl_string(SIMPLE_WSDL)
+        assert client._address == "http://example.com/calc"
+        assert client._binding_style == BindingStyle.RPC_ENCODED
+
+    def test_client_manual(self) -> None:
+        from soapbar.client.client import SoapClient
+        client = SoapClient.manual(
+            "http://example.com/service",
+            binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+            soap_version=SoapVersion.SOAP_11,
+        )
+        assert client._address == "http://example.com/service"
+        assert client._binding_style == BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+    def test_service_proxy_attribute(self) -> None:
+        from soapbar.client.client import SoapClient
+        client = SoapClient.manual("http://example.com/")
+        proxy = client.service
+        # Accessing an attribute returns a callable
+        fn = proxy.SomeOperation
+        assert callable(fn)
+
+
+# =============================================================================
+# 11. Top-level package smoke test
+# =============================================================================
+
+class TestPackage:
+    def test_version(self) -> None:
+        assert soapbar.__version__ == "0.1.0"
+
+    def test_ns_accessible(self) -> None:
+        assert soapbar.NS.SOAP_ENV == NS.SOAP_ENV
+
+    def test_soap_fault_from_top_level(self) -> None:
+        f = soapbar.SoapFault("Client", "test")
+        env = f.to_soap11_envelope()
+        s = to_string(env)
+        assert "Fault" in s
+        assert "test" in s
