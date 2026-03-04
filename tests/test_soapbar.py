@@ -23,13 +23,25 @@ from soapbar.core.types import xsd
 from soapbar.core.wsdl.builder import build_wsdl_string
 from soapbar.core.wsdl.parser import parse_wsdl
 from soapbar.core.xml import (
+    build_nsmap,
+    clone,
+    collect_namespaces,
+    compile_schema,
+    find,
+    findall,
+    findtext,
+    get_attr,
     local_name,
     make_element,
     namespace_uri,
     parse_xml,
     parse_xml_document,
+    parse_xml_file,
+    set_attr,
+    sub_element,
     to_bytes,
     to_string,
+    validate_schema,
 )
 from soapbar.server.application import SoapApplication
 from soapbar.server.service import SoapService, soap_operation
@@ -725,3 +737,452 @@ class TestPackage:
         s = to_string(env)
         assert "Fault" in s
         assert "test" in s
+
+
+# =============================================================================
+# 12. XML utils — edge cases
+# =============================================================================
+
+class TestXmlUtils:
+    def test_make_element_with_text(self) -> None:
+        elem = make_element("Greeting", text="hello")
+        assert elem.text == "hello"
+
+    def test_parse_xml_file(self, tmp_path: pytest.TempPathFactory) -> None:
+        f = tmp_path / "test.xml"
+        f.write_bytes(b"<root><child/></root>")
+        doc = parse_xml_file(f)
+        assert doc.tag == "root"
+
+    def test_parse_xml_document_path(self, tmp_path: pytest.TempPathFactory) -> None:
+        f = tmp_path / "doc.xml"
+        f.write_bytes(b"<data/>")
+        doc = parse_xml_document(f)
+        assert doc.tag == "data"
+
+    def test_build_nsmap(self) -> None:
+        ns = build_nsmap(("pre", "http://example.com"))
+        assert ns == {"pre": "http://example.com"}
+
+    def test_collect_namespaces(self) -> None:
+        elem = make_element("{http://ex.com}Tag", nsmap={"ex": "http://ex.com"})
+        ns = collect_namespaces(elem)
+        assert "http://ex.com" in ns.values()
+
+    def test_xml_find_wrappers(self) -> None:
+        parent = make_element("Parent")
+        child = sub_element(parent, "Child", text="hi")
+        set_attr(child, "key", "val")
+        assert find(parent, "Child") is child
+        assert findall(parent, "Child") == [child]
+        assert findtext(parent, "Child") == "hi"
+        assert get_attr(child, "key") == "val"
+        assert get_attr(child, "missing", "default") == "default"
+
+    def test_clone(self) -> None:
+        orig = make_element("Orig", text="x")
+        copy = clone(orig)
+        copy.text = "y"
+        assert orig.text == "x"
+
+    def test_compile_and_validate_schema(self) -> None:
+        xsd_src = b"""<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+          <xs:element name="Root" type="xs:string"/>
+        </xs:schema>"""
+        schema_elem = parse_xml(xsd_src)
+        schema = compile_schema(schema_elem)
+        valid_doc = parse_xml(b"<Root>ok</Root>")
+        assert validate_schema(schema, valid_doc) is True
+
+
+# =============================================================================
+# 13. Fault — edge cases
+# =============================================================================
+
+class TestFaultEdgeCases:
+    def test_soap11_faultactor(self) -> None:
+        f = SoapFault("Server", "boom", faultactor="http://actor.example.com")
+        elem = f.to_soap11_element()
+        actor = elem.find("faultactor")
+        assert actor is not None and actor.text == "http://actor.example.com"
+
+    def test_soap11_detail_element(self) -> None:
+        detail_elem = make_element("MyDetail")
+        f = SoapFault("Server", "boom", detail=detail_elem)
+        elem = f.to_soap11_element()
+        det = elem.find("detail")
+        assert det is not None
+        assert det.find("MyDetail") is not None
+
+    def test_soap12_subcodes(self) -> None:
+        f = SoapFault("Server", "bad", subcodes=["tns:Invalid"])
+        elem = f.to_soap12_element()
+        subcode = elem.find(f"{{{NS.SOAP12_ENV}}}Code/{{{NS.SOAP12_ENV}}}Subcode")
+        assert subcode is not None
+
+    def test_soap12_role(self) -> None:
+        f = SoapFault("Server", "err", faultactor="http://role.example.com")
+        elem = f.to_soap12_element()
+        role = elem.find(f"{{{NS.SOAP12_ENV}}}Role")
+        assert role is not None and role.text == "http://role.example.com"
+
+    def test_fault_repr(self) -> None:
+        f = SoapFault("Server", "test error")
+        r = repr(f)
+        assert "Server" in r
+        assert "test error" in r
+
+    def test_parse_fault_with_detail_children(self) -> None:
+        xml = b"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+          <soapenv:Body>
+            <soapenv:Fault>
+              <faultcode>Server</faultcode>
+              <faultstring>err</faultstring>
+              <detail><item>info</item></detail>
+            </soapenv:Fault>
+          </soapenv:Body>
+        </soapenv:Envelope>"""
+        env = SoapEnvelope.from_xml(xml)
+        f = env.fault
+        assert f is not None and f.faultcode == "Server"
+        assert f.detail is not None
+
+
+# =============================================================================
+# 14. Envelope — edge cases
+# =============================================================================
+
+class TestEnvelopeEdgeCases:
+    def test_add_header(self) -> None:
+        env = SoapEnvelope(version=SoapVersion.SOAP_11)
+        hdr = make_element("Security")
+        env.add_header(hdr)
+        xml_bytes = env.to_bytes()
+        assert b"Security" in xml_bytes
+
+    def test_empty_body_properties(self) -> None:
+        env = SoapEnvelope(version=SoapVersion.SOAP_11)
+        assert env.is_fault is False
+        assert env.fault is None
+        assert env.first_body_element is None
+        assert env.operation_namespace is None
+
+    def test_encoding_ns(self) -> None:
+        assert SoapVersion.SOAP_11.encoding_ns == "http://schemas.xmlsoap.org/soap/encoding/"
+        assert SoapVersion.SOAP_12.encoding_ns == "http://www.w3.org/2003/05/soap-encoding"
+
+    def test_build_fault_soap12(self) -> None:
+        env_elem = build_fault(SoapVersion.SOAP_12, "Receiver", "something failed")
+        xml = to_string(env_elem)
+        assert "soap-envelope" in xml
+
+    def test_http_headers_soap12_action(self) -> None:
+        hdrs = http_headers(SoapVersion.SOAP_12, "http://ex.com/Action")
+        ct = hdrs["Content-Type"]
+        assert 'action="http://ex.com/Action"' in ct
+
+    def test_build_response(self) -> None:
+        from soapbar.core.envelope import build_response
+        child = make_element("AddResponse")
+        env_elem = build_response(SoapVersion.SOAP_11, [child])
+        xml = to_string(env_elem)
+        assert "AddResponse" in xml
+
+
+# =============================================================================
+# 15. Types — edge cases
+# =============================================================================
+
+class TestTypesEdgeCases:
+    def test_float_nan_from_xml(self) -> None:
+        t = xsd.resolve("float")
+        assert t is not None
+        result = t.from_xml("NaN")
+        assert result != result  # NaN != NaN
+
+    def test_decimal_roundtrip(self) -> None:
+        from decimal import Decimal
+        t = xsd.resolve("decimal")
+        assert t is not None
+        assert t.to_xml(Decimal("3.14")) == "3.14"
+
+    def test_decimal_invalid_from_xml(self) -> None:
+        t = xsd.resolve("decimal")
+        assert t is not None
+        with pytest.raises(ValueError):
+            t.from_xml("not-a-decimal")
+
+    def test_boolean_invalid_from_xml(self) -> None:
+        t = xsd.resolve("boolean")
+        assert t is not None
+        with pytest.raises(ValueError):
+            t.from_xml("maybe")
+
+    def test_python_to_xsd_unmapped(self) -> None:
+        result = xsd.python_to_xsd(list)
+        assert result is None
+
+    def test_all_types(self) -> None:
+        types = xsd.all_types()
+        assert len(types) > 10
+        assert all(hasattr(t, "to_xml") for t in types)
+
+
+# =============================================================================
+# 16. WSDL — edge cases
+# =============================================================================
+
+class TestWsdlEdgeCases:
+    def test_first_service_address_none_when_empty(self) -> None:
+        from soapbar.core.wsdl import WsdlDefinition
+        wsdl = WsdlDefinition()
+        assert wsdl.first_service_address is None
+
+    def test_first_binding_none_when_empty(self) -> None:
+        from soapbar.core.wsdl import WsdlDefinition
+        wsdl = WsdlDefinition()
+        assert wsdl.first_binding is None
+
+
+# =============================================================================
+# 17. Application — edge cases
+# =============================================================================
+
+class TestApplicationEdgeCases:
+    def _make_app(self) -> SoapApplication:
+        class CalcService(SoapService):
+            __service_name__ = "Calculator"
+            __tns__ = "http://example.com/calc"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", xsd.resolve("int")),  # type: ignore[arg-type]
+                    OperationParameter("b", xsd.resolve("int")),  # type: ignore[arg-type]
+                ],
+                output_params=[
+                    OperationParameter("result", xsd.resolve("int")),  # type: ignore[arg-type]
+                ],
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(CalcService())
+        return app
+
+    def test_custom_wsdl(self) -> None:
+        custom = b"<definitions/>"
+        app = SoapApplication(custom_wsdl=custom)
+        result = app.get_wsdl()
+        assert result == custom
+
+    def test_build_wsdl_no_services(self) -> None:
+        app = SoapApplication()
+        wsdl = app.get_wsdl()
+        assert isinstance(wsdl, bytes)
+
+    def test_operation_result_none(self) -> None:
+        class VoidService(SoapService):
+            __service_name__ = "VoidSvc"
+            __tns__ = "http://example.com/"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="DoNothing",
+                input_params=[],
+                output_params=[],
+            )
+            def do_nothing(self) -> None:
+                return None
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(VoidService())
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body><DoNothing/></soapenv:Body>
+</soapenv:Envelope>"""
+        status, _ct, _body = app.handle_request(req, soap_action="")
+        assert status == 200
+
+    def test_soap_action_fragment(self) -> None:
+        app = self._make_app()
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body><Add><a>1</a><b>2</b></Add></soapenv:Body>
+</soapenv:Envelope>"""
+        # Use #Add as fragment action — should still resolve via body element name
+        status, _ct, _body = app.handle_request(req, soap_action="#Add")
+        assert status == 200
+
+    def test_unknown_soap_action(self) -> None:
+        app = self._make_app()
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body><Unknown/></soapenv:Body>
+</soapenv:Envelope>"""
+        status, _ct, body = app.handle_request(req, soap_action="http://unknown/Action")
+        assert status in (400, 500)
+        assert b"Fault" in body
+
+
+# =============================================================================
+# 18. Binding serializer — response / deserialize paths
+# =============================================================================
+
+class TestBindingResponse:
+    def _make_sig(self) -> OperationSignature:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        return OperationSignature(
+            name="Add",
+            input_params=[OperationParameter("a", int_type), OperationParameter("b", int_type)],
+            output_params=[OperationParameter("result", int_type)],
+        )
+
+    def test_rpc_encoded_serialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = RpcEncodedSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 7}, container)
+        assert len(container) == 1
+        wrapper = container[0]
+        result_elem = wrapper.find("result")
+        assert result_elem is not None and result_elem.text == "7"
+
+    def test_rpc_encoded_deserialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = RpcEncodedSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 42}, container)
+        values = serializer.deserialize_response(sig, container)
+        assert values["result"] == 42
+
+    def test_rpc_literal_serialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = RpcLiteralSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 9}, container)
+        wrapper = container[0]
+        assert wrapper.find("result") is not None
+
+    def test_rpc_literal_deserialize_request_and_response(self) -> None:
+        sig = self._make_sig()
+        serializer = RpcLiteralSerializer()
+        from lxml import etree
+        req_container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 3, "b": 4}, req_container)
+        values = serializer.deserialize_request(sig, req_container)
+        assert values["a"] == 3
+        assert values["b"] == 4
+
+        resp_container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 7}, resp_container)
+        resp_values = serializer.deserialize_response(sig, resp_container)
+        assert resp_values["result"] == 7
+
+    def test_document_literal_serialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentLiteralSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 5}, container)
+        assert container.find("result") is not None
+
+    def test_document_literal_deserialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentLiteralSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 5}, container)
+        values = serializer.deserialize_response(sig, container)
+        assert values["result"] == 5
+
+    def test_document_literal_wrapped_serialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentLiteralWrappedSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 11}, container)
+        wrapper = container[0]
+        assert wrapper.find("result") is not None
+
+    def test_document_literal_wrapped_deserialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentLiteralWrappedSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 11}, container)
+        values = serializer.deserialize_response(sig, container)
+        assert values["result"] == 11
+
+    def test_document_encoded_serialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentEncodedSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 13}, container)
+        assert container.find("result") is not None
+
+    def test_document_encoded_deserialize_response(self) -> None:
+        sig = self._make_sig()
+        serializer = DocumentEncodedSerializer()
+        from lxml import etree
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 13}, container)
+        values = serializer.deserialize_response(sig, container)
+        assert values["result"] == 13
+
+
+# =============================================================================
+# 19. Types — additional edge cases
+# =============================================================================
+
+class TestTypesAdditional:
+    def test_xsd_type_repr(self) -> None:
+        t = xsd.resolve("string")
+        assert t is not None
+        assert "string" in repr(t)
+
+    def test_normalized_string_roundtrip(self) -> None:
+        t = xsd.resolve("normalizedString")
+        assert t is not None
+        assert t.to_xml("  hello  world  ") == "hello world"
+        assert t.from_xml("  foo  bar  ") == "foo bar"
+
+    def test_float_regular_value(self) -> None:
+        t = xsd.resolve("float")
+        assert t is not None
+        assert t.to_xml(3.14) == repr(3.14)
+
+    def test_datetime_roundtrip(self) -> None:
+        t = xsd.resolve("dateTime")
+        assert t is not None
+        assert t.to_xml("2024-01-15T10:30:00") == "2024-01-15T10:30:00"
+        assert t.from_xml("2024-01-15T10:30:00") == "2024-01-15T10:30:00"
+
+    def test_base64_str_input(self) -> None:
+        t = xsd.resolve("base64Binary")
+        assert t is not None
+        # to_xml with str input (not bytes) covers the str branch
+        encoded = t.to_xml("hello")
+        assert encoded == "aGVsbG8="
+
+    def test_hex_binary_roundtrip(self) -> None:
+        t = xsd.resolve("hexBinary")
+        assert t is not None
+        encoded = t.to_xml(b"\xde\xad")
+        assert encoded == "DEAD"
+        assert t.from_xml("DEAD") == b"\xde\xad"
+
+    def test_hex_binary_str_input(self) -> None:
+        t = xsd.resolve("hexBinary")
+        assert t is not None
+        encoded = t.to_xml("AB")
+        assert encoded == "4142"  # hex of b"AB"
