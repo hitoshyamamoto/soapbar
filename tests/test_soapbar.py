@@ -542,7 +542,7 @@ class TestServer:
     </Add>
   </soapenv:Body>
 </soapenv:Envelope>"""
-        status, ct, body = app.handle_request(req, soap_action="")
+        status, _ct, body = app.handle_request(req, soap_action="")
         assert status == 200
         assert b"result" in body or b"AddResponse" in body or b"7" in body
 
@@ -552,13 +552,13 @@ class TestServer:
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
   <soapenv:Body><UnknownOp/></soapenv:Body>
 </soapenv:Envelope>"""
-        status, ct, body = app.handle_request(req, soap_action="")
+        status, _ct, body = app.handle_request(req, soap_action="")
         assert status in (400, 500)
         assert b"Fault" in body
 
     def test_handle_malformed_xml(self) -> None:
         app = self._make_app()
-        status, ct, body = app.handle_request(b"not xml at all")
+        status, _ct, body = app.handle_request(b"not xml at all")
         assert status == 500
         assert b"Fault" in body
 
@@ -666,7 +666,7 @@ class TestWitsml:
 
         req_bytes = envelope.to_bytes()
 
-        status, ct, resp_body = app.handle_request(
+        status, _ct, resp_body = app.handle_request(
             req_bytes,
             soap_action="http://www.witsml.org/action/120/Store.WMLS_GetVersion",
         )
