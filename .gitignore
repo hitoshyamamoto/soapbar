@@ -1,0 +1,83 @@
+# Python bytecode & compiled extensions
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env/
+
+# uv artifacts
+.python-version
+
+# Build & distribution
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+*.whl
+*.tar.gz
+src/*.egg-info/
+
+# Test & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# Type checker cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Linter cache
+.ruff_cache/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.vim/
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Documentation build output
+site/
+docs/_build/
+docs/api/
+
+# Miscellaneous
+*.log
+*.tmp
+*.bak
+scratch/
+tmp/
