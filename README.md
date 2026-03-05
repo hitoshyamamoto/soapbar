@@ -46,8 +46,11 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 ## Installation
 
 ```bash
-pip install soapbar           # core (server + WSDL)
+pip install soapbar           # core + server + WSDL (lxml only)
+pip install soapbar[core]     # explicit alias for the above
+pip install soapbar[server]   # explicit alias for the above
 pip install soapbar[client]   # + httpx for the HTTP client
+pip install soapbar[all]      # everything (same as [client] today)
 ```
 
 Or with uv:
@@ -55,6 +58,7 @@ Or with uv:
 ```bash
 uv add soapbar
 uv add "soapbar[client]"
+uv add "soapbar[all]"
 ```
 
 ---

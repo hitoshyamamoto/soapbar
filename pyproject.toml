@@ -31,6 +31,8 @@ Repository = "https://github.com/hitoshyamamoto/soapbar"
 Issues     = "https://github.com/hitoshyamamoto/soapbar/issues"
 
 [project.optional-dependencies]
+core   = []
+server = []
 client = ["httpx>=0.27"]
 all    = ["httpx>=0.27"]
 

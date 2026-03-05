@@ -643,7 +643,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'client'", specifier = ">=0.27" },
     { name = "lxml", specifier = ">=5.0" },
 ]
-provides-extras = ["client", "all"]
+provides-extras = ["core", "server", "client", "all"]
 
 [package.metadata.requires-dev]
 dev = [
