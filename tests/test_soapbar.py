@@ -1590,3 +1590,97 @@ class TestSoapClientCall:
         client.register_operation(self._int_sig())
         result = await client.call_async("Add", a=3, b=4)
         assert result == 7
+
+
+# =============================================================================
+# 26. End-to-end round-trip for all 5 binding styles
+# =============================================================================
+
+class _InlineTransport(HttpTransport):
+    """Routes SoapClient.send() directly into SoapApplication.handle_request()."""
+
+    def __init__(self, app: SoapApplication) -> None:
+        super().__init__()
+        self._app = app
+
+    def send(
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str],
+    ) -> tuple[int, str, bytes]:
+        soap_action = headers.get("SOAPAction", "").strip('"')
+        return self._app.handle_request(body, soap_action=soap_action)
+
+
+class TestEndToEnd:
+    """Full serialize → send → deserialize round-trip for every binding style."""
+
+    def _make_client(self, style: BindingStyle) -> SoapClient:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+
+        class CalcService(SoapService):
+            __service_name__ = "Calculator"
+            __tns__ = "http://example.com/calc"
+            __binding_style__ = style
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", int_type),  # type: ignore[arg-type]
+                    OperationParameter("b", int_type),  # type: ignore[arg-type]
+                ],
+                output_params=[
+                    OperationParameter("result", int_type),  # type: ignore[arg-type]
+                ],
+                soap_action="Add",
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(CalcService())
+
+        sig = OperationSignature(
+            name="Add",
+            input_params=[
+                OperationParameter("a", int_type),
+                OperationParameter("b", int_type),
+            ],
+            output_params=[OperationParameter("result", int_type)],
+            soap_action="Add",
+        )
+        client = SoapClient.manual(
+            "http://localhost:8000/soap",
+            binding_style=style,
+            transport=_InlineTransport(app),
+        )
+        client.register_operation(sig)
+        return client
+
+    def test_rpc_encoded(self) -> None:
+        client = self._make_client(BindingStyle.RPC_ENCODED)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_rpc_literal(self) -> None:
+        client = self._make_client(BindingStyle.RPC_LITERAL)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_document_literal(self) -> None:
+        client = self._make_client(BindingStyle.DOCUMENT_LITERAL)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_document_literal_wrapped(self) -> None:
+        client = self._make_client(BindingStyle.DOCUMENT_LITERAL_WRAPPED)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_document_encoded(self) -> None:
+        client = self._make_client(BindingStyle.DOCUMENT_ENCODED)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
