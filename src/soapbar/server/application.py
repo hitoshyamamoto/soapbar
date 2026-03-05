@@ -86,14 +86,16 @@ class SoapApplication:
             style = service.__binding_style__  # type: ignore[union-attr]
             serializer = get_serializer(style)
 
-            body_elem = envelope.first_body_element
-            if body_elem is None:
+            if not envelope.body_elements:
                 raise SoapFault("Client", "Empty SOAP Body")
 
-            # Wrap body_elem in a dummy container for deserializer
+            # Wrap all body children in a dummy container for deserializer.
+            # RPC/wrapped styles have one wrapper element; document styles may
+            # have multiple sibling parameters as direct body children.
             from lxml import etree
             container = etree.Element("_body")
-            container.append(body_elem)
+            for body_elem in envelope.body_elements:
+                container.append(body_elem)
 
             kwargs = serializer.deserialize_request(sig, container)
 
