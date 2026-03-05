@@ -28,7 +28,7 @@ class _Namespaces:
         XSI: "xsi",
         WSDL: "wsdl",
         WSDL_SOAP: "soap",
-        WSDL_SOAP12: "soap12",
+        WSDL_SOAP12: "wsoap12",
         WSSE: "wsse",
         WSU: "wsu",
         WSA: "wsa",

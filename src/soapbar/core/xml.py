@@ -128,7 +128,7 @@ def find(elem: _Element, path: str, nsmap: dict[str, str] | None = None) -> _Ele
 
 
 def findall(elem: _Element, path: str, nsmap: dict[str, str] | None = None) -> list[_Element]:
-    return elem.findall(path, nsmap)  # type: ignore[return-value]
+    return elem.findall(path, nsmap)
 
 
 def findtext(elem: _Element, path: str, nsmap: dict[str, str] | None = None) -> str | None:

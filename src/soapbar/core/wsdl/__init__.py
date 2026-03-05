@@ -70,7 +70,9 @@ class WsdlBinding:
             return BindingStyle.RPC_ENCODED
         if style == "rpc" and use == "literal":
             return BindingStyle.RPC_LITERAL
-        # document + literal
+        if style == "document" and use == "encoded":
+            return BindingStyle.DOCUMENT_ENCODED
+        # document + literal (default)
         return BindingStyle.DOCUMENT_LITERAL
 
 

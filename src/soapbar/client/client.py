@@ -46,8 +46,7 @@ class SoapClient:
         binding = defn.first_binding
         if binding:
             self._binding_style = binding.binding_style_for(
-                next(iter(binding.operations), WsdlDefinition()).name  # type: ignore[arg-type]
-                if binding.operations else ""
+                binding.operations[0].name if binding.operations else ""
             )
 
     @classmethod

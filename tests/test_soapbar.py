@@ -1,10 +1,17 @@
 """Comprehensive tests for soapbar — 31 tests covering all modules."""
 from __future__ import annotations
 
+import io
+import sys
+import urllib.error
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from lxml import etree
 
 import soapbar
+from soapbar.client.client import SoapClient
+from soapbar.client.transport import HttpTransport
 from soapbar.core.binding import (
     BindingStyle,
     DocumentEncodedSerializer,
@@ -44,7 +51,9 @@ from soapbar.core.xml import (
     validate_schema,
 )
 from soapbar.server.application import SoapApplication
+from soapbar.server.asgi import AsgiSoapApp
 from soapbar.server.service import SoapService, soap_operation
+from soapbar.server.wsgi import WsgiSoapApp
 
 # =============================================================================
 # 1. Namespaces
@@ -1186,3 +1195,398 @@ class TestTypesAdditional:
         assert t is not None
         encoded = t.to_xml("AB")
         assert encoded == "4142"  # hex of b"AB"
+
+
+# =============================================================================
+# 20. WSDL binding style — all branches including the fixed DOCUMENT_ENCODED
+# =============================================================================
+
+def _make_calc_service() -> SoapApplication:
+    """Shared helper: build a minimal CalcService SoapApplication."""
+    class CalcService(SoapService):
+        __service_name__ = "Calculator"
+        __tns__ = "http://example.com/calc"
+        __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+        __soap_version__ = SoapVersion.SOAP_11
+
+        @soap_operation(
+            name="Add",
+            input_params=[
+                OperationParameter("a", xsd.resolve("int")),  # type: ignore[arg-type]
+                OperationParameter("b", xsd.resolve("int")),  # type: ignore[arg-type]
+            ],
+            output_params=[
+                OperationParameter("result", xsd.resolve("int")),  # type: ignore[arg-type]
+            ],
+        )
+        def add(self, a: int, b: int) -> int:
+            return a + b
+
+    app = SoapApplication(service_url="http://localhost:8000/soap")
+    app.register(CalcService())
+    return app
+
+
+class TestWsdlBindingStyle:
+    def _make_binding(self, style: str, use: str):
+        from soapbar.core.wsdl import WsdlBinding, WsdlBindingOperation
+        return WsdlBinding(
+            name="B",
+            port_type="P",
+            style=style,
+            operations=[WsdlBindingOperation(name="Op", use=use)],
+        )
+
+    def test_rpc_encoded(self) -> None:
+        b = self._make_binding("rpc", "encoded")
+        assert b.binding_style_for("Op") == BindingStyle.RPC_ENCODED
+
+    def test_rpc_literal(self) -> None:
+        b = self._make_binding("rpc", "literal")
+        assert b.binding_style_for("Op") == BindingStyle.RPC_LITERAL
+
+    def test_document_literal(self) -> None:
+        b = self._make_binding("document", "literal")
+        assert b.binding_style_for("Op") == BindingStyle.DOCUMENT_LITERAL
+
+    def test_document_encoded(self) -> None:
+        b = self._make_binding("document", "encoded")
+        assert b.binding_style_for("Op") == BindingStyle.DOCUMENT_ENCODED
+
+    def test_unknown_operation_falls_back_to_binding_style(self) -> None:
+        from soapbar.core.wsdl import WsdlBinding
+        b = WsdlBinding(name="B", port_type="P", style="document")
+        assert b.binding_style_for("NonExistent") == BindingStyle.DOCUMENT_LITERAL
+
+
+# =============================================================================
+# 21. Namespaces — duplicate prefix collision resolved
+# =============================================================================
+
+class TestNamespacesDuplicate:
+    def test_wsdl_soap12_prefix_renamed(self) -> None:
+        assert NS.prefix_for(NS.WSDL_SOAP12) == "wsoap12"
+        assert NS.prefix_for(NS.SOAP12_ENV) == "soap12"
+
+    def test_reverse_prefixes_unambiguous(self) -> None:
+        assert NS.REVERSE_PREFIXES["soap12"] == NS.SOAP12_ENV
+        assert NS.REVERSE_PREFIXES["wsoap12"] == NS.WSDL_SOAP12
+
+
+# =============================================================================
+# 22. ASGI adapter
+# =============================================================================
+
+_ADD_SOAP_REQUEST = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body><Add><a>3</a><b>4</b></Add></soapenv:Body>
+</soapenv:Envelope>"""
+
+
+class TestAsgiAdapter:
+    def _make_app(self) -> AsgiSoapApp:
+        return AsgiSoapApp(_make_calc_service())
+
+    async def test_get_root(self) -> None:
+        app = self._make_app()
+        scope = {"type": "http", "method": "GET", "query_string": b"", "headers": []}
+        responses: list = []
+
+        async def receive():
+            return {"body": b"", "more_body": False}
+
+        async def send(message):
+            responses.append(message)
+
+        await app(scope, receive, send)
+        assert responses[0]["status"] == 200
+        assert b"soapbar" in responses[1]["body"]
+
+    async def test_get_wsdl(self) -> None:
+        app = self._make_app()
+        scope = {"type": "http", "method": "GET", "query_string": b"wsdl", "headers": []}
+        responses: list = []
+
+        async def receive():
+            return {"body": b"", "more_body": False}
+
+        async def send(message):
+            responses.append(message)
+
+        await app(scope, receive, send)
+        assert responses[0]["status"] == 200
+        assert b"definitions" in responses[1]["body"]
+
+    async def test_post_soap(self) -> None:
+        app = self._make_app()
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"text/xml"),
+                (b"soapaction", b'"Add"'),
+            ],
+        }
+        responses: list = []
+
+        async def receive():
+            return {"body": _ADD_SOAP_REQUEST, "more_body": False}
+
+        async def send(message):
+            responses.append(message)
+
+        await app(scope, receive, send)
+        assert responses[0]["status"] == 200
+
+    async def test_unknown_method(self) -> None:
+        app = self._make_app()
+        scope = {"type": "http", "method": "DELETE", "query_string": b"", "headers": []}
+        responses: list = []
+
+        async def receive():
+            return {"body": b"", "more_body": False}
+
+        async def send(message):
+            responses.append(message)
+
+        await app(scope, receive, send)
+        assert responses[0]["status"] == 405
+
+    async def test_lifespan(self) -> None:
+        app = self._make_app()
+        events = iter([
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ])
+        sent: list = []
+
+        async def receive():
+            return next(events)
+
+        async def send(message):
+            sent.append(message)
+
+        await app({"type": "lifespan"}, receive, send)
+        assert any(m["type"] == "lifespan.startup.complete" for m in sent)
+        assert any(m["type"] == "lifespan.shutdown.complete" for m in sent)
+
+    async def test_unknown_scope_type(self) -> None:
+        app = self._make_app()
+        sent: list = []
+
+        async def send(message):
+            sent.append(message)
+
+        await app({"type": "websocket"}, None, send)
+        assert sent == []
+
+
+# =============================================================================
+# 23. WSGI adapter
+# =============================================================================
+
+class TestWsgiAdapter:
+    def _make_app(self) -> WsgiSoapApp:
+        return WsgiSoapApp(_make_calc_service())
+
+    def _make_environ(
+        self,
+        method: str,
+        body: bytes = b"",
+        query_string: str = "",
+        soap_action: str = "",
+    ) -> dict:
+        return {
+            "REQUEST_METHOD": method,
+            "QUERY_STRING": query_string,
+            "CONTENT_TYPE": "text/xml",
+            "CONTENT_LENGTH": str(len(body)),
+            "HTTP_SOAPACTION": soap_action,
+            "wsgi.input": io.BytesIO(body),
+        }
+
+    def test_get_root(self) -> None:
+        app = self._make_app()
+        status_list: list = []
+
+        def start_response(status, headers):
+            status_list.append(status)
+
+        result = app(self._make_environ("GET"), start_response)
+        assert status_list[0].startswith("200")
+        assert b"soapbar SOAP endpoint" in b"".join(result)
+
+    def test_get_wsdl(self) -> None:
+        app = self._make_app()
+        status_list: list = []
+
+        def start_response(status, headers):
+            status_list.append(status)
+
+        result = app(self._make_environ("GET", query_string="wsdl"), start_response)
+        assert status_list[0].startswith("200")
+        assert b"definitions" in b"".join(result)
+
+    def test_post_soap(self) -> None:
+        app = self._make_app()
+        status_list: list = []
+
+        def start_response(status, headers):
+            status_list.append(status)
+
+        environ = self._make_environ("POST", body=_ADD_SOAP_REQUEST)
+        app(environ, start_response)
+        assert status_list[0].startswith("200")
+
+    def test_unknown_method(self) -> None:
+        app = self._make_app()
+        status_list: list = []
+
+        def start_response(status, headers):
+            status_list.append(status)
+
+        result = app(self._make_environ("DELETE"), start_response)
+        assert status_list[0].startswith("405")
+        assert b"Method Not Allowed" in b"".join(result)
+
+    def test_invalid_content_length(self) -> None:
+        app = self._make_app()
+        environ = self._make_environ("POST", body=_ADD_SOAP_REQUEST)
+        environ["CONTENT_LENGTH"] = "abc"  # non-integer → falls back to 0
+        status_list: list = []
+
+        def start_response(status, headers):
+            status_list.append(status)
+
+        app(environ, start_response)
+        assert len(status_list) == 1  # responded (with fault or success)
+
+
+# =============================================================================
+# 24. HTTP transport
+# =============================================================================
+
+class TestHttpTransport:
+    def test_send_urllib_success(self) -> None:
+        transport = HttpTransport()
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.status = 200
+        mock_resp.headers.get.return_value = "text/xml"
+        mock_resp.read.return_value = b"<response/>"
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            status, _ct, body = transport._send_urllib("http://example.com/", b"<req/>", {})
+
+        assert status == 200
+        assert body == b"<response/>"
+
+    def test_send_urllib_http_error(self) -> None:
+        transport = HttpTransport()
+        err = urllib.error.HTTPError(
+            url="http://example.com/",
+            code=500,
+            msg="Server Error",
+            hdrs=MagicMock(**{"get.return_value": "text/xml"}),
+            fp=None,
+        )
+        err.read = lambda: b"<fault/>"  # type: ignore[method-assign]
+
+        with patch("urllib.request.urlopen", side_effect=err):
+            status, _ct, body = transport._send_urllib("http://example.com/", b"<req/>", {})
+
+        assert status == 500
+        assert body == b"<fault/>"
+
+    def test_fetch_urllib(self) -> None:
+        transport = HttpTransport()
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.read.return_value = b"<wsdl/>"
+
+        with patch("urllib.request.urlopen", return_value=mock_resp), \
+             patch.dict(sys.modules, {"httpx": None}):
+            data = transport.fetch("http://example.com/service?wsdl")
+
+        assert data == b"<wsdl/>"
+
+    async def test_send_async_no_httpx(self) -> None:
+        transport = HttpTransport()
+        with patch.dict(sys.modules, {"httpx": None}), pytest.raises(RuntimeError, match="httpx"):
+            await transport.send_async("http://example.com/", b"", {})
+
+
+# =============================================================================
+# 25. SoapClient — call / call_async with mocked transport
+# =============================================================================
+
+_ADD_RESPONSE_XML = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body>
+    <AddResponse><result>7</result></AddResponse>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+
+_FAULT_RESPONSE_XML = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body>
+    <soapenv:Fault>
+      <faultcode>Server</faultcode>
+      <faultstring>Internal Error</faultstring>
+    </soapenv:Fault>
+  </soapenv:Body>
+</soapenv:Envelope>"""
+
+
+class TestSoapClientCall:
+    def _int_sig(self) -> OperationSignature:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        return OperationSignature(
+            name="Add",
+            input_params=[
+                OperationParameter("a", int_type),
+                OperationParameter("b", int_type),
+            ],
+            output_params=[OperationParameter("result", int_type)],
+        )
+
+    def _mock_client(self, response_xml: bytes) -> SoapClient:
+        mock_transport = MagicMock(spec=HttpTransport)
+        mock_transport.send.return_value = (200, "text/xml", response_xml)
+        return SoapClient.manual(
+            "http://example.com/soap",
+            binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+            transport=mock_transport,
+        )
+
+    def test_call_returns_result(self) -> None:
+        client = self._mock_client(_ADD_RESPONSE_XML)
+        client.register_operation(self._int_sig())
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_call_raises_soap_fault(self) -> None:
+        from soapbar.core.fault import SoapFault
+        client = self._mock_client(_FAULT_RESPONSE_XML)
+        with pytest.raises(SoapFault):
+            client.call("Add")
+
+    async def test_call_async_returns_result(self) -> None:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        mock_transport = MagicMock(spec=HttpTransport)
+        mock_transport.send_async = AsyncMock(
+            return_value=(200, "text/xml", _ADD_RESPONSE_XML)
+        )
+        client = SoapClient.manual(
+            "http://example.com/soap",
+            binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+            transport=mock_transport,
+        )
+        client.register_operation(self._int_sig())
+        result = await client.call_async("Add", a=3, b=4)
+        assert result == 7
