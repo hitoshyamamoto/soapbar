@@ -7,6 +7,7 @@ from typing import Any
 from soapbar.client.transport import HttpTransport
 from soapbar.core.binding import BindingStyle, OperationSignature, get_serializer
 from soapbar.core.envelope import SoapEnvelope, SoapVersion, http_headers
+from soapbar.core.namespaces import NS
 from soapbar.core.wsdl import WsdlDefinition
 from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
 
@@ -48,6 +49,8 @@ class SoapClient:
             self._binding_style = binding.binding_style_for(
                 binding.operations[0].name if binding.operations else ""
             )
+            if binding.soap_ns == NS.WSDL_SOAP12:
+                self._soap_version = SoapVersion.SOAP_12
 
     @classmethod
     def from_file(cls, path: str | Path) -> SoapClient:

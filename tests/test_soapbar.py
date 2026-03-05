@@ -1610,13 +1610,23 @@ class _InlineTransport(HttpTransport):
         headers: dict[str, str],
     ) -> tuple[int, str, bytes]:
         soap_action = headers.get("SOAPAction", "").strip('"')
+        if not soap_action:
+            # SOAP 1.2: action is embedded in Content-Type as action="..."
+            ct = headers.get("Content-Type", "")
+            for part in ct.split(";"):
+                part = part.strip()
+                if part.startswith("action="):
+                    soap_action = part[len("action="):].strip('"')
+                    break
         return self._app.handle_request(body, soap_action=soap_action)
 
 
 class TestEndToEnd:
     """Full serialize → send → deserialize round-trip for every binding style."""
 
-    def _make_client(self, style: BindingStyle) -> SoapClient:
+    def _make_client(
+        self, style: BindingStyle, version: SoapVersion = SoapVersion.SOAP_11
+    ) -> SoapClient:
         int_type = xsd.resolve("int")
         assert int_type is not None
 
@@ -1624,7 +1634,7 @@ class TestEndToEnd:
             __service_name__ = "Calculator"
             __tns__ = "http://example.com/calc"
             __binding_style__ = style
-            __soap_version__ = SoapVersion.SOAP_11
+            __soap_version__ = version
 
             @soap_operation(
                 name="Add",
@@ -1655,6 +1665,7 @@ class TestEndToEnd:
         client = SoapClient.manual(
             "http://localhost:8000/soap",
             binding_style=style,
+            soap_version=version,
             transport=_InlineTransport(app),
         )
         client.register_operation(sig)
@@ -1684,3 +1695,75 @@ class TestEndToEnd:
         client = self._make_client(BindingStyle.DOCUMENT_ENCODED)
         result = client.call("Add", a=3, b=4)
         assert result == 7
+
+    def test_rpc_encoded_soap12(self) -> None:
+        client = self._make_client(BindingStyle.RPC_ENCODED, SoapVersion.SOAP_12)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_rpc_literal_soap12(self) -> None:
+        client = self._make_client(BindingStyle.RPC_LITERAL, SoapVersion.SOAP_12)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_document_literal_soap12(self) -> None:
+        client = self._make_client(BindingStyle.DOCUMENT_LITERAL, SoapVersion.SOAP_12)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_document_literal_wrapped_soap12(self) -> None:
+        client = self._make_client(BindingStyle.DOCUMENT_LITERAL_WRAPPED, SoapVersion.SOAP_12)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+    def test_document_encoded_soap12(self) -> None:
+        client = self._make_client(BindingStyle.DOCUMENT_ENCODED, SoapVersion.SOAP_12)
+        result = client.call("Add", a=3, b=4)
+        assert result == 7
+
+
+# =============================================================================
+# 27. SOAP 1.2 WSDL generation and client version propagation
+# =============================================================================
+
+class TestSoap12Wsdl:
+    """WSDL generation and client initialisation for SOAP 1.2 services."""
+
+    def _make_soap12_app(self) -> SoapApplication:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+
+        class CalcService12(SoapService):
+            __service_name__ = "Calculator"
+            __tns__ = "http://example.com/calc"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_12
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", int_type),  # type: ignore[arg-type]
+                    OperationParameter("b", int_type),  # type: ignore[arg-type]
+                ],
+                output_params=[
+                    OperationParameter("result", int_type),  # type: ignore[arg-type]
+                ],
+                soap_action="Add",
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(CalcService12())
+        return app
+
+    def test_wsdl_contains_soap12_namespace(self) -> None:
+        app = self._make_soap12_app()
+        wsdl_bytes = app.get_wsdl()
+        assert NS.WSDL_SOAP12.encode() in wsdl_bytes
+
+    def test_client_from_wsdl_detects_soap12(self) -> None:
+        app = self._make_soap12_app()
+        wsdl_bytes = app.get_wsdl()
+        client = SoapClient.from_wsdl_string(wsdl_bytes)
+        assert client._soap_version == SoapVersion.SOAP_12
