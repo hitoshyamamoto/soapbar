@@ -18,6 +18,18 @@ from soapbar.core.xml import (
     to_string,
 )
 
+# ---------------------------------------------------------------------------
+# SOAP Header Block
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SoapHeaderBlock:
+    """A single SOAP header block with parsed attributes."""
+    element: _Element
+    must_understand: bool = False
+    relay: bool = False        # SOAP 1.2 only
+    role: str | None = None    # SOAP 1.2 role / SOAP 1.1 actor
+
 
 class SoapVersion(Enum):
     SOAP_11 = "1.1"
@@ -42,14 +54,38 @@ class SoapVersion(Enum):
         return "soapenv" if self == SoapVersion.SOAP_11 else "soap12"
 
 
-@dataclass
+@dataclass(init=False)
 class SoapEnvelope:
-    version: SoapVersion = SoapVersion.SOAP_11
-    header_elements: list[_Element] = field(default_factory=list)
-    body_elements: list[_Element] = field(default_factory=list)
+    version: SoapVersion
+    header_blocks: list[SoapHeaderBlock]
+    body_elements: list[_Element]
 
-    def add_header(self, elem: _Element) -> None:
-        self.header_elements.append(elem)
+    def __init__(
+        self,
+        version: SoapVersion = SoapVersion.SOAP_11,
+        header_blocks: list[SoapHeaderBlock] | None = None,
+        body_elements: list[_Element] | None = None,
+        header_elements: list[_Element] | None = None,
+    ) -> None:
+        self.version = version
+        self.header_blocks = header_blocks if header_blocks is not None else []
+        self.body_elements = body_elements if body_elements is not None else []
+        if header_elements is not None:
+            self.header_blocks = [SoapHeaderBlock(element=e) for e in header_elements]
+
+    @property
+    def header_elements(self) -> list[_Element]:
+        return [b.element for b in self.header_blocks]
+
+    @header_elements.setter
+    def header_elements(self, elems: list[_Element]) -> None:
+        self.header_blocks = [SoapHeaderBlock(element=e) for e in elems]
+
+    def add_header(self, elem: _Element | SoapHeaderBlock) -> None:
+        if isinstance(elem, SoapHeaderBlock):
+            self.header_blocks.append(elem)
+        else:
+            self.header_blocks.append(SoapHeaderBlock(element=elem))
 
     def add_body_content(self, elem: _Element) -> None:
         self.body_elements.append(elem)
@@ -61,10 +97,10 @@ class SoapEnvelope:
 
         env = make_element(f"{{{env_ns}}}Envelope", nsmap=nsmap)
 
-        if self.header_elements:
+        if self.header_blocks:
             header = sub_element(env, f"{{{env_ns}}}Header")
-            for elem in self.header_elements:
-                header.append(elem)
+            for block in self.header_blocks:
+                header.append(block.element)
 
         body = sub_element(env, f"{{{env_ns}}}Body")
         for elem in self.body_elements:
@@ -91,19 +127,27 @@ class SoapEnvelope:
             raise ValueError(f"Unknown SOAP envelope namespace: {ns!r}")
 
         env_ns = version.envelope_ns
-        header_elements: list[_Element] = []
+        header_blocks: list[SoapHeaderBlock] = []
         body_elements: list[_Element] = []
 
         header_elem = root.find(f"{{{env_ns}}}Header")
         if header_elem is not None:
-            header_elements = list(header_elem)
+            for hdr in list(header_elem):
+                mu_val = hdr.get(f"{{{env_ns}}}mustUnderstand") or hdr.get("mustUnderstand", "0")
+                mu = mu_val in ("1", "true")
+                relay_val = hdr.get(f"{{{env_ns}}}relay", "false")
+                relay = relay_val in ("1", "true")
+                role = hdr.get(f"{{{env_ns}}}role") or hdr.get(f"{{{env_ns}}}actor")
+                header_blocks.append(SoapHeaderBlock(
+                    element=hdr, must_understand=mu, relay=relay, role=role,
+                ))
 
         body_elem = root.find(f"{{{env_ns}}}Body")
         if body_elem is not None:
             body_elements = list(body_elem)
 
         envelope = cls(version=version)
-        envelope.header_elements = header_elements
+        envelope.header_blocks = header_blocks
         envelope.body_elements = body_elements
         return envelope
 

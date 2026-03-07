@@ -16,6 +16,7 @@ from soapbar.core.binding import (
 )
 from soapbar.core.envelope import (
     SoapEnvelope,
+    SoapHeaderBlock,
     SoapVersion,
     build_fault,
     build_request,
@@ -52,6 +53,7 @@ __all__ = [  # noqa: RUF022
     "OperationParameter",
     "get_serializer",
     "SoapEnvelope",
+    "SoapHeaderBlock",
     "SoapVersion",
     "build_request",
     "build_response",
