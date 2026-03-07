@@ -1,9 +1,12 @@
 """WSDL builder — generates WSDL XML from WsdlDefinition."""
 from __future__ import annotations
 
+import copy
+
 from lxml.etree import _Element
 
 from soapbar.core.namespaces import NS
+from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
 from soapbar.core.wsdl import WsdlBinding, WsdlDefinition
 from soapbar.core.xml import make_element, sub_element, to_bytes, to_string
 
@@ -38,10 +41,23 @@ def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
     )
 
     # Types
-    if defn.schema_elements:
+    if defn.schema_elements or defn.complex_types:
         types_elem = sub_element(root, f"{{{NS.WSDL}}}types")
         for schema_elem in defn.schema_elements:
-            types_elem.append(schema_elem)
+            types_elem.append(copy.deepcopy(schema_elem))
+        if defn.complex_types:
+            schema_elem2 = sub_element(
+                types_elem,
+                f"{{{NS.XSD}}}schema",
+                attrib={"targetNamespace": tns},
+            )
+            for ct in defn.complex_types.values():
+                if isinstance(ct, ComplexXsdType):
+                    schema_elem2.append(_complex_type_to_xsd(ct, tns))
+                elif isinstance(ct, ArrayXsdType):
+                    schema_elem2.append(_array_type_to_xsd(ct, tns))
+                elif isinstance(ct, ChoiceXsdType):
+                    schema_elem2.append(_choice_type_to_xsd(ct, tns))
 
     # Messages
     for msg in defn.messages.values():
@@ -146,3 +162,50 @@ def build_wsdl_string(defn: WsdlDefinition, address: str) -> str:
 
 def build_wsdl_bytes(defn: WsdlDefinition, address: str) -> bytes:
     return to_bytes(build_wsdl(defn, address))
+
+
+# ---------------------------------------------------------------------------
+# Complex type → XSD element helpers
+# ---------------------------------------------------------------------------
+
+def _type_ref(xsd_type: object) -> str:
+    """Return xsd:name or tns:name string for a type."""
+    from soapbar.core.types import XsdType
+    if isinstance(xsd_type, XsdType):
+        ns = getattr(xsd_type, "namespace", "")
+        if ns == NS.XSD:
+            return f"xsd:{xsd_type.name}"
+        return f"tns:{xsd_type.name}"
+    return "xsd:string"
+
+
+def _complex_type_to_xsd(ct: ComplexXsdType, tns: str) -> _Element:
+    ct_elem = make_element(f"{{{NS.XSD}}}complexType", attrib={"name": ct.name})
+    seq = sub_element(ct_elem, f"{{{NS.XSD}}}sequence")
+    for field_name, field_type in ct.fields:
+        attrib: dict[str, str] = {"name": field_name, "type": _type_ref(field_type)}
+        sub_element(seq, f"{{{NS.XSD}}}element", attrib=attrib)
+    return ct_elem
+
+
+def _array_type_to_xsd(ct: ArrayXsdType, tns: str) -> _Element:
+    ct_elem = make_element(f"{{{NS.XSD}}}complexType", attrib={"name": ct.name})
+    seq = sub_element(ct_elem, f"{{{NS.XSD}}}sequence")
+    sub_element(seq, f"{{{NS.XSD}}}element", attrib={
+        "name": ct.element_tag,
+        "type": _type_ref(ct.element_type),
+        "minOccurs": "0",
+        "maxOccurs": "unbounded",
+    })
+    return ct_elem
+
+
+def _choice_type_to_xsd(ct: ChoiceXsdType, tns: str) -> _Element:
+    ct_elem = make_element(f"{{{NS.XSD}}}complexType", attrib={"name": ct.name})
+    choice = sub_element(ct_elem, f"{{{NS.XSD}}}choice")
+    for opt_name, opt_type in ct.options:
+        sub_element(choice, f"{{{NS.XSD}}}element", attrib={
+            "name": opt_name,
+            "type": _type_ref(opt_type),
+        })
+    return ct_elem

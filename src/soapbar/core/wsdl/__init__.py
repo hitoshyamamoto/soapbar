@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from soapbar.core.binding import BindingStyle
+
+if TYPE_CHECKING:
+    from soapbar.core.types import XsdType
 
 
 @dataclass
@@ -98,6 +101,7 @@ class WsdlDefinition:
     bindings: dict[str, WsdlBinding] = field(default_factory=dict)
     services: dict[str, WsdlService] = field(default_factory=dict)
     schema_elements: list[Any] = field(default_factory=list)
+    complex_types: dict[str, XsdType] = field(default_factory=dict)
 
     @property
     def first_service_address(self) -> str | None:
