@@ -3,11 +3,17 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re as _re
 from abc import ABC, abstractmethod
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from soapbar.core.namespaces import NS
+
+_DURATION_RE = _re.compile(
+    r'^-?P(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?$'
+)
 
 
 class XsdType(ABC):
@@ -70,52 +76,79 @@ class _AnyTypeType(_StringType):
 
 class _IntegerType(XsdType):
     name = "integer"
+    min_value: int | None = None
+    max_value: int | None = None
+
+    def _check_range(self, v: int) -> int:
+        if self.min_value is not None and v < self.min_value:
+            raise ValueError(f"{self.name} value {v} is below minimum {self.min_value}")
+        if self.max_value is not None and v > self.max_value:
+            raise ValueError(f"{self.name} value {v} exceeds maximum {self.max_value}")
+        return v
 
     def to_xml(self, value: Any) -> str:
-        return str(int(value))
+        return str(self._check_range(int(value)))
 
     def from_xml(self, s: str) -> int:
-        return int(s)
+        return self._check_range(int(s))
 
 
 class _IntType(_IntegerType):
     name = "int"
+    min_value = -2147483648
+    max_value = 2147483647
 
 
 class _LongType(_IntegerType):
     name = "long"
+    min_value = -9223372036854775808
+    max_value = 9223372036854775807
 
 
 class _ShortType(_IntegerType):
     name = "short"
+    min_value = -32768
+    max_value = 32767
 
 
 class _ByteType(_IntegerType):
     name = "byte"
+    min_value = -128
+    max_value = 127
 
 
 class _UnsignedIntType(_IntegerType):
     name = "unsignedInt"
+    min_value = 0
+    max_value = 4294967295
 
 
 class _UnsignedShortType(_IntegerType):
     name = "unsignedShort"
+    min_value = 0
+    max_value = 65535
 
 
 class _UnsignedByteType(_IntegerType):
     name = "unsignedByte"
+    min_value = 0
+    max_value = 255
 
 
 class _UnsignedLongType(_IntegerType):
     name = "unsignedLong"
+    min_value = 0
+    max_value = 18446744073709551615
 
 
 class _PositiveIntegerType(_IntegerType):
     name = "positiveInteger"
+    min_value = 1
 
 
 class _NonNegativeIntegerType(_IntegerType):
     name = "nonNegativeInteger"
+    min_value = 0
 
 
 # ---------------------------------------------------------------------------
@@ -191,19 +224,51 @@ class _DateTimeType(XsdType):
         return str(value)
 
     def from_xml(self, s: str) -> str:
+        try:
+            datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError as err:
+            raise ValueError(f"Invalid {self.name} value: {s!r}") from err
         return s
 
 
-class _DateType(_DateTimeType):
+class _DateType(XsdType):
     name = "date"
 
+    def to_xml(self, value: Any) -> str:
+        return str(value)
 
-class _TimeType(_DateTimeType):
+    def from_xml(self, s: str) -> str:
+        try:
+            date.fromisoformat(s)
+        except ValueError as err:
+            raise ValueError(f"Invalid {self.name} value: {s!r}") from err
+        return s
+
+
+class _TimeType(XsdType):
     name = "time"
 
+    def to_xml(self, value: Any) -> str:
+        return str(value)
 
-class _DurationType(_DateTimeType):
+    def from_xml(self, s: str) -> str:
+        try:
+            time.fromisoformat(s.replace("Z", "+00:00"))
+        except ValueError as err:
+            raise ValueError(f"Invalid {self.name} value: {s!r}") from err
+        return s
+
+
+class _DurationType(XsdType):
     name = "duration"
+
+    def to_xml(self, value: Any) -> str:
+        return str(value)
+
+    def from_xml(self, s: str) -> str:
+        if not _DURATION_RE.fullmatch(s) or not any(c.isdigit() for c in s):
+            raise ValueError(f"Invalid {self.name} value: {s!r}")
+        return s
 
 
 # ---------------------------------------------------------------------------
