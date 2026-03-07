@@ -27,8 +27,19 @@ from soapbar.core.envelope import (
 )
 from soapbar.core.fault import SoapFault
 from soapbar.core.namespaces import NS
-from soapbar.core.types import XsdType, xsd
-from soapbar.core.wsdl import WsdlDefinition
+from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType, XsdType, xsd
+from soapbar.core.wsdl import (
+    WsdlBinding,
+    WsdlBindingOperation,
+    WsdlDefinition,
+    WsdlMessage,
+    WsdlOperation,
+    WsdlOperationMessage,
+    WsdlPart,
+    WsdlPort,
+    WsdlPortType,
+    WsdlService,
+)
 from soapbar.core.wsdl.builder import build_wsdl, build_wsdl_bytes, build_wsdl_string
 from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
 from soapbar.core.xml import parse_xml, parse_xml_document, to_bytes, to_string
@@ -49,6 +60,9 @@ __all__ = [  # noqa: RUF022
     "to_bytes",
     "xsd",
     "XsdType",
+    "ComplexXsdType",
+    "ArrayXsdType",
+    "ChoiceXsdType",
     "SoapFault",
     "BindingStyle",
     "OperationSignature",
@@ -63,7 +77,16 @@ __all__ = [  # noqa: RUF022
     "build_response",
     "build_fault",
     "http_headers",
+    "WsdlBinding",
+    "WsdlBindingOperation",
     "WsdlDefinition",
+    "WsdlMessage",
+    "WsdlOperation",
+    "WsdlOperationMessage",
+    "WsdlPart",
+    "WsdlPort",
+    "WsdlPortType",
+    "WsdlService",
     "parse_wsdl",
     "parse_wsdl_file",
     "build_wsdl",

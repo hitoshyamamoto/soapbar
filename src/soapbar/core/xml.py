@@ -112,11 +112,11 @@ def collect_namespaces(elem: _Element) -> dict[str, str]:
 
 
 def local_name(elem: _Element) -> str:
-    return etree.QName(elem.tag).localname
+    return etree.QName(elem.tag).localname  # type: ignore[arg-type]
 
 
 def namespace_uri(elem: _Element) -> str | None:
-    return etree.QName(elem.tag).namespace
+    return etree.QName(elem.tag).namespace  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
