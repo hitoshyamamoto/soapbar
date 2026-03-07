@@ -2,6 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/license-MIT%20with%20Attribution-green)
+![Coverage](https://img.shields.io/badge/coverage-passing-brightgreen)
 
 A SOAP framework for Python — client, server, and WSDL handling.
 
@@ -23,9 +24,15 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 10. [XSD type system](#xsd-type-system)
 11. [Fault handling](#fault-handling)
 12. [Security](#security)
-13. [Inspired by](#inspired-by)
-14. [Learn more](#learn-more)
-15. [License](#license)
+13. [Interoperability](#interoperability)
+14. [Architecture](#architecture)
+15. [Public API](#public-api)
+16. [Comparison with alternatives](#comparison-with-alternatives)
+17. [Development setup](#development-setup)
+18. [Inspired by](#inspired-by)
+19. [Learn more](#learn-more)
+20. [Known Limitations](#known-limitations)
+21. [License](#license)
 
 ---
 
@@ -39,6 +46,8 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - ⚠️ XXE-safe hardened XML parser (lxml, `resolve_entities=False`, `no_network=True`, `load_dtd=False`)
 - XSD type registry with 27 built-in types
 - Sync and async HTTP client (httpx optional)
+- Interoperable with zeep and spyne out-of-the-box (verified by integration tests)
+- Full type annotations + `py.typed` marker (PEP 561)
 - Python 3.10 – 3.14
 
 ---
@@ -65,11 +74,11 @@ uv add "soapbar[all]"
 
 ## Quick start — server
 
+### Variant A — standalone (bare ASGI, no framework)
+
 ```python
 # app.py
-from soapbar.server.service import SoapService, soap_operation
-from soapbar.server.application import SoapApplication
-from soapbar.server.asgi import AsgiSoapApp
+from soapbar import SoapService, soap_operation, SoapApplication, AsgiSoapApp
 
 
 class CalculatorService(SoapService):
@@ -85,19 +94,30 @@ class CalculatorService(SoapService):
         return a - b
 
 
-soap_app = SoapApplication(service_url="http://localhost:8000/soap")
+soap_app = SoapApplication(service_url="http://localhost:8000")
 soap_app.register(CalculatorService())
 
 app = AsgiSoapApp(soap_app)
+# Run: uvicorn app:app --port 8000
+# WSDL: GET http://localhost:8000?wsdl
 ```
 
-Run with uvicorn:
+### Variant B — mounted inside FastAPI
 
-```bash
-uvicorn app:app --port 8000
+```python
+from fastapi import FastAPI
+from soapbar import SoapApplication, AsgiSoapApp
+
+# ... (same CalculatorService class as above) ...
+
+soap_app = SoapApplication(service_url="http://localhost:8000/soap")
+soap_app.register(CalculatorService())
+
+api = FastAPI()
+api.mount("/soap", AsgiSoapApp(soap_app))
+# Run: uvicorn app:api --port 8000
+# WSDL: GET http://localhost:8000/soap?wsdl
 ```
-
-WSDL is available at `GET http://localhost:8000/soap?wsdl`.
 
 ---
 
@@ -116,6 +136,8 @@ References:
 - [Stack Overflow — Document vs RPC style](https://stackoverflow.com/questions/9062475/what-is-the-difference-between-document-style-and-rpc-style-communication)
 
 ### The five combinations
+
+`BindingStyle` is importable as `from soapbar import BindingStyle`.
 
 | `BindingStyle` enum | WSDL style | WSDL use | WS-I BP | Notes |
 |---|---|---|---|---|
@@ -186,10 +208,8 @@ Use `DOCUMENT_LITERAL_WRAPPED` unless you are interoperating with a legacy syste
 
 ```python
 from decimal import Decimal
-from soapbar.server.service import SoapService, soap_operation
-from soapbar.core.binding import BindingStyle, OperationParameter
-from soapbar.core.envelope import SoapVersion
-from soapbar.core.types import xsd
+from soapbar import SoapService, soap_operation, BindingStyle, SoapVersion, xsd
+from soapbar import OperationParameter
 
 
 class PricingService(SoapService):
@@ -219,6 +239,17 @@ class PricingService(SoapService):
         return Decimal("9.99") * quantity
 ```
 
+### `SoapService` class attribute defaults
+
+| Attribute | Default | Notes |
+|---|---|---|
+| `__service_name__` | class name | Used in WSDL `<service name="">` |
+| `__tns__` | `"http://example.com/{name}"` | Target namespace |
+| `__binding_style__` | `BindingStyle.DOCUMENT_LITERAL_WRAPPED` | Recommended default |
+| `__soap_version__` | `SoapVersion.SOAP_11` | Change to `SOAP_12` if needed |
+| `__port_name__` | `"{name}Port"` | WSDL port name |
+| `__service_url__` | `""` | Override or pass to `SoapApplication` |
+
 ---
 
 ## SOAP versions
@@ -234,7 +265,7 @@ class PricingService(SoapService):
 soapbar detects the SOAP version automatically from the envelope namespace and translates fault codes between versions when building responses.
 
 ```python
-from soapbar.core.envelope import SoapVersion
+from soapbar import SoapVersion
 
 SoapVersion.SOAP_11   # SOAP 1.1
 SoapVersion.SOAP_12   # SOAP 1.2
@@ -263,8 +294,7 @@ ASGI servers (Uvicorn, Hypercorn, Daphne) can run `AsgiSoapApp` directly.
 
 ```python
 from fastapi import FastAPI
-from soapbar.server.application import SoapApplication
-from soapbar.server.asgi import AsgiSoapApp
+from soapbar import SoapApplication, AsgiSoapApp
 
 soap_app = SoapApplication(service_url="http://localhost:8000/soap")
 soap_app.register(CalculatorService())
@@ -277,7 +307,7 @@ api.mount("/soap", AsgiSoapApp(soap_app))
 
 | Framework | How to mount |
 |---|---|
-| **Flask** | `DispatcherMiddleware` or replace `app.wsgi_app` |
+| **Flask** | `DispatcherMiddleware` or replace `app.wsgi_app` (requires `werkzeug`) |
 | **Django** (classic WSGI) | Mount as sub-application in `urls.py` |
 | **Falcon** | `app.add_sink(WsgiSoapApp(soap_app), "/soap")` |
 | **Bottle** | `app.mount("/soap", WsgiSoapApp(soap_app))` |
@@ -290,8 +320,7 @@ WSGI servers (Gunicorn, uWSGI, mod_wsgi) can run `WsgiSoapApp` directly.
 ```python
 from flask import Flask
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
-from soapbar.server.application import SoapApplication
-from soapbar.server.wsgi import WsgiSoapApp
+from soapbar import SoapApplication, WsgiSoapApp
 
 soap_app = SoapApplication(service_url="http://localhost:8000/soap")
 soap_app.register(CalculatorService())
@@ -317,7 +346,7 @@ Served automatically at `GET ?wsdl` when using `AsgiSoapApp` or `WsgiSoapApp`.
 **Parse an existing WSDL** to inspect its structure:
 
 ```python
-from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
+from soapbar import parse_wsdl, parse_wsdl_file
 
 defn = parse_wsdl(wsdl_bytes)          # from bytes/str
 defn = parse_wsdl_file("service.wsdl") # from file
@@ -335,8 +364,7 @@ soap_app = SoapApplication(custom_wsdl=open("my_service.wsdl", "rb").read())
 
 ```python
 import asyncio
-from soapbar.client.client import SoapClient
-from soapbar.core.fault import SoapFault
+from soapbar import SoapClient, SoapFault
 
 # From a live WSDL URL (fetches WSDL over HTTP)
 client = SoapClient(wsdl_url="http://localhost:8000/soap?wsdl")
@@ -348,8 +376,7 @@ client = SoapClient.from_wsdl_string(wsdl_bytes)
 client = SoapClient.from_file("service.wsdl")
 
 # Manual — no WSDL, specify endpoint and style directly
-from soapbar.core.binding import BindingStyle
-from soapbar.core.envelope import SoapVersion
+from soapbar import BindingStyle, SoapVersion
 
 client = SoapClient.manual(
     address="http://localhost:8000/soap",
@@ -375,6 +402,36 @@ async def main():
 asyncio.run(main())
 ```
 
+### `HttpTransport` options
+
+```python
+from soapbar import SoapClient, HttpTransport
+
+transport = HttpTransport(timeout=60.0, verify_ssl=False)
+client = SoapClient(wsdl_url="http://localhost:8000/soap?wsdl", transport=transport)
+```
+
+### Advanced: manual client with explicit operation signature
+
+Use `register_operation` when you need full control over the operation schema without a WSDL:
+
+```python
+from soapbar import SoapClient, OperationSignature, OperationParameter, BindingStyle, xsd
+
+sig = OperationSignature(
+    name="Add",
+    input_params=[
+        OperationParameter("a", xsd.resolve("int")),
+        OperationParameter("b", xsd.resolve("int")),
+    ],
+    output_params=[OperationParameter("return", xsd.resolve("int"))],
+)
+
+client = SoapClient.manual("http://host/soap", binding_style=BindingStyle.RPC_LITERAL)
+client.register_operation(sig)
+result = client.call("Add", a=3, b=4)  # 7
+```
+
 ---
 
 ## XSD type system
@@ -382,7 +439,7 @@ asyncio.run(main())
 soapbar includes a registry of 27 built-in XSD types. Types handle serialization to and from XML text.
 
 ```python
-from soapbar.core.types import xsd
+from soapbar import xsd
 
 # Resolve a type by XSD name
 int_type = xsd.resolve("int")        # XsdType for xsd:int
@@ -395,6 +452,9 @@ xsd_type = xsd.python_to_xsd(str)    # -> xsd:string XsdType
 # Serialize / deserialize
 int_type.to_xml(42)       # "42"
 int_type.from_xml("42")   # 42
+
+# Inspect all registered types
+all_types = xsd.all_types()
 ```
 
 Python → XSD mapping:
@@ -412,8 +472,33 @@ Python → XSD mapping:
 
 ## Fault handling
 
+### Raising a fault from a service method
+
 ```python
-from soapbar.core.fault import SoapFault
+from soapbar import SoapService, soap_operation, SoapFault
+
+
+class StrictCalculator(SoapService):
+    __service_name__ = "StrictCalculator"
+    __tns__ = "http://example.com/calc"
+
+    @soap_operation()
+    def divide(self, a: int, b: int) -> int:
+        if b == 0:
+            raise SoapFault(
+                faultcode="Client",
+                faultstring="Division by zero",
+                detail="b must be non-zero",
+            )
+        return a // b
+```
+
+`SoapClient.call()` and `call_async()` automatically raise `SoapFault` when the server returns a fault response.
+
+### Creating and rendering faults manually
+
+```python
+from soapbar import SoapFault
 
 # Create a fault
 fault = SoapFault(
@@ -432,14 +517,6 @@ fault_12 = SoapFault(
     faultstring="Validation error",
     subcodes=["tns:InvalidQuantity"],
 )
-
-# Parse a fault from a response
-from soapbar.core.envelope import SoapEnvelope
-
-envelope = SoapEnvelope.from_xml(response_bytes)
-if envelope.is_fault:
-    fault = envelope.fault   # SoapFault instance
-    raise fault
 ```
 
 Fault code translation is automatic:
@@ -467,6 +544,123 @@ Entity references (potential XXE payloads) are silently dropped rather than expa
 
 ---
 
+## Interoperability
+
+soapbar is tested against zeep and spyne via integration tests.
+
+- **zeep → soapbar**: a zeep client can call a soapbar server without modification. The WSDL generated by soapbar is zeep-parseable.
+- **soapbar → spyne**: a soapbar client can call a spyne server using RPC/Literal.
+- **soapbar ↔ soapbar**: full round-trip tested for all binding styles and both SOAP versions.
+
+---
+
+## Architecture
+
+```
+  HTTP request
+       │
+       ▼
+┌─────────────────┐
+│ AsgiSoapApp /   │   ← thin ASGI/WSGI adapters
+│ WsgiSoapApp     │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ SoapApplication │   ← dispatcher: version detection,
+│                 │     operation routing, fault wrapping
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  SoapService    │   ← your business logic lives here
+│  @soap_operation│
+└────────┬────────┘
+         │ calls binding serializer + envelope builder
+         ▼
+┌─────────────────┐
+│  core/          │   ← binding.py · envelope.py · types.py
+│  binding/types/ │       wsdl/ · xml.py · fault.py
+│  envelope/wsdl  │
+└─────────────────┘
+```
+
+---
+
+## Public API
+
+The most-used symbols are all importable from the top-level `soapbar` namespace:
+
+| Symbol | Import | Description |
+|--------|--------|-------------|
+| `SoapService` | `from soapbar import SoapService` | Base class for SOAP services |
+| `soap_operation` | `from soapbar import soap_operation` | Decorator for service methods |
+| `SoapApplication` | `from soapbar import SoapApplication` | SOAP dispatcher/router |
+| `AsgiSoapApp` | `from soapbar import AsgiSoapApp` | ASGI adapter |
+| `WsgiSoapApp` | `from soapbar import WsgiSoapApp` | WSGI adapter |
+| `SoapClient` | `from soapbar import SoapClient` | SOAP client |
+| `HttpTransport` | `from soapbar import HttpTransport` | HTTP transport layer |
+| `SoapFault` | `from soapbar import SoapFault` | SOAP fault exception |
+| `BindingStyle` | `from soapbar import BindingStyle` | Binding style enum |
+| `SoapVersion` | `from soapbar import SoapVersion` | SOAP version enum |
+| `xsd` | `from soapbar import xsd` | XSD type registry |
+| `parse_wsdl` | `from soapbar import parse_wsdl` | Parse WSDL from bytes/str |
+| `parse_wsdl_file` | `from soapbar import parse_wsdl_file` | Parse WSDL from a file path |
+| `build_wsdl_string` | `from soapbar import build_wsdl_string` | Generate WSDL as string |
+| `OperationParameter` | `from soapbar import OperationParameter` | Parameter descriptor for operations |
+| `OperationSignature` | `from soapbar import OperationSignature` | Full operation signature (manual client) |
+
+---
+
+## Comparison with alternatives
+
+| Capability | **soapbar** | zeep | spyne | fastapi-soap |
+|---|---|---|---|---|
+| SOAP client | ✓ | ✓ | ✗ | ✗ |
+| SOAP server | ✓ | ✗ | ✓ | ✓ |
+| All 5 binding styles | ✓ | ✓ (client) | ✓ | Partial |
+| SOAP 1.1 + 1.2 | ✓ | ✓ | ✓ | 1.1 only |
+| ASGI frameworks | ✓ | ✗ | ✗ | FastAPI only |
+| WSGI frameworks | ✓ | ✗ | ✓ | ✗ |
+| Auto WSDL generation | ✓ | ✗ | ✓ | ✓ |
+| WSDL-driven client | ✓ | ✓ | ✗ | ✗ |
+| XXE hardened by default | ✓ | ? | ? | ? |
+| Core dependency | lxml | lxml, requests | lxml | fastapi, lxml |
+| Async HTTP client | httpx (optional) | httpx (optional) | — | — |
+| Python versions | 3.10–3.14 | 3.8+ | 3.8+ | 3.8+ |
+
+soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, and is hardened against XXE attacks out of the box.
+
+---
+
+## Development setup
+
+```bash
+git clone https://github.com/hitoshyamamoto/soapbar
+cd soapbar
+uv sync --group dev --group lint --group type
+
+# Run tests
+uv run pytest tests/ -v
+
+# Lint
+uv run ruff check src/ tests/
+
+# Type check
+uv run mypy src/
+```
+
+Run the example server (requires FastAPI + uvicorn):
+
+```bash
+pip install fastapi uvicorn
+uvicorn examples.calculator_fastapi:app --reload --port 8000
+```
+
+Then fetch the WSDL: `curl http://localhost:8000/soap?wsdl`
+
+---
+
 ## Inspired by
 
 - **[Spyne](https://github.com/arskom/spyne)** — the original comprehensive Python SOAP/RPC framework; inspired the service-class model and binding style abstractions.
@@ -491,6 +685,21 @@ Entity references (potential XXE payloads) are silently dropped rather than expa
 - [IBM developerWorks — Which WSDL style?](https://developer.ibm.com/articles/ws-whichwsdl/)
 - [DZone — Different SOAP encoding styles](https://dzone.com/articles/different-soap-encoding-styles)
 - [Stack Overflow — Document vs RPC style](https://stackoverflow.com/questions/9062475/what-is-the-difference-between-document-style-and-rpc-style-communication)
+
+---
+
+## Known Limitations
+
+The following features are intentionally out-of-scope for the current release.  Behaviour is well-defined in each case (documented exception or graceful exposure).
+
+| Area | Status | Notes |
+|------|--------|-------|
+| **MTOM/XOP** | Detected; HTTP 415 + SOAP fault returned | Full multipart SOAP attachment processing is not implemented. If the client sends a `multipart/related` request that carries XOP, the server returns a `415 Unsupported Media Type` response with a SOAP fault. The transport layer raises `NotImplementedError` if an MTOM response is received. |
+| **WS-Security** | Header element exposed, not processed | The `wsse:Security` header is detected and the raw element is available as `envelope.ws_security_element`. Signature verification, token validation, and encryption are out of scope. |
+| **WS-Addressing** | Headers parsed into `WsaHeaders` dataclass | Inbound WS-Addressing headers (`MessageID`, `To`, `Action`, `ReplyTo`, `FaultTo`, etc.) are parsed and exposed on `envelope.ws_addressing`. The server does **not** automatically set `MessageID` or `Action` in response envelopes. |
+| **SOAP 1.2 `relay` attribute** | Parsed and exposed on `SoapHeaderBlock` | The `relay` boolean is available on each `SoapHeaderBlock` instance. Full SOAP intermediary forwarding (actually relaying the message) is not implemented. |
+| **`xsd:complexType` / `xsd:array` / `xsd:choice`** | Fully supported for round-trip serialization | Recursive (`self-referencing`) complex types are resolved lazily. `xsd:complexContent/restriction` for SOAP-encoded arrays is also parsed from WSDL. |
+| **External schema `xsd:import`** | Not followed | `wsdl:import` (document-level) is resolved. `xsd:import` elements *inside* a `<types>` schema are silently ignored; type resolution falls back to built-in primitives. |
 
 ---
 
