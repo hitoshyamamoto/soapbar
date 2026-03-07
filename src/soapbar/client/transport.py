@@ -18,10 +18,18 @@ class HttpTransport:
     ) -> tuple[int, str, bytes]:
         """Send SOAP request. Returns (status, content_type, body)."""
         try:
-            import httpx  # noqa: F401
+            import httpx as _httpx  # noqa: F401
             return self._send_httpx(url, body, headers)
         except ImportError:
             return self._send_urllib(url, body, headers)
+
+    @staticmethod
+    def _check_mtom_response(content_type: str) -> None:
+        if "multipart/related" in content_type.lower():
+            raise NotImplementedError(
+                "MTOM/XOP responses are not supported. "
+                "The server returned a multipart response."
+            )
 
     def _send_httpx(
         self,
@@ -34,6 +42,7 @@ class HttpTransport:
         with httpx.Client(timeout=self.timeout, verify=verify) as client:
             resp = client.post(url, content=body, headers=headers)
             ct = resp.headers.get("content-type", "text/xml")
+            self._check_mtom_response(ct)
             return resp.status_code, ct, resp.content
 
     def _send_urllib(
@@ -46,6 +55,7 @@ class HttpTransport:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
                 ct = resp.headers.get("Content-Type", "text/xml")
+                self._check_mtom_response(ct)
                 return resp.status, ct, resp.read()
         except urllib.error.HTTPError as e:
             ct = e.headers.get("Content-Type", "text/xml")
@@ -68,6 +78,7 @@ class HttpTransport:
         async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
             resp = await client.post(url, content=body, headers=headers)
             ct = resp.headers.get("content-type", "text/xml")
+            self._check_mtom_response(ct)
             return resp.status_code, ct, resp.content
 
     def fetch(self, url: str) -> bytes:
@@ -77,7 +88,7 @@ class HttpTransport:
             with httpx.Client(timeout=self.timeout, verify=self.verify_ssl) as client:
                 resp = client.get(url)
                 resp.raise_for_status()
-                return resp.content
+                return bytes(resp.content)
         except ImportError:
             with urllib.request.urlopen(url, timeout=self.timeout) as resp:  # noqa: S310
-                return resp.read()
+                return bytes(resp.read())
