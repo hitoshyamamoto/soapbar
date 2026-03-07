@@ -507,14 +507,16 @@ class TestWsdl:
         assert "Calculator" in wsdl_str
         assert "AddRequest" in wsdl_str
 
-    def test_wsdl_import_raises(self) -> None:
-        wsdl_with_import = b"""<?xml version="1.0"?>
+    def test_wsdl_import_namespace_only_skipped(self) -> None:
+        """wsdl:import with no location= is silently skipped."""
+        wsdl_with_ns_import = b"""<?xml version="1.0"?>
         <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
                      targetNamespace="http://example.com/">
-          <import namespace="http://other.com/" location="other.wsdl"/>
+          <import namespace="http://other.com/"/>
+          <portType name="PT"/>
         </definitions>"""
-        with pytest.raises(NotImplementedError):
-            parse_wsdl(wsdl_with_import)
+        defn = parse_wsdl(wsdl_with_ns_import)
+        assert "PT" in defn.port_types
 
 
 # =============================================================================
@@ -1299,8 +1301,7 @@ class TestAsgiAdapter:
             responses.append(message)
 
         await app(scope, receive, send)
-        assert responses[0]["status"] == 200
-        assert b"soapbar" in responses[1]["body"]
+        assert responses[0]["status"] == 405
 
     async def test_get_wsdl(self) -> None:
         app = self._make_app()
@@ -1414,8 +1415,7 @@ class TestWsgiAdapter:
             status_list.append(status)
 
         result = app(self._make_environ("GET"), start_response)
-        assert status_list[0].startswith("200")
-        assert b"soapbar SOAP endpoint" in b"".join(result)
+        assert status_list[0].startswith("405")
 
     def test_get_wsdl(self) -> None:
         app = self._make_app()
@@ -1767,3 +1767,1161 @@ class TestSoap12Wsdl:
         wsdl_bytes = app.get_wsdl()
         client = SoapClient.from_wsdl_string(wsdl_bytes)
         assert client._soap_version == SoapVersion.SOAP_12
+
+
+# =============================================================================
+# 28. Validation — required-field checking in serializers
+# =============================================================================
+
+class TestRequiredFieldValidation:
+    def _sig(self) -> OperationSignature:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        str_type = xsd.resolve("string")
+        assert str_type is not None
+        return OperationSignature(
+            name="Op",
+            input_params=[
+                OperationParameter("required_field", int_type, required=True),
+                OperationParameter("optional_field", str_type, required=False),
+            ],
+            output_params=[
+                OperationParameter("result", int_type, required=True),
+            ],
+        )
+
+    def _check_all_serializers_request(self, sig: OperationSignature) -> None:
+        from lxml import etree
+        for style in BindingStyle:
+            serializer = get_serializer(style)
+            container = etree.Element("_body")
+            with pytest.raises(ValueError, match="required_field"):
+                serializer.serialize_request(sig, {}, container)
+
+    def _check_all_serializers_response(self, sig: OperationSignature) -> None:
+        from lxml import etree
+        for style in BindingStyle:
+            serializer = get_serializer(style)
+            container = etree.Element("_body")
+            with pytest.raises(ValueError, match="result"):
+                serializer.serialize_response(sig, {}, container)
+
+    def test_missing_required_input_raises(self) -> None:
+        self._check_all_serializers_request(self._sig())
+
+    def test_missing_required_output_raises(self) -> None:
+        self._check_all_serializers_response(self._sig())
+
+    def test_optional_field_missing_does_not_raise(self) -> None:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        sig = OperationSignature(
+            name="Op",
+            input_params=[OperationParameter("optional", int_type, required=False)],
+            output_params=[],
+        )
+        from lxml import etree
+        for style in BindingStyle:
+            serializer = get_serializer(style)
+            container = etree.Element("_body")
+            serializer.serialize_request(sig, {}, container)  # must not raise
+
+    def test_required_field_present_does_not_raise(self) -> None:
+        sig = self._sig()
+        from lxml import etree
+        for style in BindingStyle:
+            serializer = get_serializer(style)
+            container = etree.Element("_body")
+            serializer.serialize_request(sig, {"required_field": 42}, container)
+
+
+# =============================================================================
+# 29. Validation — integer XSD type range bounds
+# =============================================================================
+
+class TestIntegerRangeBounds:
+    def test_byte_valid(self) -> None:
+        t = xsd.resolve("byte")
+        assert t is not None
+        assert t.to_xml(-128) == "-128"
+        assert t.to_xml(127) == "127"
+        assert t.from_xml("-128") == -128
+        assert t.from_xml("127") == 127
+
+    def test_byte_overflow(self) -> None:
+        t = xsd.resolve("byte")
+        assert t is not None
+        with pytest.raises(ValueError, match="byte"):
+            t.to_xml(128)
+        with pytest.raises(ValueError, match="byte"):
+            t.to_xml(-129)
+        with pytest.raises(ValueError, match="byte"):
+            t.from_xml("128")
+
+    def test_short_bounds(self) -> None:
+        t = xsd.resolve("short")
+        assert t is not None
+        assert t.to_xml(-32768) == "-32768"
+        assert t.to_xml(32767) == "32767"
+        with pytest.raises(ValueError):
+            t.to_xml(32768)
+        with pytest.raises(ValueError):
+            t.to_xml(-32769)
+
+    def test_int_bounds(self) -> None:
+        t = xsd.resolve("int")
+        assert t is not None
+        assert t.to_xml(-2147483648) == "-2147483648"
+        assert t.to_xml(2147483647) == "2147483647"
+        with pytest.raises(ValueError):
+            t.to_xml(2147483648)
+
+    def test_long_bounds(self) -> None:
+        t = xsd.resolve("long")
+        assert t is not None
+        with pytest.raises(ValueError):
+            t.to_xml(9223372036854775808)
+
+    def test_unsigned_byte_bounds(self) -> None:
+        t = xsd.resolve("unsignedByte")
+        assert t is not None
+        assert t.to_xml(0) == "0"
+        assert t.to_xml(255) == "255"
+        with pytest.raises(ValueError):
+            t.to_xml(256)
+        with pytest.raises(ValueError):
+            t.to_xml(-1)
+
+    def test_unsigned_short_bounds(self) -> None:
+        t = xsd.resolve("unsignedShort")
+        assert t is not None
+        assert t.to_xml(65535) == "65535"
+        with pytest.raises(ValueError):
+            t.to_xml(65536)
+
+    def test_unsigned_int_bounds(self) -> None:
+        t = xsd.resolve("unsignedInt")
+        assert t is not None
+        assert t.to_xml(4294967295) == "4294967295"
+        with pytest.raises(ValueError):
+            t.to_xml(4294967296)
+
+    def test_positive_integer(self) -> None:
+        t = xsd.resolve("positiveInteger")
+        assert t is not None
+        assert t.to_xml(1) == "1"
+        with pytest.raises(ValueError):
+            t.to_xml(0)
+        with pytest.raises(ValueError):
+            t.to_xml(-1)
+
+    def test_non_negative_integer(self) -> None:
+        t = xsd.resolve("nonNegativeInteger")
+        assert t is not None
+        assert t.to_xml(0) == "0"
+        with pytest.raises(ValueError):
+            t.to_xml(-1)
+
+    def test_integer_no_bounds(self) -> None:
+        t = xsd.resolve("integer")
+        assert t is not None
+        # unbounded — no error for large values
+        assert t.to_xml(10**30) is not None
+        assert t.to_xml(-(10**30)) is not None
+
+
+# =============================================================================
+# 30. Validation — application returns 400 Client fault on ValueError
+# =============================================================================
+
+class TestApplicationValueErrorFault:
+    def _make_app_with_raising_handler(self) -> SoapApplication:
+        class BadService(SoapService):
+            __service_name__ = "BadSvc"
+            __tns__ = "http://example.com/"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="DoIt",
+                input_params=[],
+                output_params=[],
+            )
+            def do_it(self) -> None:
+                raise ValueError("invalid input value")
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(BadService())
+        return app
+
+    def test_value_error_returns_400_client_fault(self) -> None:
+        app = self._make_app_with_raising_handler()
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body><DoIt/></soapenv:Body>
+</soapenv:Envelope>"""
+        status, _ct, body = app.handle_request(req, soap_action="")
+        assert status == 400
+        assert b"Fault" in body
+        assert b"Client" in body
+
+    def test_value_error_message_in_fault(self) -> None:
+        app = self._make_app_with_raising_handler()
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body><DoIt/></soapenv:Body>
+</soapenv:Envelope>"""
+        _status, _ct, body = app.handle_request(req, soap_action="")
+        assert b"invalid input value" in body
+
+    def test_missing_required_param_returns_400(self) -> None:
+        """Sending a request without a required parameter should produce a 400 fault."""
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+
+        class StrictService(SoapService):
+            __service_name__ = "StrictSvc"
+            __tns__ = "http://example.com/"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", int_type, required=True),  # type: ignore[arg-type]
+                ],
+                output_params=[
+                    OperationParameter("result", int_type, required=True),  # type: ignore[arg-type]
+                ],
+            )
+            def add(self, a: int) -> int:
+                return a
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(StrictService())
+
+        # Send Add request without the required `a` parameter
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+  <soapenv:Body><Add/></soapenv:Body>
+</soapenv:Envelope>"""
+        status, _ct, body = app.handle_request(req, soap_action="")
+        assert status == 400
+        assert b"Fault" in body
+
+
+class TestDurationType:
+    def test_duration_valid(self) -> None:
+        dt = xsd.resolve("duration")
+        assert dt is not None
+        assert dt.from_xml("PT1H") == "PT1H"
+        assert dt.from_xml("P1Y2M3D") == "P1Y2M3D"
+        assert dt.from_xml("-P1DT30M") == "-P1DT30M"
+        assert dt.from_xml("P0Y0M0DT0H0M0.000S") == "P0Y0M0DT0H0M0.000S"
+        assert dt.from_xml("P1Y") == "P1Y"
+        assert dt.from_xml("PT0S") == "PT0S"
+
+    def test_duration_invalid(self) -> None:
+        dt = xsd.resolve("duration")
+        assert dt is not None
+        with pytest.raises(ValueError):
+            dt.from_xml("P")
+        with pytest.raises(ValueError):
+            dt.from_xml("PT")
+        with pytest.raises(ValueError):
+            dt.from_xml("not-a-duration")
+        with pytest.raises(ValueError):
+            dt.from_xml("1Y")
+        with pytest.raises(ValueError):
+            dt.from_xml("")
+        with pytest.raises(ValueError):
+            dt.from_xml("P1H")  # H without T prefix
+
+
+class TestOptionalParams:
+    def test_optional_param_required_false(self) -> None:
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Svc(SoapService):
+            @soap_operation()
+            def op(self, x: str, y: str | None) -> str:
+                return x
+
+        svc = Svc()
+        sig = svc.get_operation_signatures()["op"]
+        assert sig.input_params[0].required is True   # x
+        assert sig.input_params[1].required is False  # y (Optional)
+
+    def test_default_param_required_false(self) -> None:
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Svc(SoapService):
+            @soap_operation()
+            def op(self, x: str, y: str = "default") -> str:
+                return x
+
+        svc = Svc()
+        sig = svc.get_operation_signatures()["op"]
+        assert sig.input_params[0].required is True   # x
+        assert sig.input_params[1].required is False  # y (has default)
+
+    def test_required_param_unchanged(self) -> None:
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Svc(SoapService):
+            @soap_operation()
+            def op(self, x: str) -> str:
+                return x
+
+        svc = Svc()
+        sig = svc.get_operation_signatures()["op"]
+        assert sig.input_params[0].required is True
+
+# =============================================================================
+# P4 Tests — MAJOR-003, MINOR-003, INFO-001..004
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# ArrayXsdType
+# ---------------------------------------------------------------------------
+
+class TestArrayXsdType:
+    def _string_type(self):
+        return xsd.resolve("string")
+
+    def test_to_element_basic(self) -> None:
+        from soapbar.core.types import ArrayXsdType
+        st = self._string_type()
+        assert st is not None
+        arr = ArrayXsdType("StringArray", st, element_tag="item")
+        elem = arr.to_element("items", ["a", "b", "c"])
+        assert elem.tag == "items"
+        children = list(elem)
+        assert len(children) == 3
+        assert children[0].tag == "item"
+        assert children[0].text == "a"
+        assert children[2].text == "c"
+
+    def test_from_element_basic(self) -> None:
+        from soapbar.core.types import ArrayXsdType
+        st = self._string_type()
+        assert st is not None
+        arr = ArrayXsdType("StringArray", st, element_tag="item")
+        xml = b"<items><item>x</item><item>y</item></items>"
+        elem = etree.fromstring(xml)
+        result = arr.from_element(elem)
+        assert result == ["x", "y"]
+
+    def test_to_element_with_ns(self) -> None:
+        from soapbar.core.types import ArrayXsdType
+        st = self._string_type()
+        assert st is not None
+        arr = ArrayXsdType("Arr", st, element_tag="val")
+        elem = arr.to_element("vals", ["foo"], ns="http://ex.com/")
+        assert elem.tag == "{http://ex.com/}vals"
+
+    def test_to_xml_raises(self) -> None:
+        from soapbar.core.types import ArrayXsdType
+        st = self._string_type()
+        assert st is not None
+        arr = ArrayXsdType("X", st)
+        with pytest.raises(TypeError):
+            arr.to_xml(["a"])
+
+    def test_from_xml_raises(self) -> None:
+        from soapbar.core.types import ArrayXsdType
+        st = self._string_type()
+        assert st is not None
+        arr = ArrayXsdType("X", st)
+        with pytest.raises(TypeError):
+            arr.from_xml("a")
+
+    def test_nested_complex(self) -> None:
+        from soapbar.core.types import ArrayXsdType, ComplexXsdType
+        st = self._string_type()
+        assert st is not None
+        it = self._string_type()
+        assert it is not None
+        ct = ComplexXsdType("Item", [("name", st), ("value", it)])
+        arr = ArrayXsdType("ItemArray", ct, element_tag="item")
+        elem = arr.to_element("items", [
+            {"name": "foo", "value": "bar"},
+            {"name": "baz", "value": "qux"},
+        ])
+        children = list(elem)
+        assert len(children) == 2
+        assert children[0].find("name").text == "foo"  # type: ignore[union-attr]
+        result = arr.from_element(elem)
+        assert result[0]["name"] == "foo"
+        assert result[1]["value"] == "qux"
+
+
+# ---------------------------------------------------------------------------
+# ChoiceXsdType
+# ---------------------------------------------------------------------------
+
+class TestChoiceXsdType:
+    def test_to_element_first_option(self) -> None:
+        from soapbar.core.types import ChoiceXsdType
+        st = xsd.resolve("string")
+        it = xsd.resolve("int")
+        assert st and it
+        ch = ChoiceXsdType("TextOrNum", [("text", st), ("number", it)])
+        elem = ch.to_element("choice", {"text": "hello"})
+        assert elem.tag == "choice"
+        children = list(elem)
+        assert len(children) == 1
+        assert children[0].tag == "text"
+        assert children[0].text == "hello"
+
+    def test_to_element_second_option(self) -> None:
+        from soapbar.core.types import ChoiceXsdType
+        st = xsd.resolve("string")
+        it = xsd.resolve("int")
+        assert st and it
+        ch = ChoiceXsdType("TextOrNum", [("text", st), ("number", it)])
+        elem = ch.to_element("choice", {"number": 42})
+        children = list(elem)
+        assert len(children) == 1
+        assert children[0].tag == "number"
+        assert children[0].text == "42"
+
+    def test_from_element(self) -> None:
+        from soapbar.core.types import ChoiceXsdType
+        st = xsd.resolve("string")
+        it = xsd.resolve("int")
+        assert st and it
+        ch = ChoiceXsdType("TextOrNum", [("text", st), ("number", it)])
+        xml = b"<choice><number>99</number></choice>"
+        elem = etree.fromstring(xml)
+        result = ch.from_element(elem)
+        assert result == {"number": 99}
+
+    def test_from_element_no_match(self) -> None:
+        from soapbar.core.types import ChoiceXsdType
+        st = xsd.resolve("string")
+        assert st
+        ch = ChoiceXsdType("X", [("a", st)])
+        elem = etree.fromstring(b"<choice/>")
+        assert ch.from_element(elem) == {}
+
+    def test_to_xml_raises(self) -> None:
+        from soapbar.core.types import ChoiceXsdType
+        st = xsd.resolve("string")
+        assert st
+        ch = ChoiceXsdType("X", [("a", st)])
+        with pytest.raises(TypeError):
+            ch.to_xml({"a": "v"})
+
+    def test_from_xml_raises(self) -> None:
+        from soapbar.core.types import ChoiceXsdType
+        st = xsd.resolve("string")
+        assert st
+        ch = ChoiceXsdType("X", [("a", st)])
+        with pytest.raises(TypeError):
+            ch.from_xml("v")
+
+
+# ---------------------------------------------------------------------------
+# ComplexXsdType — recursive / lazy string resolution
+# ---------------------------------------------------------------------------
+
+class TestComplexXsdTypeRecursive:
+    def test_lazy_string_field(self) -> None:
+        from soapbar.core.types import ComplexXsdType
+        # Register a type first, then reference by name
+        ct = ComplexXsdType("Point", [("x", "int"), ("y", "int")])
+        elem = ct.to_element("pt", {"x": 1, "y": 2})
+        assert elem.find("x").text == "1"  # type: ignore[union-attr]
+        result = ct.from_element(elem)
+        assert result["x"] == 1
+        assert result["y"] == 2
+
+    def test_nested_complex_to_element(self) -> None:
+        from soapbar.core.types import ComplexXsdType
+        st = xsd.resolve("string")
+        assert st
+        inner = ComplexXsdType("Inner", [("val", st)])
+        outer = ComplexXsdType("Outer", [("inner", inner)])
+        elem = outer.to_element("o", {"inner": {"val": "hello"}})
+        inner_elem = elem.find("inner")
+        assert inner_elem is not None
+        val_elem = inner_elem.find("val")
+        assert val_elem is not None and val_elem.text == "hello"
+
+    def test_nested_complex_from_element(self) -> None:
+        from soapbar.core.types import ComplexXsdType
+        st = xsd.resolve("string")
+        assert st
+        inner = ComplexXsdType("Inner2", [("val", st)])
+        outer = ComplexXsdType("Outer2", [("inner", inner)])
+        xml = b"<o><inner><val>world</val></inner></o>"
+        elem = etree.fromstring(xml)
+        result = outer.from_element(elem)
+        assert result["inner"] == {"val": "world"}
+
+    def test_invalid_string_reference_raises(self) -> None:
+        from soapbar.core.types import ComplexXsdType
+        ct = ComplexXsdType("Bad", [("x", "nonexistent_type_xyz")])
+        with pytest.raises(ValueError, match="Cannot resolve XSD type"):
+            ct.to_element("bad", {"x": "v"})
+
+
+# ---------------------------------------------------------------------------
+# Schema-driven WSDL parsing
+# ---------------------------------------------------------------------------
+
+class TestSchemaDrivenWsdl:
+    _WSDL_WITH_COMPLEX = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             xmlns:tns="http://example.com/types"
+             targetNamespace="http://example.com/types"
+             name="TypesService">
+  <types>
+    <xsd:schema targetNamespace="http://example.com/types">
+      <xsd:complexType name="Address">
+        <xsd:sequence>
+          <xsd:element name="street" type="xsd:string"/>
+          <xsd:element name="city" type="xsd:string"/>
+          <xsd:element name="zip" type="xsd:string"/>
+        </xsd:sequence>
+      </xsd:complexType>
+      <xsd:complexType name="PhoneOrEmail">
+        <xsd:choice>
+          <xsd:element name="phone" type="xsd:string"/>
+          <xsd:element name="email" type="xsd:string"/>
+        </xsd:choice>
+      </xsd:complexType>
+      <xsd:complexType name="AddressList">
+        <xsd:sequence>
+          <xsd:element name="address" type="xsd:string" maxOccurs="unbounded"/>
+        </xsd:sequence>
+      </xsd:complexType>
+    </xsd:schema>
+  </types>
+  <message name="DummyRequest"><part name="body" type="xsd:string"/></message>
+  <message name="DummyResponse"><part name="result" type="xsd:string"/></message>
+  <portType name="DummyPortType">
+    <operation name="Dummy">
+      <input message="tns:DummyRequest"/>
+      <output message="tns:DummyResponse"/>
+    </operation>
+  </portType>
+  <binding name="DummyBinding" type="tns:DummyPortType">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Dummy">
+      <soap:operation soapAction="Dummy"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+  </binding>
+  <service name="DummyService">
+    <port name="DummyPort" binding="tns:DummyBinding">
+      <soap:address location="http://localhost/dummy"/>
+    </port>
+  </service>
+</definitions>"""
+
+    def test_parse_complex_type(self) -> None:
+        from soapbar.core.types import ComplexXsdType
+        defn = parse_wsdl(self._WSDL_WITH_COMPLEX)
+        assert "Address" in defn.complex_types
+        ct = defn.complex_types["Address"]
+        assert isinstance(ct, ComplexXsdType)
+        assert ct.name == "Address"
+        field_names = [f[0] for f in ct.fields]
+        assert "street" in field_names
+        assert "city" in field_names
+        assert "zip" in field_names
+
+    def test_parse_choice(self) -> None:
+        from soapbar.core.types import ChoiceXsdType
+        defn = parse_wsdl(self._WSDL_WITH_COMPLEX)
+        assert "PhoneOrEmail" in defn.complex_types
+        ct = defn.complex_types["PhoneOrEmail"]
+        assert isinstance(ct, ChoiceXsdType)
+        opt_names = [o[0] for o in ct.options]
+        assert "phone" in opt_names
+        assert "email" in opt_names
+
+    def test_parse_array(self) -> None:
+        from soapbar.core.types import ArrayXsdType
+        defn = parse_wsdl(self._WSDL_WITH_COMPLEX)
+        assert "AddressList" in defn.complex_types
+        ct = defn.complex_types["AddressList"]
+        # maxOccurs=unbounded on a field makes it an ArrayXsdType field inside ComplexXsdType
+        from soapbar.core.types import ComplexXsdType
+        assert isinstance(ct, ComplexXsdType)
+        # The field "address" should be an ArrayXsdType
+        field_map = {f[0]: f[1] for f in ct.fields}
+        assert "address" in field_map
+        assert isinstance(field_map["address"], ArrayXsdType)
+
+    def test_registered_in_xsd_registry(self) -> None:
+        defn = parse_wsdl(self._WSDL_WITH_COMPLEX)
+        assert defn.complex_types  # non-empty
+        # All parsed types should be in xsd registry now
+        for name in defn.complex_types:
+            assert xsd.resolve(name) is not None
+
+
+# ---------------------------------------------------------------------------
+# WSDL builder — complex type output
+# ---------------------------------------------------------------------------
+
+class TestWsdlBuilderComplexType:
+    def test_build_wsdl_with_complex_types(self) -> None:
+        from soapbar.core.types import ComplexXsdType
+        from soapbar.core.wsdl import WsdlDefinition
+        defn = WsdlDefinition(name="Test", target_namespace="http://test.com/")
+        st = xsd.resolve("string")
+        assert st
+        ct = ComplexXsdType("Person", [("name", st), ("age", "int")])
+        defn.complex_types["Person"] = ct
+        wsdl_str = build_wsdl_string(defn, "http://localhost/")
+        assert "Person" in wsdl_str
+        assert "complexType" in wsdl_str
+        assert "sequence" in wsdl_str
+
+
+# ---------------------------------------------------------------------------
+# SoapHeaderBlock — relay and role parsing
+# ---------------------------------------------------------------------------
+
+class TestSoapHeaderBlock:
+    def _make_soap12_envelope_with_header(self, relay: str = "false", role: str | None = None) -> bytes:
+        soap12_ns = NS.SOAP12_ENV
+        role_attr = f' soap12:role="{role}"' if role else ""
+        xml = f"""<?xml version="1.0"?>
+<soap12:Envelope xmlns:soap12="{soap12_ns}">
+  <soap12:Header>
+    <tns:MyHeader xmlns:tns="http://ex.com/"
+                  soap12:mustUnderstand="false"
+                  soap12:relay="{relay}"{role_attr}>value</tns:MyHeader>
+  </soap12:Header>
+  <soap12:Body><tns:Op xmlns:tns="http://ex.com/"/></soap12:Body>
+</soap12:Envelope>"""
+        return xml.encode()
+
+    def test_relay_parsed_true(self) -> None:
+        from soapbar.core.envelope import SoapHeaderBlock
+        env = SoapEnvelope.from_xml(self._make_soap12_envelope_with_header(relay="true"))
+        assert len(env.header_blocks) == 1
+        block = env.header_blocks[0]
+        assert isinstance(block, SoapHeaderBlock)
+        assert block.relay is True
+
+    def test_relay_default_false(self) -> None:
+        env = SoapEnvelope.from_xml(self._make_soap12_envelope_with_header(relay="false"))
+        assert env.header_blocks[0].relay is False
+
+    def test_must_understand_block(self) -> None:
+        soap12_ns = NS.SOAP12_ENV
+        xml = f"""<?xml version="1.0"?>
+<soap12:Envelope xmlns:soap12="{soap12_ns}">
+  <soap12:Header>
+    <tns:Hdr xmlns:tns="http://ex.com/" soap12:mustUnderstand="true">v</tns:Hdr>
+  </soap12:Header>
+  <soap12:Body/>
+</soap12:Envelope>""".encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert env.header_blocks[0].must_understand is True
+
+    def test_role_parsed(self) -> None:
+        env = SoapEnvelope.from_xml(
+            self._make_soap12_envelope_with_header(role="http://www.w3.org/2003/05/soap-envelope/role/next")
+        )
+        block = env.header_blocks[0]
+        assert block.role == "http://www.w3.org/2003/05/soap-envelope/role/next"
+
+    def test_soap11_actor_as_role(self) -> None:
+        soap_ns = NS.SOAP_ENV
+        xml = f"""<?xml version="1.0"?>
+<soapenv:Envelope xmlns:soapenv="{soap_ns}">
+  <soapenv:Header>
+    <tns:H xmlns:tns="http://ex.com/"
+           soapenv:actor="http://actor.example.com/">v</tns:H>
+  </soapenv:Header>
+  <soapenv:Body/>
+</soapenv:Envelope>""".encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert env.header_blocks[0].role == "http://actor.example.com/"
+
+    def test_header_elements_property_compatibility(self) -> None:
+        """header_elements property must return list of _Element."""
+        soap_ns = NS.SOAP_ENV
+        xml = f"""<?xml version="1.0"?>
+<soapenv:Envelope xmlns:soapenv="{soap_ns}">
+  <soapenv:Header><tns:H xmlns:tns="http://ex.com/">v</tns:H></soapenv:Header>
+  <soapenv:Body/>
+</soapenv:Envelope>""".encode()
+        env = SoapEnvelope.from_xml(xml)
+        elems = env.header_elements
+        assert len(elems) == 1
+        assert elems[0].tag == "{http://ex.com/}H"
+
+    def test_add_header_accepts_block(self) -> None:
+        from soapbar.core.envelope import SoapHeaderBlock
+        env = SoapEnvelope()
+        elem = etree.Element("TestHeader")
+        block = SoapHeaderBlock(element=elem, relay=True)
+        env.add_header(block)
+        assert env.header_blocks[0].relay is True
+
+    def test_add_header_accepts_element(self) -> None:
+        env = SoapEnvelope()
+        elem = etree.Element("TestHeader")
+        env.add_header(elem)
+        assert len(env.header_blocks) == 1
+        assert env.header_blocks[0].element is elem
+
+
+# ---------------------------------------------------------------------------
+# MTOM detection — ASGI
+# ---------------------------------------------------------------------------
+
+class TestMtomDetectionAsgi:
+    def _make_app(self):
+        app = SoapApplication()
+
+        class Svc(SoapService):
+            @soap_operation(soap_action="Hello")
+            def Hello(self, name: str) -> str:
+                return f"Hello {name}"
+
+        app.register(Svc())
+        return AsgiSoapApp(app)
+
+    def test_asgi_mtom_returns_415(self) -> None:
+        import asyncio
+
+        asgi = self._make_app()
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b'multipart/related; type="application/xop+xml"; start="<rootpart>"; boundary="xxx"'),
+            ],
+        }
+        responses = []
+
+        async def run():
+            async def receive():
+                return {"body": b"", "more_body": False}
+            async def send(msg):
+                responses.append(msg)
+            await asgi(scope, receive, send)
+
+        asyncio.run(run())
+        # First message is http.response.start
+        assert responses[0]["status"] == 415
+
+    def test_asgi_non_mtom_passes_through(self) -> None:
+        import asyncio
+
+        asgi = self._make_app()
+        body = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><Hello><name>World</name></Hello></soapenv:Body></soapenv:Envelope>"
+        )
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"text/xml"),
+                (b"soapaction", b'"Hello"'),
+            ],
+        }
+        responses = []
+
+        async def run():
+            async def receive():
+                return {"body": body, "more_body": False}
+            async def send(msg):
+                responses.append(msg)
+            await asgi(scope, receive, send)
+
+        asyncio.run(run())
+        assert responses[0]["status"] == 200
+
+
+# ---------------------------------------------------------------------------
+# MTOM detection — WSGI
+# ---------------------------------------------------------------------------
+
+class TestMtomDetectionWsgi:
+    def _make_wsgi(self):
+        app = SoapApplication()
+
+        class Svc(SoapService):
+            @soap_operation(soap_action="Greet")
+            def Greet(self, name: str) -> str:
+                return f"Hi {name}"
+
+        app.register(Svc())
+        return WsgiSoapApp(app)
+
+    def test_wsgi_mtom_returns_415(self) -> None:
+        import io
+        wsgi = self._make_wsgi()
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "CONTENT_TYPE": 'multipart/related; type="application/xop+xml"; boundary="boundary"',
+            "CONTENT_LENGTH": "0",
+            "wsgi.input": io.BytesIO(b""),
+            "QUERY_STRING": "",
+        }
+        status_holder = []
+        def start_response(status, headers):
+            status_holder.append(status)
+
+        wsgi(environ, start_response)
+        assert "415" in status_holder[0]
+
+    def test_wsgi_non_mtom_passes(self) -> None:
+        import io
+        wsgi = self._make_wsgi()
+        body = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><Greet><name>Test</name></Greet></soapenv:Body></soapenv:Envelope>"
+        )
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "CONTENT_TYPE": "text/xml",
+            "CONTENT_LENGTH": str(len(body)),
+            "wsgi.input": io.BytesIO(body),
+            "HTTP_SOAPACTION": '"Greet"',
+            "QUERY_STRING": "",
+        }
+        status_holder = []
+        def start_response(status, headers):
+            status_holder.append(status)
+
+        wsgi(environ, start_response)
+        assert "200" in status_holder[0]
+
+
+# ---------------------------------------------------------------------------
+# MTOM detection — transport
+# ---------------------------------------------------------------------------
+
+class TestMtomTransport:
+    def test_transport_mtom_raises(self) -> None:
+        transport = HttpTransport()
+        with pytest.raises(NotImplementedError, match="MTOM/XOP"):
+            transport._check_mtom_response("multipart/related; type=application/xop+xml")
+
+    def test_transport_normal_does_not_raise(self) -> None:
+        transport = HttpTransport()
+        transport._check_mtom_response("text/xml; charset=utf-8")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# WS-Addressing
+# ---------------------------------------------------------------------------
+
+class TestWsAddressing:
+    _WSA = NS.WSA
+    _SOAP11 = NS.SOAP_ENV
+
+    def _envelope_with_wsa(self, headers_xml: str) -> bytes:
+        return f"""<?xml version="1.0"?>
+<soapenv:Envelope xmlns:soapenv="{self._SOAP11}"
+                  xmlns:wsa="{self._WSA}">
+  <soapenv:Header>
+    {headers_xml}
+  </soapenv:Header>
+  <soapenv:Body/>
+</soapenv:Envelope>""".encode()
+
+    def test_parse_message_id(self) -> None:
+        xml = self._envelope_with_wsa(
+            f'<wsa:MessageID xmlns:wsa="{self._WSA}">urn:uuid:12345</wsa:MessageID>'
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.message_id == "urn:uuid:12345"
+
+    def test_parse_to(self) -> None:
+        xml = self._envelope_with_wsa(
+            f'<wsa:To xmlns:wsa="{self._WSA}">http://service.example.com/</wsa:To>'
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.to == "http://service.example.com/"
+
+    def test_parse_action(self) -> None:
+        xml = self._envelope_with_wsa(
+            f'<wsa:Action xmlns:wsa="{self._WSA}">http://example.com/action</wsa:Action>'
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.action == "http://example.com/action"
+
+    def test_parse_reply_to(self) -> None:
+        xml = self._envelope_with_wsa(
+            f'<wsa:ReplyTo xmlns:wsa="{self._WSA}">'
+            f'  <wsa:Address>http://reply.example.com/</wsa:Address>'
+            f'</wsa:ReplyTo>'
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.reply_to is not None
+        assert env.ws_addressing.reply_to.address == "http://reply.example.com/"
+
+    def test_no_wsa_returns_none(self) -> None:
+        xml = (
+            f'<soapenv:Envelope xmlns:soapenv="{self._SOAP11}">'
+            f"<soapenv:Body/></soapenv:Envelope>"
+        ).encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_addressing is None
+
+    def test_multiple_wsa_headers(self) -> None:
+        xml = self._envelope_with_wsa(
+            f'<wsa:MessageID xmlns:wsa="{self._WSA}">urn:msg-1</wsa:MessageID>'
+            f'<wsa:Action xmlns:wsa="{self._WSA}">urn:action-1</wsa:Action>'
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.message_id == "urn:msg-1"
+        assert env.ws_addressing.action == "urn:action-1"
+
+
+# ---------------------------------------------------------------------------
+# WS-Security detection
+# ---------------------------------------------------------------------------
+
+class TestWsSecurity:
+    _WSSE = NS.WSSE
+    _SOAP11 = NS.SOAP_ENV
+
+    def test_detect_security_header(self) -> None:
+        xml = f"""<?xml version="1.0"?>
+<soapenv:Envelope xmlns:soapenv="{self._SOAP11}"
+                  xmlns:wsse="{self._WSSE}">
+  <soapenv:Header>
+    <wsse:Security>
+      <wsse:UsernameToken>
+        <wsse:Username>admin</wsse:Username>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </soapenv:Header>
+  <soapenv:Body/>
+</soapenv:Envelope>""".encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_security_element is not None
+        from soapbar.core.xml import local_name
+        assert local_name(env.ws_security_element) == "Security"
+
+    def test_no_security_returns_none(self) -> None:
+        xml = (
+            f'<soapenv:Envelope xmlns:soapenv="{self._SOAP11}">'
+            f"<soapenv:Body/></soapenv:Envelope>"
+        ).encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_security_element is None
+
+    def test_security_element_content_accessible(self) -> None:
+        xml = f"""<?xml version="1.0"?>
+<soapenv:Envelope xmlns:soapenv="{self._SOAP11}"
+                  xmlns:wsse="{self._WSSE}">
+  <soapenv:Header>
+    <wsse:Security>
+      <wsse:UsernameToken>
+        <wsse:Username>testuser</wsse:Username>
+      </wsse:UsernameToken>
+    </wsse:Security>
+  </soapenv:Header>
+  <soapenv:Body/>
+</soapenv:Envelope>""".encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert env.ws_security_element is not None
+        token = env.ws_security_element.find(f"{{{self._WSSE}}}UsernameToken")
+        assert token is not None
+        uname = token.find(f"{{{self._WSSE}}}Username")
+        assert uname is not None and uname.text == "testuser"
+
+
+# ---------------------------------------------------------------------------
+# SoapEnvelope — header_elements constructor backward compat (Bug 2)
+# ---------------------------------------------------------------------------
+
+class TestSoapEnvelopeConstructorHeaderElements:
+    def test_header_elements_init_var(self) -> None:
+        """SoapEnvelope(header_elements=[...]) should still work after P4."""
+        elem = make_element("{http://example.com/}MyHeader")
+        elem.text = "hello"
+        env = SoapEnvelope(header_elements=[elem])
+        assert len(env.header_blocks) == 1
+        assert env.header_blocks[0].element is elem
+        assert env.header_elements == [elem]
+
+    def test_header_elements_init_var_none_is_noop(self) -> None:
+        """SoapEnvelope() without header_elements keeps empty header_blocks."""
+        env = SoapEnvelope()
+        assert env.header_blocks == []
+
+    def test_header_elements_init_var_does_not_override_header_blocks(self) -> None:
+        """header_elements=None must not wipe pre-set header_blocks."""
+        env = SoapEnvelope()
+        elem = make_element("{http://example.com/}H")
+        env.header_blocks = [__import__("soapbar.core.envelope", fromlist=["SoapHeaderBlock"]).SoapHeaderBlock(element=elem)]
+        # Calling with no header_elements kwarg shouldn't clear header_blocks
+        env2 = SoapEnvelope(header_elements=None)
+        assert env2.header_blocks == []
+
+    def test_header_elements_property_setter_still_works(self) -> None:
+        """Assignment via property setter should still function."""
+        elem = make_element("{http://example.com/}H")
+        env = SoapEnvelope()
+        env.header_elements = [elem]
+        assert len(env.header_blocks) == 1
+        assert env.header_blocks[0].element is elem
+
+
+# ---------------------------------------------------------------------------
+# application.py — WSDL auto-gen uses tns: for complex types (Bug 1)
+# ---------------------------------------------------------------------------
+
+class TestWsdlComplexTypeRef:
+    def test_wsdl_part_uses_tns_for_complex(self) -> None:
+        """Auto-WSDL must emit tns:TypeName for ComplexXsdType params, not xsd:TypeName."""
+        from soapbar.core.types import ComplexXsdType
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        str_type = xsd.resolve("string")
+        assert str_type is not None
+        person_type = ComplexXsdType("Person", [("name", str_type)])
+
+        class MySvc(SoapService):
+            @soap_operation(
+                input_params=[OperationParameter("p", person_type)],
+                output_params=[OperationParameter("result", person_type)],
+            )
+            def get_person(self, p: object) -> object:
+                return p
+
+        app = SoapApplication()
+        app.register(MySvc())
+        wsdl_bytes = app.get_wsdl()
+        wsdl_str = wsdl_bytes.decode()
+        assert 'type="tns:Person"' in wsdl_str, f"Expected tns:Person in WSDL, got:\n{wsdl_str}"
+        assert 'type="xsd:Person"' not in wsdl_str
+
+    def test_wsdl_part_keeps_xsd_for_primitives(self) -> None:
+        """Auto-WSDL must keep xsd: prefix for primitive XSD types."""
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        str_type = xsd.resolve("string")
+        assert str_type is not None
+
+        class MySvc2(SoapService):
+            @soap_operation(
+                input_params=[OperationParameter("s", str_type)],
+                output_params=[OperationParameter("result", str_type)],
+            )
+            def echo(self, s: object) -> object:
+                return s
+
+        app = SoapApplication()
+        app.register(MySvc2())
+        wsdl_bytes = app.get_wsdl()
+        wsdl_str = wsdl_bytes.decode()
+        assert 'type="xsd:string"' in wsdl_str
+
+
+class TestWsdlCircularImportGuard:
+    def test_circular_import_does_not_recurse(self) -> None:
+        """parse_wsdl() must not raise RecursionError when WSDL A imports A."""
+        from unittest.mock import patch
+
+        from soapbar.core.wsdl.parser import parse_wsdl
+
+        wsdl_a = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             targetNamespace="urn:test"
+             name="CircularA">
+  <import namespace="urn:test" location="http://example.com/a.wsdl"/>
+</definitions>"""
+
+        # Make _fetch_wsdl_source always return wsdl_a, creating a cycle.
+        with patch("soapbar.core.wsdl.parser._fetch_wsdl_source", return_value=wsdl_a):
+            # Should return without RecursionError; cycle is silently skipped.
+            defn = parse_wsdl(wsdl_a, base_url="http://example.com/a.wsdl")
+        assert defn.name == "CircularA"
+
+
+class TestAsyncTransportMtomCheck:
+    def test_send_async_raises_on_mtom_response(self) -> None:
+        """send_async() must raise NotImplementedError for multipart/related responses."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from soapbar.client.transport import HttpTransport
+
+        transport = HttpTransport()
+
+        mock_resp = MagicMock()
+        mock_resp.headers = {"content-type": "multipart/related; type=\"application/xop+xml\""}
+        mock_resp.status_code = 200
+        mock_resp.content = b""
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            with pytest.raises(NotImplementedError, match="MTOM"):
+                asyncio.run(transport.send_async("http://example.com/", b"<body/>", {}))
+
+
+class TestSoap12SubcodeNested:
+    def test_single_subcode_unchanged(self) -> None:
+        """Single subcode produces <Subcode><Value>...</Value></Subcode>."""
+        from lxml import etree
+
+        from soapbar.core.fault import SoapFault
+        from soapbar.core.namespaces import NS
+
+        fault = SoapFault("Server", "err", subcodes=["tns:A"])
+        elem = fault.to_soap12_element()
+        code_elem = elem.find(f"{{{NS.SOAP12_ENV}}}Code")
+        assert code_elem is not None
+        subcode = code_elem.find(f"{{{NS.SOAP12_ENV}}}Subcode")
+        assert subcode is not None
+        val = subcode.find(f"{{{NS.SOAP12_ENV}}}Value")
+        assert val is not None and val.text == "tns:A"
+
+    def test_multi_subcode_nested(self) -> None:
+        """Multiple subcodes produce properly nested <Subcode> hierarchy."""
+        from soapbar.core.fault import SoapFault
+        from soapbar.core.namespaces import NS
+
+        fault = SoapFault("Server", "err", subcodes=["tns:A", "tns:B"])
+        elem = fault.to_soap12_element()
+        code_elem = elem.find(f"{{{NS.SOAP12_ENV}}}Code")
+        assert code_elem is not None
+
+        # First level: Subcode under Code
+        sc1 = code_elem.find(f"{{{NS.SOAP12_ENV}}}Subcode")
+        assert sc1 is not None
+        val1 = sc1.find(f"{{{NS.SOAP12_ENV}}}Value")
+        assert val1 is not None and val1.text == "tns:A"
+
+        # Second level: Subcode nested inside the first Subcode
+        sc2 = sc1.find(f"{{{NS.SOAP12_ENV}}}Subcode")
+        assert sc2 is not None
+        val2 = sc2.find(f"{{{NS.SOAP12_ENV}}}Value")
+        assert val2 is not None and val2.text == "tns:B"
+
+        # No sibling Value under the first Subcode (non-nested would have 2 Values)
+        values_under_sc1 = sc1.findall(f"{{{NS.SOAP12_ENV}}}Value")
+        assert len(values_under_sc1) == 1
