@@ -6,6 +6,11 @@ from typing import Any
 from soapbar.server.application import SoapApplication
 
 
+def _is_mtom(content_type: str) -> bool:
+    ct = content_type.lower()
+    return "multipart/related" in ct and "application/xop+xml" in ct
+
+
 class AsgiSoapApp:
     def __init__(self, soap_app: SoapApplication) -> None:
         self.soap_app = soap_app
@@ -39,12 +44,17 @@ class AsgiSoapApp:
             await self._send_response(send, 200, "text/xml; charset=utf-8", wsdl)
             return
 
-        if method == "GET":
-            body = b"soapbar SOAP endpoint - POST to invoke operations"
-            await self._send_response(send, 200, "text/plain", body)
-            return
-
         if method == "POST":
+            # MTOM/XOP not supported — return 415 before reading body
+            if _is_mtom(content_type):
+                from soapbar.core.envelope import SoapVersion, build_fault
+                from soapbar.core.xml import to_bytes
+                version = SoapVersion.SOAP_12 if "soap+xml" in content_type else SoapVersion.SOAP_11
+                msg = "MTOM/XOP is not supported by this endpoint"
+                fault_elem = build_fault(version, "Client", msg)
+                await self._send_response(send, 415, version.content_type, to_bytes(fault_elem))
+                return
+
             # Read body
             body_chunks: list[bytes] = []
             while True:

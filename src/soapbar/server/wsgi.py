@@ -6,6 +6,11 @@ from typing import Any
 from soapbar.server.application import SoapApplication
 
 
+def _is_mtom(content_type: str) -> bool:
+    ct = content_type.lower()
+    return "multipart/related" in ct and "application/xop+xml" in ct
+
+
 class WsgiSoapApp:
     def __init__(self, soap_app: SoapApplication) -> None:
         self.soap_app = soap_app
@@ -28,15 +33,20 @@ class WsgiSoapApp:
             ])
             return [wsdl]
 
-        if method == "GET":
-            body = b"soapbar SOAP endpoint"
-            start_response("200 OK", [
-                ("Content-Type", "text/plain"),
-                ("Content-Length", str(len(body))),
-            ])
-            return [body]
-
         if method == "POST":
+            if _is_mtom(content_type):
+                from soapbar.core.envelope import SoapVersion, build_fault
+                from soapbar.core.xml import to_bytes
+                version = SoapVersion.SOAP_12 if "soap+xml" in content_type else SoapVersion.SOAP_11
+                msg = "MTOM/XOP is not supported by this endpoint"
+                fault_elem = build_fault(version, "Client", msg)
+                body_mtom = to_bytes(fault_elem)
+                start_response("415 Unsupported Media Type", [
+                    ("Content-Type", version.content_type),
+                    ("Content-Length", str(len(body_mtom))),
+                ])
+                return [body_mtom]
+
             try:
                 content_length = int(environ.get("CONTENT_LENGTH", 0) or 0)
             except ValueError:

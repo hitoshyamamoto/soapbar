@@ -1,8 +1,6 @@
 """SOAP application dispatcher."""
 from __future__ import annotations
 
-from typing import Any
-
 from soapbar.core.binding import (
     OperationSignature,
     get_serializer,
@@ -22,9 +20,9 @@ from soapbar.core.wsdl import (
     WsdlPortType,
     WsdlService,
 )
-from soapbar.core.wsdl.builder import build_wsdl_bytes
+from soapbar.core.wsdl.builder import _type_ref, build_wsdl_bytes
 from soapbar.core.xml import to_bytes
-from soapbar.server.service import SoapService
+from soapbar.server.service import SoapService, _SoapMethod
 
 
 class SoapApplication:
@@ -37,7 +35,7 @@ class SoapApplication:
         self.service_url = service_url
         self._services: list[SoapService] = []
         # operation_name → (service, method)
-        self._dispatch: dict[str, tuple[SoapService, Any]] = {}
+        self._dispatch: dict[str, tuple[SoapService, _SoapMethod]] = {}
         # soap_action → operation_name
         self._action_map: dict[str, str] = {}
 
@@ -68,10 +66,20 @@ class SoapApplication:
         """Returns (http_status, content_type, response_body)."""
         # Detect SOAP version from content-type
         version = SoapVersion.SOAP_12 if "soap+xml" in content_type else SoapVersion.SOAP_11
+        caught_fault: SoapFault = SoapFault("Server", "Unknown internal error")
+        http_status = 500
 
         try:
             envelope = SoapEnvelope.from_xml(body)
             version = envelope.version
+
+            # mustUnderstand enforcement (SOAP 1.1 §4.2.3, SOAP 1.2 §5.2.3)
+            for block in envelope.header_blocks:
+                if block.must_understand:
+                    raise SoapFault(
+                        "MustUnderstand",
+                        f"Header not understood: {block.element.tag!s}",
+                    )
 
             # Determine operation name
             op_name = self._resolve_operation(soap_action, envelope)
@@ -123,24 +131,33 @@ class SoapApplication:
             resp_bytes = resp_envelope.to_bytes()
             return 200, version.content_type, resp_bytes
 
-        except SoapFault as sf:
-            http_status = 500
+        except SoapFault as exc_sf:
+            caught_fault = exc_sf
             # Client faults → 400
-            if sf.faultcode.startswith("Client") or sf.faultcode.startswith("Sender"):
+            if exc_sf.faultcode.startswith("Client") or exc_sf.faultcode.startswith("Sender"):
                 http_status = 400
-            fault_elem = (
-                sf.to_soap11_envelope() if version == SoapVersion.SOAP_11
-                else sf.to_soap12_envelope()
-            )
-            return http_status, version.content_type, to_bytes(fault_elem)
+
+        except (ValueError, TypeError) as exc:
+            msg = str(exc)
+            if "Unknown SOAP envelope namespace" in msg:
+                caught_fault = SoapFault("VersionMismatch", msg)
+                http_status = 500
+            elif "Missing required output" in msg:
+                caught_fault = SoapFault("Server", f"Internal error: {msg}")
+                http_status = 500
+            else:
+                caught_fault = SoapFault("Client", msg)
+                http_status = 400
 
         except Exception as exc:
-            sf = SoapFault("Server", f"Internal error: {exc}")
-            fault_elem = (
-                sf.to_soap11_envelope() if version == SoapVersion.SOAP_11
-                else sf.to_soap12_envelope()
-            )
-            return 500, version.content_type, to_bytes(fault_elem)
+            caught_fault = SoapFault("Server", f"Internal error: {exc}")
+            http_status = 500
+
+        fault_elem = (
+            caught_fault.to_soap11_envelope() if version == SoapVersion.SOAP_11
+            else caught_fault.to_soap12_envelope()
+        )
+        return http_status, version.content_type, to_bytes(fault_elem)
 
     def _resolve_operation(
         self,
@@ -198,7 +215,7 @@ class SoapApplication:
                 # Input message
                 in_msg_name = f"{op_name}Request"
                 in_parts = [
-                    WsdlPart(name=p.name, type=f"xsd:{p.xsd_type.name}")
+                    WsdlPart(name=p.name, type=_type_ref(p.xsd_type))
                     for p in sig.input_params
                 ]
                 defn.messages[in_msg_name] = WsdlMessage(name=in_msg_name, parts=in_parts)
@@ -206,7 +223,7 @@ class SoapApplication:
                 # Output message
                 out_msg_name = f"{op_name}Response"
                 out_parts = [
-                    WsdlPart(name=p.name, type=f"xsd:{p.xsd_type.name}")
+                    WsdlPart(name=p.name, type=_type_ref(p.xsd_type))
                     for p in sig.output_params
                 ]
                 defn.messages[out_msg_name] = WsdlMessage(name=out_msg_name, parts=out_parts)
