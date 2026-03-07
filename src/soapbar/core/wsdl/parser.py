@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urljoin
 
 from lxml.etree import _Element
 
 from soapbar.core.namespaces import NS
+from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType, XsdType, xsd
 from soapbar.core.wsdl import (
     WsdlBinding,
     WsdlBindingOperation,
@@ -42,7 +44,35 @@ def _local(qname: str) -> str:
     return qname
 
 
-def parse_wsdl(source: str | bytes | Path | _Element) -> WsdlDefinition:
+def _resolve_location(location: str, base_url: str | None) -> str:
+    if base_url and not location.startswith(("http://", "https://", "file://")):
+        return urljoin(base_url, location)
+    return location
+
+
+def _fetch_wsdl_source(location: str) -> bytes:
+    if location.startswith(("http://", "https://")):
+        import urllib.request
+        with urllib.request.urlopen(location) as resp:  # noqa: S310
+            return resp.read()  # type: ignore[no-any-return]
+    return Path(location).read_bytes()
+
+
+def _merge_definition(target: WsdlDefinition, source: WsdlDefinition) -> None:
+    target.messages.update(source.messages)
+    target.port_types.update(source.port_types)
+    target.bindings.update(source.bindings)
+    target.services.update(source.services)
+    target.schema_elements.extend(source.schema_elements)
+
+
+def parse_wsdl(
+    source: str | bytes | Path | _Element,
+    base_url: str | None = None,
+    _visited: set[str] | None = None,
+) -> WsdlDefinition:
+    if _visited is None:
+        _visited = set()
     root = parse_xml_document(source)
     nsmap: dict[str, str] = {k: v for k, v in root.nsmap.items() if k is not None}
 
@@ -55,12 +85,27 @@ def parse_wsdl(source: str | bytes | Path | _Element) -> WsdlDefinition:
         lname = local_name(child)
 
         if lname == "import":
-            raise NotImplementedError(
-                "WSDL <import> is not supported. Inline all definitions before parsing."
-            )
+            location = child.get("location")
+            if location:
+                resolved = _resolve_location(location, base_url)
+                if resolved not in _visited:
+                    _visited.add(resolved)
+                    imported = parse_wsdl(
+                        _fetch_wsdl_source(resolved),
+                        base_url=resolved,
+                        _visited=_visited,
+                    )
+                    _merge_definition(defn, imported)
+            # namespace-only import (no location=) is silently skipped
 
         elif lname == "types":
             defn.schema_elements = list(child)
+            for schema in child:
+                if local_name(schema) == "schema":
+                    parsed = _parse_schema_types(schema, nsmap)
+                    defn.complex_types.update(parsed)
+                    for t in parsed.values():
+                        xsd.register(t)
 
         elif lname == "message":
             msg = _parse_message(child)
@@ -83,7 +128,8 @@ def parse_wsdl(source: str | bytes | Path | _Element) -> WsdlDefinition:
 
 
 def parse_wsdl_file(path: str | Path) -> WsdlDefinition:
-    return parse_wsdl(Path(path))
+    p = Path(path)
+    return parse_wsdl(p, base_url=p.resolve().parent.as_uri() + "/")
 
 
 # ---------------------------------------------------------------------------
@@ -230,3 +276,124 @@ def _parse_service(elem: _Element) -> WsdlService:
                     address = grandchild.get("location", "")
             ports.append(WsdlPort(name=port_name, binding=binding, address=address))
     return WsdlService(name=name, ports=ports)
+
+
+# ---------------------------------------------------------------------------
+# Schema type parsing
+# ---------------------------------------------------------------------------
+
+def _resolve_xsd_type(type_ref: str, nsmap: dict[str, str]) -> XsdType | str:
+    """Resolve a type reference to an XsdType or return a string for lazy resolution."""
+    resolved = xsd.resolve(type_ref)
+    if resolved is not None:
+        return resolved
+    # Try stripping prefix
+    bare = _local(type_ref)
+    resolved = xsd.resolve(bare)
+    if resolved is not None:
+        return resolved
+    # Return bare name for lazy resolution
+    return bare
+
+
+def _parse_schema_types(schema_elem: _Element, nsmap: dict[str, str]) -> dict[str, XsdType]:
+    """Parse <xsd:schema> and return a dict of name → XsdType for complex types."""
+    result: dict[str, XsdType] = {}
+
+    for child in schema_elem:
+        lname = local_name(child)
+        if lname != "complexType":
+            continue
+        ct_name = child.get("name", "")
+        if not ct_name:
+            continue
+        xsd_type = _parse_complex_type_element(ct_name, child, nsmap)
+        if xsd_type is not None:
+            result[ct_name] = xsd_type
+
+    return result
+
+
+def _parse_complex_type_element(
+    name: str, elem: _Element, nsmap: dict[str, str]
+) -> XsdType | None:
+    """Parse a single <xsd:complexType> element."""
+    for child in elem:
+        lname = local_name(child)
+
+        if lname == "sequence":
+            fields: list[tuple[str, XsdType | str]] = []
+            for sub in child:
+                if local_name(sub) != "element":
+                    continue
+                field_name = sub.get("name", "")
+                type_ref = sub.get("type", "xsd:string")
+                max_occurs = sub.get("maxOccurs", "1")
+                field_type: XsdType | str = _resolve_xsd_type(type_ref, nsmap)
+                if max_occurs == "unbounded" or (max_occurs.isdigit() and int(max_occurs) > 1):
+                    # Wrap in ArrayXsdType
+                    if isinstance(field_type, XsdType):
+                        base_type: XsdType = field_type
+                    else:
+                        base_type = xsd.resolve(field_type) or xsd.resolve("string")  # type: ignore[assignment]
+                    field_type = ArrayXsdType(
+                        name=f"{name}_{field_name}_array",
+                        element_type=base_type,
+                        element_tag=field_name,
+                    )
+                fields.append((field_name, field_type))
+            return ComplexXsdType(name=name, fields=fields)
+
+        if lname == "choice":
+            options: list[tuple[str, XsdType]] = []
+            for sub in child:
+                if local_name(sub) != "element":
+                    continue
+                opt_name = sub.get("name", "")
+                type_ref = sub.get("type", "xsd:string")
+                opt_type_raw = _resolve_xsd_type(type_ref, nsmap)
+                if isinstance(opt_type_raw, str):
+                    opt_type_resolved: XsdType | None = (
+                        xsd.resolve(opt_type_raw) or xsd.resolve("string")
+                    )
+                else:
+                    opt_type_resolved = opt_type_raw
+                if opt_type_resolved is None:
+                    continue
+                options.append((opt_name, opt_type_resolved))
+            return ChoiceXsdType(name=name, options=options)
+
+        if lname == "complexContent":
+            # Check for soapenc:Array restriction
+            for cc_child in child:
+                if local_name(cc_child) == "restriction":
+                    # Look for wsdl:arrayType attribute
+                    array_type_attr = None
+                    for attr_name, attr_val in cc_child.attrib.items():
+                        if "arrayType" in attr_name or attr_name.endswith("}arrayType"):
+                            array_type_attr = attr_val
+                            break
+                    if array_type_attr is None:
+                        # Check children for wsdl:attribute
+                        for attr_elem in cc_child:
+                            if local_name(attr_elem) in ("attribute", "attributeGroup"):
+                                wsdl_at = attr_elem.get(f"{{{NS.WSDL}}}arrayType")
+                                if wsdl_at:
+                                    array_type_attr = wsdl_at
+                                    break
+                    if array_type_attr is not None:
+                        # Strip [] suffix if present
+                        item_type_ref = array_type_attr.rstrip("[]").rstrip("[ ]")
+                        item_type_raw2 = _resolve_xsd_type(item_type_ref, nsmap)
+                        if isinstance(item_type_raw2, str):
+                            item_type2: XsdType | None = (
+                                xsd.resolve(item_type_raw2) or xsd.resolve("string")
+                            )
+                        else:
+                            item_type2 = item_type_raw2
+                        if item_type2 is not None:
+                            return ArrayXsdType(
+                                name=name, element_type=item_type2, element_tag="item"
+                            )
+
+    return None
