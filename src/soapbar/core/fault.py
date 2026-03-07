@@ -86,9 +86,11 @@ class SoapFault(Exception):  # noqa: N818
         sub_element(code_elem, f"{{{NS.SOAP12_ENV}}}Value", text=f"soap12:{code_value}")
         # Subcodes
         if self.subcodes:
-            subcode_elem = sub_element(code_elem, f"{{{NS.SOAP12_ENV}}}Subcode")
+            parent = code_elem
             for sc in self.subcodes:
+                subcode_elem = sub_element(parent, f"{{{NS.SOAP12_ENV}}}Subcode")
                 sub_element(subcode_elem, f"{{{NS.SOAP12_ENV}}}Value", text=sc)
+                parent = subcode_elem
         # Reason
         reason_elem = sub_element(fault, f"{{{NS.SOAP12_ENV}}}Reason")
         sub_element(
