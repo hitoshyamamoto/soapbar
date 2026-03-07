@@ -300,6 +300,157 @@ class _HexBinaryType(XsdType):
 
 
 # ---------------------------------------------------------------------------
+# Complex types (ComplexXsdType, ArrayXsdType, ChoiceXsdType)
+# ---------------------------------------------------------------------------
+
+class ComplexXsdType(XsdType):
+    """XSD complexType with a sequence of named sub-elements.
+
+    Fields may be XsdType instances or string names to be lazily resolved
+    via xsd.resolve() (for forward/recursive references).
+    """
+
+    namespace: str = ""
+
+    def __init__(self, name: str, fields: list[tuple[str, XsdType | str]]) -> None:
+        self.name = name
+        self.fields: list[tuple[str, XsdType | str]] = fields
+
+    def _resolve_field_type(self, ftype: XsdType | str) -> XsdType:
+        if isinstance(ftype, str):
+            resolved = xsd.resolve(ftype)
+            if resolved is None:
+                raise ValueError(f"Cannot resolve XSD type: {ftype!r}")
+            return resolved
+        return ftype
+
+    def to_xml(self, value: Any) -> str:
+        raise TypeError(f"ComplexXsdType '{self.name}' requires element-level serialization")
+
+    def from_xml(self, s: str) -> Any:
+        raise TypeError(f"ComplexXsdType '{self.name}' requires element-level deserialization")
+
+    def to_element(self, tag: str, value: dict[str, Any], ns: str = "") -> Any:
+        from lxml import etree
+        full_tag = f"{{{ns}}}{tag}" if ns else tag
+        elem = etree.Element(full_tag)
+        for field_name, field_type_raw in self.fields:
+            field_type = self._resolve_field_type(field_type_raw)
+            if isinstance(field_type, ArrayXsdType):
+                child_val_list: list[Any] = value.get(field_name) or []
+                elem.append(field_type.to_element(field_name, child_val_list))
+            elif isinstance(field_type, (ComplexXsdType, ChoiceXsdType)):
+                child_val_dict: dict[str, Any] = value.get(field_name) or {}
+                elem.append(field_type.to_element(field_name, child_val_dict))
+            else:
+                child = etree.SubElement(elem, field_name)
+                child.text = field_type.to_xml(value.get(field_name, ""))
+        return elem
+
+    def from_element(self, elem: Any) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for field_name, field_type_raw in self.fields:
+            field_type = self._resolve_field_type(field_type_raw)
+            child = elem.find(field_name)
+            if child is None:
+                result[field_name] = None
+            elif isinstance(field_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
+                result[field_name] = field_type.from_element(child)
+            else:
+                result[field_name] = field_type.from_xml(child.text or "")
+        return result
+
+
+class ArrayXsdType(XsdType):
+    """XSD array type: a wrapper element containing repeated child elements."""
+
+    namespace: str = ""
+
+    def __init__(
+        self,
+        name: str,
+        element_type: XsdType,
+        element_tag: str = "item",
+    ) -> None:
+        self.name = name
+        self.element_type = element_type
+        self.element_tag = element_tag
+
+    def to_xml(self, value: Any) -> str:
+        raise TypeError(f"ArrayXsdType '{self.name}' requires element-level serialization")
+
+    def from_xml(self, s: str) -> Any:
+        raise TypeError(f"ArrayXsdType '{self.name}' requires element-level deserialization")
+
+    def to_element(self, tag: str, value: Any, ns: str = "") -> Any:
+        from lxml import etree
+        full_tag = f"{{{ns}}}{tag}" if ns else tag
+        elem = etree.Element(full_tag)
+        items = value if isinstance(value, list) else []
+        for item in items:
+            et = self.element_type
+            if isinstance(et, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
+                elem.append(et.to_element(self.element_tag, item))
+            else:
+                child = etree.SubElement(elem, self.element_tag)
+                child.text = et.to_xml(item)
+        return elem
+
+    def from_element(self, elem: Any) -> list[Any]:
+        result = []
+        et = self.element_type
+        for child in elem:
+            if isinstance(et, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
+                result.append(et.from_element(child))
+            else:
+                result.append(et.from_xml(child.text or ""))
+        return result
+
+
+class ChoiceXsdType(XsdType):
+    """XSD choice type: exactly one of the named options is present."""
+
+    namespace: str = ""
+
+    def __init__(self, name: str, options: list[tuple[str, XsdType]]) -> None:
+        self.name = name
+        self.options: list[tuple[str, XsdType]] = options
+
+    def to_xml(self, value: Any) -> str:
+        raise TypeError(f"ChoiceXsdType '{self.name}' requires element-level serialization")
+
+    def from_xml(self, s: str) -> Any:
+        raise TypeError(f"ChoiceXsdType '{self.name}' requires element-level deserialization")
+
+    def to_element(self, tag: str, value: Any, ns: str = "") -> Any:
+        from lxml import etree
+        full_tag = f"{{{ns}}}{tag}" if ns else tag
+        elem = etree.Element(full_tag)
+        if not isinstance(value, dict):
+            return elem
+        for opt_name, opt_type in self.options:
+            if opt_name in value and value[opt_name] is not None:
+                if isinstance(opt_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
+                    elem.append(opt_type.to_element(opt_name, value[opt_name]))
+                else:
+                    child = etree.SubElement(elem, opt_name)
+                    child.text = opt_type.to_xml(value[opt_name])
+                break
+        return elem
+
+    def from_element(self, elem: Any) -> dict[str, Any]:
+        option_map = {name: t for name, t in self.options}
+        for child in elem:
+            child_local = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            if child_local in option_map:
+                opt_type = option_map[child_local]
+                if isinstance(opt_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
+                    return {child_local: opt_type.from_element(child)}
+                return {child_local: opt_type.from_xml(child.text or "")}
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
