@@ -1,8 +1,6 @@
 # Python bytecode & compiled extensions
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 *.so
 
 # Virtual environments
@@ -22,7 +20,6 @@ build/
 MANIFEST
 *.whl
 *.tar.gz
-src/*.egg-info/
 
 # Test & coverage
 .pytest_cache/
@@ -31,6 +28,9 @@ src/*.egg-info/
 htmlcov/
 coverage.xml
 *.cover
+.hypothesis/
+.tox/
+.nox/
 
 # Type checker cache
 .mypy_cache/
