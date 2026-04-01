@@ -138,16 +138,8 @@ class SoapApplication:
                 http_status = 400
 
         except (ValueError, TypeError) as exc:
-            msg = str(exc)
-            if "Unknown SOAP envelope namespace" in msg:
-                caught_fault = SoapFault("VersionMismatch", msg)
-                http_status = 500
-            elif "Missing required output" in msg:
-                caught_fault = SoapFault("Server", f"Internal error: {msg}")
-                http_status = 500
-            else:
-                caught_fault = SoapFault("Client", msg)
-                http_status = 400
+            caught_fault = SoapFault("Client", str(exc))
+            http_status = 400
 
         except Exception as exc:
             caught_fault = SoapFault("Server", f"Internal error: {exc}")

@@ -9,8 +9,9 @@ from __future__ import annotations
 import pytest
 from lxml import etree
 
-from soapbar.core.xml import parse_xml, parse_xml_document
 from soapbar.core.envelope import SoapEnvelope
+from soapbar.core.fault import SoapFault
+from soapbar.core.xml import parse_xml, parse_xml_document
 from soapbar.server.application import SoapApplication
 from soapbar.server.service import SoapService, soap_operation
 from soapbar.core.binding import BindingStyle
@@ -301,15 +302,15 @@ class TestNamespaceConfusion:
     """Namespace confusion attacks — wrong namespace accepted as valid SOAP."""
 
     def test_wrong_namespace_rejected(self):
-        """Wrong envelope namespace raises ValueError, not silent acceptance."""
+        """Wrong envelope namespace raises SoapFault(VersionMismatch), not silent acceptance."""
         wrong_ns = b"""<env:Envelope xmlns:env="http://evil.example.com/soap">
           <env:Body/>
         </env:Envelope>"""
-        with pytest.raises(ValueError, match="Unknown SOAP envelope namespace"):
+        with pytest.raises(SoapFault, match="Unknown SOAP envelope namespace"):
             SoapEnvelope.from_xml(wrong_ns)
 
     def test_empty_namespace_rejected(self):
-        """Unqualified Envelope element (no namespace) raises ValueError."""
+        """Unqualified Envelope element (no namespace) raises SoapFault(VersionMismatch)."""
         no_ns = b"<Envelope><Body/></Envelope>"
-        with pytest.raises(ValueError):
+        with pytest.raises(SoapFault):
             SoapEnvelope.from_xml(no_ns)

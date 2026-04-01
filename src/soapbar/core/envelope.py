@@ -194,7 +194,8 @@ class SoapEnvelope:
         elif ns == NS.SOAP12_ENV:
             version = SoapVersion.SOAP_12
         else:
-            raise ValueError(f"Unknown SOAP envelope namespace: {ns!r}")
+            from soapbar.core.fault import SoapFault
+            raise SoapFault("VersionMismatch", f"Unknown SOAP envelope namespace: {ns!r}")
 
         env_ns = version.envelope_ns
         header_blocks: list[SoapHeaderBlock] = []

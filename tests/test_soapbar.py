@@ -1869,7 +1869,7 @@ class TestRequiredFieldValidation:
         for style in BindingStyle:
             serializer = get_serializer(style)
             container = etree.Element("_body")
-            with pytest.raises(ValueError, match="required_field"):
+            with pytest.raises(SoapFault, match="required_field"):
                 serializer.serialize_request(sig, {}, container)
 
     def _check_all_serializers_response(self, sig: OperationSignature) -> None:
@@ -1877,7 +1877,7 @@ class TestRequiredFieldValidation:
         for style in BindingStyle:
             serializer = get_serializer(style)
             container = etree.Element("_body")
-            with pytest.raises(ValueError, match="result"):
+            with pytest.raises(SoapFault, match="result"):
                 serializer.serialize_response(sig, {}, container)
 
     def test_missing_required_input_raises(self) -> None:

@@ -67,7 +67,10 @@ class BindingSerializer(ABC):
     ) -> None:
         missing = [p.name for p in params if p.required and values.get(p.name) is None]
         if missing:
-            raise ValueError(f"Missing required {direction} parameter(s): {', '.join(missing)}")
+            from soapbar.core.fault import SoapFault
+            fault_code = "Server" if direction == "output" else "Client"
+            msg = f"Missing required {direction} parameter(s): {', '.join(missing)}"
+            raise SoapFault(fault_code, msg)
 
     @staticmethod
     def _serialize_param_value(
