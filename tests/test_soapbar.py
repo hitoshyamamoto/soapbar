@@ -377,6 +377,80 @@ class TestBinding:
         s = get_serializer(BindingStyle.DOCUMENT_ENCODED)
         assert isinstance(s, DocumentEncodedSerializer)
 
+    def test_document_literal_roundtrip_with_op_namespace(self) -> None:
+        """Bug fix: _extract must use sig.input_namespace when param.namespace is None."""
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        sig = OperationSignature(
+            name="Add",
+            input_params=[OperationParameter("a", int_type), OperationParameter("b", int_type)],
+            output_params=[OperationParameter("result", int_type)],
+            input_namespace="http://example.com/soap",
+            output_namespace="http://example.com/soap",
+        )
+        serializer = DocumentLiteralSerializer()
+        container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 3, "b": 7}, container)
+        # Elements must be namespace-qualified
+        assert container.find("{http://example.com/soap}a") is not None
+        assert container.find("a") is None  # bare name must not exist
+        # Deserialize must find them back
+        values = serializer.deserialize_request(sig, container)
+        assert values["a"] == 3
+        assert values["b"] == 7
+
+    def test_document_literal_response_roundtrip_with_op_namespace(self) -> None:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        sig = OperationSignature(
+            name="Add",
+            input_params=[OperationParameter("a", int_type)],
+            output_params=[OperationParameter("result", int_type)],
+            output_namespace="http://example.com/soap",
+        )
+        serializer = DocumentLiteralSerializer()
+        container = etree.Element("_body")
+        serializer.serialize_response(sig, {"result": 42}, container)
+        values = serializer.deserialize_response(sig, container)
+        assert values["result"] == 42
+
+    def test_document_encoded_roundtrip_with_op_namespace(self) -> None:
+        """Bug fix: _extract_params must use sig.input_namespace when param.namespace is None."""
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        sig = OperationSignature(
+            name="Add",
+            input_params=[OperationParameter("a", int_type), OperationParameter("b", int_type)],
+            output_params=[OperationParameter("result", int_type)],
+            input_namespace="http://example.com/soap",
+            output_namespace="http://example.com/soap",
+        )
+        serializer = DocumentEncodedSerializer()
+        container = etree.Element("_body")
+        serializer.serialize_request(sig, {"a": 5, "b": 9}, container)
+        # Elements must be namespace-qualified
+        assert container.find("{http://example.com/soap}a") is not None
+        values = serializer.deserialize_request(sig, container)
+        assert values["a"] == 5
+        assert values["b"] == 9
+
+    def test_document_literal_interop_fallback_bare_element(self) -> None:
+        """Interop: bare (unnamespaced) elements are still accepted when namespace is set."""
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        sig = OperationSignature(
+            name="Add",
+            input_params=[OperationParameter("a", int_type)],
+            output_params=[],
+            input_namespace="http://example.com/soap",
+        )
+        serializer = DocumentLiteralSerializer()
+        # Simulate a non-conformant client that sends bare elements
+        container = etree.Element("_body")
+        etree.SubElement(container, "a").text = "99"
+        values = serializer.deserialize_request(sig, container)
+        assert values["a"] == 99
+
 
 # =============================================================================
 # 6. Envelope

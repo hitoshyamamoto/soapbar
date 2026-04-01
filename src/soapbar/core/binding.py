@@ -323,25 +323,26 @@ class DocumentLiteralSerializer(BindingSerializer):
         sig: OperationSignature,
         body_elem: _Element,
     ) -> dict[str, Any]:
-        return self._extract(sig.input_params, body_elem)
+        return self._extract(sig.input_params, body_elem, sig.input_namespace or "")
 
     def deserialize_response(
         self,
         sig: OperationSignature,
         body_elem: _Element,
     ) -> dict[str, Any]:
-        return self._extract(sig.output_params, body_elem)
+        return self._extract(sig.output_params, body_elem, sig.output_namespace or "")
 
     def _extract(
         self,
         params: list[OperationParameter],
         body_elem: _Element,
+        op_namespace: str = "",
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for param in params:
-            ns = param.namespace or ""
+            ns = param.namespace or op_namespace
             child = body_elem.find(f"{{{ns}}}{param.name}") if ns else body_elem.find(param.name)
-            if child is None:
+            if child is None and ns:
                 child = body_elem.find(param.name)
             if child is not None:
                 result[param.name] = self._deserialize_param_value(child, param)
@@ -467,25 +468,29 @@ class DocumentEncodedSerializer(BindingSerializer):
         sig: OperationSignature,
         body_elem: _Element,
     ) -> dict[str, Any]:
-        return self._extract_params(sig.input_params, body_elem)
+        return self._extract_params(sig.input_params, body_elem, sig.input_namespace or "")
 
     def deserialize_response(
         self,
         sig: OperationSignature,
         body_elem: _Element,
     ) -> dict[str, Any]:
-        return self._extract_params(sig.output_params, body_elem)
+        return self._extract_params(sig.output_params, body_elem, sig.output_namespace or "")
 
     def _extract_params(
         self,
         params: list[OperationParameter],
         body_elem: _Element,
+        op_namespace: str = "",
     ) -> dict[str, Any]:
         from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
         from soapbar.core.types import xsd as xsd_registry
         result: dict[str, Any] = {}
         for param in params:
-            child = body_elem.find(param.name)
+            ns = param.namespace or op_namespace
+            child = body_elem.find(f"{{{ns}}}{param.name}") if ns else body_elem.find(param.name)
+            if child is None and ns:
+                child = body_elem.find(param.name)
             if child is None:
                 continue
             if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
