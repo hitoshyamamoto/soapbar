@@ -51,7 +51,7 @@ def _resolve_location(location: str, base_url: str | None) -> str:
 
 
 def _fetch_wsdl_source(location: str) -> bytes:
-    if location.startswith(("http://", "https://")):
+    if location.startswith(("http://", "https://", "file://")):
         import urllib.request
         with urllib.request.urlopen(location) as resp:  # noqa: S310
             return resp.read()  # type: ignore[no-any-return]

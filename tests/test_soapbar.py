@@ -26,9 +26,10 @@ from soapbar.core.binding import (
 from soapbar.core.envelope import SoapEnvelope, SoapVersion, build_fault, http_headers
 from soapbar.core.fault import SoapFault
 from soapbar.core.namespaces import NS
-from soapbar.core.types import xsd
+from soapbar.core.types import ArrayXsdType, ChoiceXsdType, xsd
+from soapbar.core.wsdl import WsdlDefinition
 from soapbar.core.wsdl.builder import build_wsdl_string
-from soapbar.core.wsdl.parser import parse_wsdl
+from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
 from soapbar.core.xml import (
     build_nsmap,
     clone,
@@ -591,6 +592,252 @@ class TestWsdl:
         </definitions>"""
         defn = parse_wsdl(wsdl_with_ns_import)
         assert "PT" in defn.port_types
+
+
+# =============================================================================
+# 7b. WSDL Parser — coverage for previously untested paths
+# =============================================================================
+
+class TestWsdlParserPaths:
+    """Target the specific parser paths that were not covered."""
+
+    # --- portType operation with documentation and fault ---
+
+    def test_operation_documentation_parsed(self) -> None:
+        wsdl = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     xmlns:tns="http://example.com/"
+                     targetNamespace="http://example.com/">
+          <message name="Req"><part name="a" type="xsd:int"/></message>
+          <message name="Resp"><part name="r" type="xsd:int"/></message>
+          <portType name="PT">
+            <operation name="Op">
+              <documentation>Computes something useful</documentation>
+              <input message="tns:Req"/>
+              <output message="tns:Resp"/>
+            </operation>
+          </portType>
+        </definitions>"""
+        defn = parse_wsdl(wsdl)
+        op = defn.port_types["PT"].operations[0]
+        assert op.documentation == "Computes something useful"
+
+    def test_operation_fault_parsed(self) -> None:
+        wsdl = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     xmlns:tns="http://example.com/"
+                     targetNamespace="http://example.com/">
+          <message name="Req"><part name="a" type="xsd:int"/></message>
+          <message name="Resp"><part name="r" type="xsd:int"/></message>
+          <message name="Fault"><part name="msg" type="xsd:string"/></message>
+          <portType name="PT">
+            <operation name="Op">
+              <input message="tns:Req"/>
+              <output message="tns:Resp"/>
+              <fault name="OpFault" message="tns:Fault"/>
+            </operation>
+          </portType>
+        </definitions>"""
+        defn = parse_wsdl(wsdl)
+        op = defn.port_types["PT"].operations[0]
+        assert len(op.faults) == 1
+        assert op.faults[0].name == "OpFault"
+
+    # --- schema: unnamed complexType is skipped ---
+
+    def test_unnamed_complextype_skipped(self) -> None:
+        wsdl = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     targetNamespace="http://example.com/">
+          <types>
+            <xsd:schema targetNamespace="http://example.com/">
+              <xsd:complexType>
+                <xsd:sequence><xsd:element name="x" type="xsd:int"/></xsd:sequence>
+              </xsd:complexType>
+              <xsd:complexType name="Named">
+                <xsd:sequence><xsd:element name="y" type="xsd:string"/></xsd:sequence>
+              </xsd:complexType>
+            </xsd:schema>
+          </types>
+        </definitions>"""
+        defn = parse_wsdl(wsdl)
+        assert "Named" in defn.complex_types
+        # unnamed type must not appear
+        assert "" not in defn.complex_types
+
+    # --- schema: sequence element without type= defaults to xsd:string ---
+
+    def test_sequence_element_no_type_defaults_to_string(self) -> None:
+        wsdl = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     targetNamespace="http://example.com/">
+          <types>
+            <xsd:schema targetNamespace="http://example.com/">
+              <xsd:complexType name="NoType">
+                <xsd:sequence>
+                  <xsd:element name="val"/>
+                </xsd:sequence>
+              </xsd:complexType>
+            </xsd:schema>
+          </types>
+        </definitions>"""
+        defn = parse_wsdl(wsdl)
+        ct = defn.complex_types["NoType"]
+        assert ct.name == "NoType"
+
+    # --- schema: choice type ---
+
+    def test_choice_type_parsed(self) -> None:
+        wsdl = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     targetNamespace="http://example.com/">
+          <types>
+            <xsd:schema targetNamespace="http://example.com/">
+              <xsd:complexType name="MyChoice">
+                <xsd:choice>
+                  <xsd:element name="intVal" type="xsd:int"/>
+                  <xsd:element name="strVal" type="xsd:string"/>
+                </xsd:choice>
+              </xsd:complexType>
+            </xsd:schema>
+          </types>
+        </definitions>"""
+        defn = parse_wsdl(wsdl)
+        ct = defn.complex_types["MyChoice"]
+        assert isinstance(ct, ChoiceXsdType)
+        assert len(ct.options) == 2
+        assert ct.options[0][0] == "intVal"
+        assert ct.options[1][0] == "strVal"
+
+    # --- schema: complexContent / SOAP-encoded array (arrayType on restriction) ---
+
+    def test_complexcontent_array_type_on_restriction_attrib(self) -> None:
+        """wsdl:arrayType declared as an XML attribute on <xsd:restriction>."""
+        soapenc = "http://schemas.xmlsoap.org/soap/encoding/"
+        wsdl = (
+            b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/"
+                     targetNamespace="http://example.com/">
+          <types>
+            <xsd:schema targetNamespace="http://example.com/">
+              <xsd:complexType name="StringArray">
+                <xsd:complexContent>
+                  <xsd:restriction base="soapenc:Array"
+                      soapenc:arrayType="xsd:string[]"/>
+                </xsd:complexContent>
+              </xsd:complexType>
+            </xsd:schema>
+          </types>
+        </definitions>"""
+        )
+        defn = parse_wsdl(wsdl)
+        ct = defn.complex_types["StringArray"]
+        assert isinstance(ct, ArrayXsdType)
+        assert ct.name == "StringArray"
+
+    def test_complexcontent_array_type_on_child_attribute_element(self) -> None:
+        """wsdl:arrayType declared on a child <xsd:attribute> element."""
+        wsdl = (
+            b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/"
+                     xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+                     targetNamespace="http://example.com/">
+          <types>
+            <xsd:schema targetNamespace="http://example.com/">
+              <xsd:complexType name="IntArray">
+                <xsd:complexContent>
+                  <xsd:restriction base="soapenc:Array">
+                    <xsd:attribute ref="soapenc:arrayType"
+                        wsdl:arrayType="xsd:int[]"/>
+                  </xsd:restriction>
+                </xsd:complexContent>
+              </xsd:complexType>
+            </xsd:schema>
+          </types>
+        </definitions>"""
+        )
+        defn = parse_wsdl(wsdl)
+        ct = defn.complex_types["IntArray"]
+        assert isinstance(ct, ArrayXsdType)
+        assert ct.name == "IntArray"
+
+    # --- parse_wsdl_file ---
+
+    def test_parse_wsdl_file(self, tmp_path: pytest.TempdirFactory) -> None:
+        wsdl_file = tmp_path / "calc.wsdl"  # type: ignore[operator]
+        wsdl_file.write_bytes(SIMPLE_WSDL)
+        defn = parse_wsdl_file(wsdl_file)
+        assert defn.name == "Calculator"
+        assert "AddRequest" in defn.messages
+
+    # --- file-based WSDL import (covers _fetch_wsdl_source file path) ---
+
+    def test_wsdl_file_import(self, tmp_path: pytest.TempdirFactory) -> None:
+        imported_wsdl = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                     targetNamespace="http://example.com/imported">
+          <message name="ImportedMsg">
+            <part name="val" type="xsd:string"/>
+          </message>
+        </definitions>"""
+        main_wsdl = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     targetNamespace="http://example.com/main">
+          <import location="imported.wsdl"/>
+        </definitions>"""
+        tmp_path = tmp_path  # type: ignore[assignment]
+        (tmp_path / "imported.wsdl").write_bytes(imported_wsdl)  # type: ignore[operator]
+        main_file = tmp_path / "main.wsdl"  # type: ignore[operator]
+        main_file.write_bytes(main_wsdl)
+        defn = parse_wsdl_file(main_file)
+        assert "ImportedMsg" in defn.messages
+
+
+# =============================================================================
+# 7c. WSDL Builder — coverage for ArrayXsdType and ChoiceXsdType
+# =============================================================================
+
+class TestWsdlBuilderComplexTypes:
+    """Cover _array_type_to_xsd and _choice_type_to_xsd builder paths."""
+
+    def test_build_wsdl_with_array_type(self) -> None:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        arr = ArrayXsdType(name="IntList", element_type=int_type, element_tag="item")
+        defn = WsdlDefinition(
+            name="Svc",
+            target_namespace="http://example.com/",
+            complex_types={"IntList": arr},
+        )
+        wsdl_str = build_wsdl_string(defn, "http://example.com/")
+        assert "IntList" in wsdl_str
+        assert "maxOccurs" in wsdl_str
+
+    def test_build_wsdl_with_choice_type(self) -> None:
+        int_type = xsd.resolve("int")
+        str_type = xsd.resolve("string")
+        assert int_type is not None
+        assert str_type is not None
+        ct = ChoiceXsdType(name="MyChoice", options=[("intVal", int_type), ("strVal", str_type)])
+        defn = WsdlDefinition(
+            name="Svc",
+            target_namespace="http://example.com/",
+            complex_types={"MyChoice": ct},
+        )
+        wsdl_str = build_wsdl_string(defn, "http://example.com/")
+        assert "MyChoice" in wsdl_str
+        assert "intVal" in wsdl_str
+        assert "strVal" in wsdl_str
 
 
 # =============================================================================
