@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/license-MIT%20with%20Attribution-green)
-![Coverage](https://img.shields.io/badge/coverage-passing-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-good-green)
 
 A SOAP framework for Python — client, server, and WSDL handling.
 
