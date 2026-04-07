@@ -232,6 +232,7 @@ def _parse_binding_operation(elem: _Element, soap_ns: str) -> WsdlBindingOperati
     input_namespace: str | None = None
     output_namespace: str | None = None
     input_use: str | None = None
+    output_use: str | None = None
 
     for child in elem:
         child_ns = namespace_uri(child)
@@ -251,12 +252,14 @@ def _parse_binding_operation(elem: _Element, soap_ns: str) -> WsdlBindingOperati
             for grandchild in child:
                 if namespace_uri(grandchild) == soap_ns and local_name(grandchild) == "body":
                     output_namespace = grandchild.get("namespace")
+                    output_use = grandchild.get("use")
 
     return WsdlBindingOperation(
         name=name,
         soap_action=soap_action,
         style=style,
         use=input_use,
+        output_use=output_use,
         input_namespace=input_namespace,
         output_namespace=output_namespace,
     )

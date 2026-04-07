@@ -49,7 +49,8 @@ class WsdlBindingOperation:
     name: str
     soap_action: str = ""
     style: str | None = None   # "rpc" or "document" (operation-level override)
-    use: str | None = None     # "encoded" or "literal" (operation-level override)
+    use: str | None = None        # input use: "encoded" or "literal"
+    output_use: str | None = None # output use: "encoded" or "literal" (may differ from input)
     input_namespace: str | None = None
     output_namespace: str | None = None
 

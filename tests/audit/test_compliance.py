@@ -356,6 +356,54 @@ class TestSoap12EnvelopeCompliance:
         assert "action=" in headers["Content-Type"]
         assert "SOAPAction" not in headers, "SOAP 1.2 must not have a SOAPAction header"
 
+    def test_data_encoding_unknown_fault_generated(self):
+        """§5.4.9 MUST — Unknown encodingStyle on Body child generates DataEncodingUnknown fault."""
+        xml = b"""<?xml version="1.0"?>
+        <soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"
+                         xmlns:tns="http://example.com/calc">
+          <soap12:Body>
+            <tns:add soap12:encodingStyle="http://unknown.example.com/encoding"
+                     xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+              <a>1</a><b>2</b>
+            </tns:add>
+          </soap12:Body>
+        </soap12:Envelope>"""
+        app, _ = _make_app()
+        status, _, body = app.handle_request(xml, content_type="application/soap+xml")
+        assert status == 500
+        root = _parse(body)
+        fault = root.find(f"{{{SOAP12_ENV}}}Body/{{{SOAP12_ENV}}}Fault")
+        assert fault is not None, "Response must be a SOAP 1.2 Fault"
+        val = fault.find(f"{{{SOAP12_ENV}}}Code/{{{SOAP12_ENV}}}Value")
+        assert val is not None
+        assert (val.text or "").endswith("DataEncodingUnknown"), \
+            "Fault code MUST be DataEncodingUnknown per §5.4.9"
+
+    def test_known_soap12_encoding_style_accepted(self):
+        """§5.4.9 — The SOAP 1.2 encoding URI is the known/accepted encodingStyle value."""
+        xml = (
+            b'<?xml version="1.0"?>'
+            b'<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"'
+            b'                 xmlns:tns="http://example.com/calc">'
+            b'  <soap12:Body>'
+            b'    <tns:add soap12:encodingStyle="http://www.w3.org/2003/05/soap-encoding">'
+            b'      <a>2</a><b>3</b>'
+            b'    </tns:add>'
+            b'  </soap12:Body>'
+            b'</soap12:Envelope>'
+        )
+        app, _ = _make_app()
+        status, _, body = app.handle_request(xml, content_type="application/soap+xml")
+        # Must NOT trigger DataEncodingUnknown — service returns 200 or a different fault
+        root = _parse(body)
+        if status == 500:
+            val = root.find(
+                f"{{{SOAP12_ENV}}}Body/{{{SOAP12_ENV}}}Fault"
+                f"/{{{SOAP12_ENV}}}Code/{{{SOAP12_ENV}}}Value"
+            )
+            assert val is None or not (val.text or "").endswith("DataEncodingUnknown"), \
+                "Known SOAP 1.2 encoding URI must NOT trigger DataEncodingUnknown"
+
     def test_version_mismatch_detection(self):
         """§5.4.5 — Unknown envelope namespace returns VersionMismatch-style fault."""
         # soapbar converts the ValueError from unknown namespace to a Client fault
@@ -512,6 +560,36 @@ class TestWsdl11Compliance:
         app.register(_Calc12())
         wsdl = app.get_wsdl()
         assert NS.WSDL_SOAP12.encode() in wsdl or b"soap12" in wsdl
+
+    def test_wsdl_parser_captures_output_use(self):
+        """§3.5 — parser MUST capture output use= independently from input use=."""
+        from soapbar.core.wsdl.parser import parse_wsdl
+        wsdl = b"""<?xml version="1.0"?>
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+                     targetNamespace="http://example.com/">
+          <message name="Req"><part name="p" type="xsd:string"/></message>
+          <message name="Resp"><part name="r" type="xsd:string"/></message>
+          <portType name="PT">
+            <operation name="Op">
+              <input message="tns:Req"/>
+              <output message="tns:Resp"/>
+            </operation>
+          </portType>
+          <binding name="B" type="tns:PT">
+            <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+            <operation name="Op">
+              <soap:operation soapAction="Op"/>
+              <input><soap:body use="literal" namespace="http://example.com/"/></input>
+              <output><soap:body use="encoded" namespace="http://example.com/"/></output>
+            </operation>
+          </binding>
+        </definitions>"""
+        defn = parse_wsdl(wsdl)
+        binding = next(iter(defn.bindings.values()))
+        op = binding.operations[0]
+        assert op.use == "literal", "input use must be captured"
+        assert op.output_use == "encoded", "output use must be captured independently"
 
 
 # ---------------------------------------------------------------------------

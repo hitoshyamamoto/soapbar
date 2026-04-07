@@ -78,6 +78,18 @@ class SoapApplication:
             envelope = SoapEnvelope.from_xml(body)
             version = envelope.version
 
+            # DataEncodingUnknown enforcement (SOAP 1.2 §5.4.9 MUST)
+            # Only SOAP 1.2 defines this fault code; SOAP 1.1 has no equivalent.
+            if version == SoapVersion.SOAP_12:
+                _enc_attr = f"{{{NS.SOAP12_ENV}}}encodingStyle"
+                for body_elem in envelope.body_elements:
+                    enc = body_elem.get(_enc_attr, "")
+                    if enc and enc != NS.SOAP12_ENC:
+                        raise SoapFault(
+                            "DataEncodingUnknown",
+                            f"Encoding style not supported: {enc!r}",
+                        )
+
             # mustUnderstand enforcement (SOAP 1.1 §4.2.3, SOAP 1.2 §5.2.3)
             for block in envelope.header_blocks:
                 if block.must_understand:

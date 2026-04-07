@@ -24,10 +24,17 @@ from soapbar.core.xml import (
 
 @dataclass
 class SoapHeaderBlock:
-    """A single SOAP header block with parsed attributes."""
+    """A single SOAP header block with parsed attributes.
+
+    ``relay`` is parsed from the SOAP 1.2 ``env:relay`` attribute ([SOAP12-P1] §5.2.4)
+    and exposed for inspection by intermediary implementations.  soapbar acts as an
+    *ultimate receiver* and does not forward envelopes, so ``relay`` is intentionally
+    not enforced here — forwarding behaviour is the responsibility of a SOAP intermediary
+    layer that wraps this library.
+    """
     element: _Element
     must_understand: bool = False
-    relay: bool = False        # SOAP 1.2 only
+    relay: bool = False        # SOAP 1.2 only; see class docstring
     role: str | None = None    # SOAP 1.2 role / SOAP 1.1 actor
 
 
