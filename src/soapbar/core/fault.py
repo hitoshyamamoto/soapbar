@@ -75,14 +75,16 @@ class SoapFault(Exception):  # noqa: N818
         faultstring: str,
         faultactor: str | None = None,
         detail: str | _Element | None = None,
-        subcodes: list[str] | None = None,
+        subcodes: list[tuple[str, str]] | None = None,
     ) -> None:
         super().__init__(faultstring)
         self.faultcode = faultcode
         self.faultstring = faultstring
         self.faultactor = faultactor
         self.detail = detail
-        self.subcodes: list[str] = subcodes or []
+        # Each subcode is (namespace_uri, localname) so the QName prefix can be
+        # declared in the serialised XML per [SOAP12-P1] §5.4.6 MUST.
+        self.subcodes: list[tuple[str, str]] = subcodes or []
 
     # ------------------------------------------------------------------
     # SOAP 1.1
@@ -128,12 +130,19 @@ class SoapFault(Exception):  # noqa: N818
         # Map 1.1 codes to 1.2
         code_value = _11_TO_12.get(self.faultcode, self.faultcode)
         sub_element(code_elem, f"{{{NS.SOAP12_ENV}}}Value", text=f"soap12:{code_value}")
-        # Subcodes
+        # Subcodes — each (ns, local) rendered as a namespace-qualified QName
+        # so the prefix is declared in-scope per [SOAP12-P1] §5.4.6 MUST.
         if self.subcodes:
             parent = code_elem
-            for sc in self.subcodes:
+            for i, (ns, local) in enumerate(self.subcodes):
+                prefix = NS.prefix_for(ns) or f"sc{i}"
                 subcode_elem = sub_element(parent, f"{{{NS.SOAP12_ENV}}}Subcode")
-                sub_element(subcode_elem, f"{{{NS.SOAP12_ENV}}}Value", text=sc)
+                sub_element(
+                    subcode_elem,
+                    f"{{{NS.SOAP12_ENV}}}Value",
+                    text=f"{prefix}:{local}",
+                    nsmap={prefix: ns},
+                )
                 parent = subcode_elem
         # Reason
         reason_elem = sub_element(fault, f"{{{NS.SOAP12_ENV}}}Reason")

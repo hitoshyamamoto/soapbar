@@ -345,8 +345,6 @@ class DocumentLiteralSerializer(BindingSerializer):
         for param in params:
             ns = param.namespace or op_namespace
             child = body_elem.find(f"{{{ns}}}{param.name}") if ns else body_elem.find(param.name)
-            if child is None and ns:
-                child = body_elem.find(param.name)
             if child is not None:
                 result[param.name] = self._deserialize_param_value(child, param)
         return result
@@ -492,8 +490,6 @@ class DocumentEncodedSerializer(BindingSerializer):
         for param in params:
             ns = param.namespace or op_namespace
             child = body_elem.find(f"{{{ns}}}{param.name}") if ns else body_elem.find(param.name)
-            if child is None and ns:
-                child = body_elem.find(param.name)
             if child is None:
                 continue
             if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):

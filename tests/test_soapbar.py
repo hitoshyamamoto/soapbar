@@ -435,8 +435,8 @@ class TestBinding:
         assert values["a"] == 5
         assert values["b"] == 9
 
-    def test_document_literal_interop_fallback_bare_element(self) -> None:
-        """Interop: bare (unnamespaced) elements are still accepted when namespace is set."""
+    def test_document_literal_rejects_unqualified_element_when_namespace_expected(self) -> None:
+        """XML Namespaces MUST: unqualified elements are NOT matched when namespace is declared."""
         int_type = xsd.resolve("int")
         assert int_type is not None
         sig = OperationSignature(
@@ -446,11 +446,12 @@ class TestBinding:
             input_namespace="http://example.com/soap",
         )
         serializer = DocumentLiteralSerializer()
-        # Simulate a non-conformant client that sends bare elements
+        # Non-conformant client sends bare (unnamespaced) element — must be rejected
         container = etree.Element("_body")
         etree.SubElement(container, "a").text = "99"
         values = serializer.deserialize_request(sig, container)
-        assert values["a"] == 99
+        # param "a" should NOT be found — namespace-qualified lookup returns nothing
+        assert "a" not in values
 
 
 # =============================================================================
@@ -1147,7 +1148,7 @@ class TestFaultEdgeCases:
         assert det.find("MyDetail") is not None
 
     def test_soap12_subcodes(self) -> None:
-        f = SoapFault("Server", "bad", subcodes=["tns:Invalid"])
+        f = SoapFault("Server", "bad", subcodes=[("http://example.com/", "Invalid")])
         elem = f.to_soap12_element()
         subcode = elem.find(f"{{{NS.SOAP12_ENV}}}Code/{{{NS.SOAP12_ENV}}}Subcode")
         assert subcode is not None
@@ -3212,21 +3213,23 @@ class TestSoap12SubcodeNested:
         from soapbar.core.fault import SoapFault
         from soapbar.core.namespaces import NS
 
-        fault = SoapFault("Server", "err", subcodes=["tns:A"])
+        fault = SoapFault("Server", "err", subcodes=[("http://example.com/", "A")])
         elem = fault.to_soap12_element()
         code_elem = elem.find(f"{{{NS.SOAP12_ENV}}}Code")
         assert code_elem is not None
         subcode = code_elem.find(f"{{{NS.SOAP12_ENV}}}Subcode")
         assert subcode is not None
         val = subcode.find(f"{{{NS.SOAP12_ENV}}}Value")
-        assert val is not None and val.text == "tns:A"
+        assert val is not None
+        assert ":" in (val.text or "")
+        assert (val.text or "").split(":")[-1] == "A"
 
     def test_multi_subcode_nested(self) -> None:
         """Multiple subcodes produce properly nested <Subcode> hierarchy."""
         from soapbar.core.fault import SoapFault
         from soapbar.core.namespaces import NS
 
-        fault = SoapFault("Server", "err", subcodes=["tns:A", "tns:B"])
+        fault = SoapFault("Server", "err", subcodes=[("http://example.com/", "A"), ("http://example.com/", "B")])
         elem = fault.to_soap12_element()
         code_elem = elem.find(f"{{{NS.SOAP12_ENV}}}Code")
         assert code_elem is not None
@@ -3235,13 +3238,15 @@ class TestSoap12SubcodeNested:
         sc1 = code_elem.find(f"{{{NS.SOAP12_ENV}}}Subcode")
         assert sc1 is not None
         val1 = sc1.find(f"{{{NS.SOAP12_ENV}}}Value")
-        assert val1 is not None and val1.text == "tns:A"
+        assert val1 is not None
+        assert (val1.text or "").split(":")[-1] == "A"
 
         # Second level: Subcode nested inside the first Subcode
         sc2 = sc1.find(f"{{{NS.SOAP12_ENV}}}Subcode")
         assert sc2 is not None
         val2 = sc2.find(f"{{{NS.SOAP12_ENV}}}Value")
-        assert val2 is not None and val2.text == "tns:B"
+        assert val2 is not None
+        assert (val2.text or "").split(":")[-1] == "B"
 
         # No sibling Value under the first Subcode (non-nested would have 2 Values)
         values_under_sc1 = sc1.findall(f"{{{NS.SOAP12_ENV}}}Value")

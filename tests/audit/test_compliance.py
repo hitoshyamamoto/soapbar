@@ -290,12 +290,32 @@ class TestSoap12EnvelopeCompliance:
 
     def test_fault_subcode_support_12(self):
         """§5.4.6 — Subcodes enable nested fault classification."""
-        f = SoapFault("Client", "validation", subcodes=["tns:InvalidInput"])
+        f = SoapFault("Client", "validation", subcodes=[("http://example.com/", "InvalidInput")])
         elem = f.to_soap12_element()
         code_elem = elem.find(f"{{{SOAP12_ENV}}}Code")
         assert code_elem is not None
         subcode = code_elem.find(f"{{{SOAP12_ENV}}}Subcode")
         assert subcode is not None
+
+    def test_subcode_value_qname_namespace_declared(self):
+        """§5.4.6 MUST — Subcode/Value text is a namespace-qualified QName with prefix in scope."""
+        ns = "http://example.com/faults"
+        f = SoapFault("Client", "err", subcodes=[(ns, "ValidationError")])
+        elem = f.to_soap12_element()
+        code_elem = elem.find(f"{{{SOAP12_ENV}}}Code")
+        assert code_elem is not None
+        subcode = code_elem.find(f"{{{SOAP12_ENV}}}Subcode")
+        assert subcode is not None
+        val = subcode.find(f"{{{SOAP12_ENV}}}Value")
+        assert val is not None
+        text = val.text or ""
+        assert ":" in text, "Subcode/Value MUST be a QName (prefix:local)"
+        prefix, local = text.split(":", 1)
+        assert local == "ValidationError"
+        # The prefix must be declared in the element's in-scope namespace map
+        assert val.nsmap.get(prefix) == ns, (
+            f"Prefix {prefix!r} must be bound to {ns!r} in nsmap"
+        )
 
     def test_fault_reason_xml_lang_12(self):
         """§5.4.4 — Reason/Text MUST have xml:lang attribute."""

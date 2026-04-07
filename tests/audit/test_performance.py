@@ -233,7 +233,7 @@ class TestPerformanceBenchmarks:
         times: list[float] = []
         for _ in range(N):
             t0 = time.perf_counter_ns()
-            fault = SoapFault("Server", "Internal error", subcodes=["tns:DBError"])
+            fault = SoapFault("Server", "Internal error", subcodes=[("http://example.com/", "DBError")])
             envelope_elem = fault.to_soap12_envelope()
             from soapbar.core.xml import to_bytes
             fault_bytes = to_bytes(envelope_elem)
