@@ -1075,6 +1075,81 @@ class TestMustUnderstandEnforcement:
         assert val_elem is not None
         assert "MustUnderstand" in (val_elem.text or "")
 
+    def test_version_mismatch_fault_includes_upgrade_header_12(self):
+        """[SOAP12-P1] §5.4.7 MUST — VersionMismatch fault envelope MUST include
+        an Upgrade header block listing supported envelope namespace URIs."""
+        bad_xml = b"""<bad:Envelope xmlns:bad="http://unknown.example.com/soap">
+          <bad:Body><bad:Op/></bad:Body>
+        </bad:Envelope>"""
+        app, _ = _make_app()
+        # Force SOAP 1.2 processing path via Content-Type
+        status, _, body = app.handle_request(
+            bad_xml, content_type="application/soap+xml"
+        )
+        assert status == 500
+        root = _parse(body)
+        # Header element MUST be present
+        header = root.find(f"{{{SOAP12_ENV}}}Header")
+        assert header is not None, "VersionMismatch fault MUST include a soap12:Header"
+        # Upgrade element MUST be present inside Header
+        upgrade = header.find(f"{{{SOAP12_ENV}}}Upgrade")
+        assert upgrade is not None, (
+            "VersionMismatch fault Header MUST contain soap12:Upgrade [SOAP12-P1] §5.4.7"
+        )
+        # At least one SupportedEnvelope child
+        supported = upgrade.findall(f"{{{SOAP12_ENV}}}SupportedEnvelope")
+        assert len(supported) >= 1, "Upgrade MUST list at least one SupportedEnvelope"
+        # Each SupportedEnvelope MUST have a qname attribute
+        for se in supported:
+            assert se.get("qname"), "SupportedEnvelope MUST have a qname attribute"
+        # SOAP 1.2 namespace must be listed
+        qnames = [se.get("qname", "") for se in supported]
+        soap12_listed = any(
+            se.nsmap.get(q.split(":")[0]) == SOAP12_ENV
+            for se in supported
+            for q in [se.get("qname", "")]
+            if ":" in q
+        )
+        assert soap12_listed, (
+            "Upgrade MUST list the SOAP 1.2 envelope namespace as a SupportedEnvelope"
+        )
+
+    def test_must_understand_fault_includes_not_understood_header_12(self):
+        """[SOAP12-P1] §5.4.8 SHOULD — MustUnderstand fault envelope SHOULD include
+        a NotUnderstood header block identifying the unrecognised header."""
+        xml = b"""<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+          <soap12:Header>
+            <ns:Auth xmlns:ns="http://unknown.example.com/"
+                     soap12:mustUnderstand="true">token</ns:Auth>
+          </soap12:Header>
+          <soap12:Body>
+            <tns:add xmlns:tns="http://example.com/calc"><a>1</a><b>2</b></tns:add>
+          </soap12:Body>
+        </soap12:Envelope>"""
+        app, _ = _make_app()
+        status, _, body = app.handle_request(
+            xml, content_type="application/soap+xml"
+        )
+        assert status == 500
+        root = _parse(body)
+        # Header MUST be present
+        header = root.find(f"{{{SOAP12_ENV}}}Header")
+        assert header is not None, (
+            "MustUnderstand fault SHOULD include a soap12:Header [SOAP12-P1] §5.4.8"
+        )
+        # NotUnderstood element SHOULD be present
+        not_understood = header.find(f"{{{SOAP12_ENV}}}NotUnderstood")
+        assert not_understood is not None, (
+            "MustUnderstand fault SHOULD contain soap12:NotUnderstood [SOAP12-P1] §5.4.8"
+        )
+        # qname attribute MUST be present and non-empty
+        qname = not_understood.get("qname", "")
+        assert qname, "NotUnderstood MUST carry a qname attribute"
+        # qname should reference the offending header (Auth in ns)
+        assert "Auth" in qname, (
+            f"NotUnderstood qname {qname!r} should identify the Auth header"
+        )
+
     def test_must_understand_false_no_fault(self):
         """mustUnderstand=0/false on any header MUST NOT generate a fault."""
         xml = b"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">

@@ -24,6 +24,50 @@ _11_TO_12: dict[str, str] = {
 _12_TO_11: dict[str, str] = {v: k for k, v in _11_TO_12.items()}
 
 
+def build_upgrade_header_block() -> _Element:
+    """Build a ``soap12:Upgrade`` header block listing supported envelope versions.
+
+    Required in SOAP 1.2 ``VersionMismatch`` faults per [SOAP12-P1] §5.4.7 **MUST**.
+    """
+    elem = make_element(f"{{{NS.SOAP12_ENV}}}Upgrade")
+    # SOAP 1.2 (preferred — listed first)
+    se12 = sub_element(elem, f"{{{NS.SOAP12_ENV}}}SupportedEnvelope")
+    se12.set("qname", "soap12:Envelope")
+    # SOAP 1.1
+    se11 = sub_element(
+        elem,
+        f"{{{NS.SOAP12_ENV}}}SupportedEnvelope",
+        nsmap={"soapenv": NS.SOAP_ENV},
+    )
+    se11.set("qname", "soapenv:Envelope")
+    return elem
+
+
+def build_not_understood_header_block(clark_tag: str) -> _Element:
+    """Build a ``soap12:NotUnderstood`` header block for the given header tag.
+
+    Should be included in SOAP 1.2 ``MustUnderstand`` faults per [SOAP12-P1] §5.4.8 **SHOULD**.
+
+    *clark_tag* is the Clark-notation tag of the unrecognised header element,
+    e.g. ``{http://example.com/ns}MyHeader``.
+    """
+    if clark_tag.startswith("{"):
+        close = clark_tag.index("}")
+        ns = clark_tag[1:close]
+        local = clark_tag[close + 1:]
+        prefix = NS.prefix_for(ns) or "hdr"
+        qname_str = f"{prefix}:{local}"
+        nsmap_extra: dict[str | None, str] = {prefix: ns}
+    else:
+        qname_str = clark_tag
+        nsmap_extra = {}
+    return make_element(
+        f"{{{NS.SOAP12_ENV}}}NotUnderstood",
+        attrib={"qname": qname_str},
+        nsmap=nsmap_extra,
+    )
+
+
 class SoapFault(Exception):  # noqa: N818
     def __init__(
         self,
@@ -111,11 +155,18 @@ class SoapFault(Exception):  # noqa: N818
                 detail_elem.append(self.detail)
         return fault
 
-    def to_soap12_envelope(self) -> _Element:
+    def to_soap12_envelope(
+        self,
+        header_blocks: list[_Element] | None = None,
+    ) -> _Element:
         env = make_element(
             f"{{{NS.SOAP12_ENV}}}Envelope",
             nsmap={"soap12": NS.SOAP12_ENV},
         )
+        if header_blocks:
+            header = sub_element(env, f"{{{NS.SOAP12_ENV}}}Header")
+            for block in header_blocks:
+                header.append(block)
         body = sub_element(env, f"{{{NS.SOAP12_ENV}}}Body")
         body.append(self.to_soap12_element())
         return env
