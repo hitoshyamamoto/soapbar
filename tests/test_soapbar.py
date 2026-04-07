@@ -2276,14 +2276,14 @@ class TestApplicationValueErrorFault:
         app.register(BadService())
         return app
 
-    def test_value_error_returns_400_client_fault(self) -> None:
+    def test_value_error_returns_500_client_fault(self) -> None:
         app = self._make_app_with_raising_handler()
         req = b"""<?xml version='1.0' encoding='UTF-8'?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
   <soapenv:Body><DoIt/></soapenv:Body>
 </soapenv:Envelope>"""
         status, _ct, body = app.handle_request(req, soap_action="")
-        assert status == 400
+        assert status == 500
         assert b"Fault" in body
         assert b"Client" in body
 
@@ -2296,8 +2296,8 @@ class TestApplicationValueErrorFault:
         _status, _ct, body = app.handle_request(req, soap_action="")
         assert b"invalid input value" in body
 
-    def test_missing_required_param_returns_400(self) -> None:
-        """Sending a request without a required parameter should produce a 400 fault."""
+    def test_missing_required_param_returns_500(self) -> None:
+        """Sending a request without a required parameter should produce a 500 fault (WS-I BP R1109)."""
         int_type = xsd.resolve("int")
         assert int_type is not None
 
@@ -2328,7 +2328,7 @@ class TestApplicationValueErrorFault:
   <soapenv:Body><Add/></soapenv:Body>
 </soapenv:Envelope>"""
         status, _ct, body = app.handle_request(req, soap_action="")
-        assert status == 400
+        assert status == 500
         assert b"Fault" in body
 
 

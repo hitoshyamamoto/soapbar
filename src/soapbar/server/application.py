@@ -139,13 +139,9 @@ class SoapApplication:
 
         except SoapFault as exc_sf:
             caught_fault = exc_sf
-            # Client faults → 400
-            if exc_sf.faultcode.startswith("Client") or exc_sf.faultcode.startswith("Sender"):
-                http_status = 400
 
         except (ValueError, TypeError) as exc:
             caught_fault = SoapFault("Client", str(exc))
-            http_status = 400
 
         except Exception as exc:
             caught_fault = SoapFault("Server", f"Internal error: {exc}")

@@ -760,12 +760,11 @@ class TestHttpBindingCompliance:
           </soapenv:Body>
         </soapenv:Envelope>"""
         app, _ = _make_app()
-        # Client raises SoapFault("Client", "Division by zero") → 400
         status, _, body = app.handle_request(xml, soap_action="divide")
-        assert status == 400  # Client fault → 400
+        assert status == 500  # WS-I BP R1109: ALL SOAP faults MUST return HTTP 500
 
-    def test_http_400_for_client_fault(self):
-        """WS-I BP 1.1 R1109 — Client faults SHOULD return HTTP 400."""
+    def test_http_500_for_client_fault(self):
+        """WS-I BP 1.1 R1109 — ALL SOAP faults MUST return HTTP 500."""
         xml = b"""<?xml version="1.0" encoding="UTF-8"?>
         <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                           xmlns:tns="http://example.com/calc">
@@ -775,7 +774,7 @@ class TestHttpBindingCompliance:
         </soapenv:Envelope>"""
         app, _ = _make_app()
         status, _, _ = app.handle_request(xml)
-        assert status == 400
+        assert status == 500
 
     def test_content_type_text_xml_soap11(self):
         """SOAP 1.1 §6 — Response Content-Type MUST be text/xml."""
