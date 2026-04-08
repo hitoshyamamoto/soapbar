@@ -6,6 +6,7 @@ from soapbar.core.envelope import (
     build_fault,
     build_request,
     build_response,
+    build_wsa_response_headers,
 )
 from soapbar.core.fault import SoapFault
 from soapbar.core.namespaces import NS
@@ -28,6 +29,7 @@ __all__ = [
     "build_fault",
     "build_request",
     "build_response",
+    "build_wsa_response_headers",
     "build_wsdl",
     "parse_wsdl",
     "parse_wsdl_file",

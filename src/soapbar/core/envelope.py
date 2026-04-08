@@ -1,6 +1,7 @@
 """SOAP Envelope builder and parser."""
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -272,6 +273,45 @@ class SoapEnvelope:
         if elem is None:
             return None
         return namespace_uri(elem)
+
+
+# ---------------------------------------------------------------------------
+# WS-Addressing response header generation
+# ---------------------------------------------------------------------------
+
+def build_wsa_response_headers(
+    request_wsa: WsaHeaders,
+    action: str | None = None,
+) -> list[_Element]:
+    """Build WS-Addressing 1.0 response header elements.
+
+    Per WS-Addressing 1.0 Core [W3C Rec 2006] §3.4:
+
+    - ``wsa:MessageID``  — a new UUID URN identifying this response message
+    - ``wsa:RelatesTo``  — the ``wsa:MessageID`` of the request (if present),
+      with ``RelationshipType`` implicitly ``wsa:Reply``
+    - ``wsa:Action``     — the response action URI (if *action* is provided)
+
+    The caller is responsible for deriving the *action* string.  A common
+    convention is to append ``"Response"`` to the request action URI.
+    """
+    headers: list[_Element] = []
+
+    msg_id_elem = make_element(f"{{{NS.WSA}}}MessageID", nsmap={"wsa": NS.WSA})
+    msg_id_elem.text = f"urn:uuid:{uuid.uuid4()}"
+    headers.append(msg_id_elem)
+
+    if request_wsa.message_id:
+        relates_to = make_element(f"{{{NS.WSA}}}RelatesTo", nsmap={"wsa": NS.WSA})
+        relates_to.text = request_wsa.message_id
+        headers.append(relates_to)
+
+    if action:
+        action_elem = make_element(f"{{{NS.WSA}}}Action", nsmap={"wsa": NS.WSA})
+        action_elem.text = action
+        headers.append(action_elem)
+
+    return headers
 
 
 # ---------------------------------------------------------------------------

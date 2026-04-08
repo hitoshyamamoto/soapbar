@@ -3014,6 +3014,133 @@ class TestWsAddressing:
         assert env.ws_addressing.action == "urn:action-1"
 
 
+class TestWsaResponseHeaders:
+    """WS-Addressing 1.0 response header generation."""
+
+    _WSA = NS.WSA
+
+    def test_response_includes_message_id(self) -> None:
+        from soapbar.core.envelope import WsaHeaders, build_wsa_response_headers
+        wsa = WsaHeaders(message_id="urn:uuid:req-1")
+        headers = build_wsa_response_headers(wsa)
+        tags = {local_name(h) for h in headers}
+        assert "MessageID" in tags
+
+    def test_response_message_id_is_urn_uuid(self) -> None:
+        from soapbar.core.envelope import WsaHeaders, build_wsa_response_headers
+        wsa = WsaHeaders(message_id="urn:uuid:req-1")
+        headers = build_wsa_response_headers(wsa)
+        msg_id = next(h for h in headers if local_name(h) == "MessageID")
+        assert (msg_id.text or "").startswith("urn:uuid:")
+
+    def test_response_relates_to_echoes_request_message_id(self) -> None:
+        from soapbar.core.envelope import WsaHeaders, build_wsa_response_headers
+        wsa = WsaHeaders(message_id="urn:uuid:req-42")
+        headers = build_wsa_response_headers(wsa)
+        relates_to = next((h for h in headers if local_name(h) == "RelatesTo"), None)
+        assert relates_to is not None
+        assert relates_to.text == "urn:uuid:req-42"
+
+    def test_response_no_relates_to_when_no_request_message_id(self) -> None:
+        from soapbar.core.envelope import WsaHeaders, build_wsa_response_headers
+        wsa = WsaHeaders()  # no message_id
+        headers = build_wsa_response_headers(wsa)
+        tags = [local_name(h) for h in headers]
+        assert "RelatesTo" not in tags
+
+    def test_response_action_included_when_provided(self) -> None:
+        from soapbar.core.envelope import WsaHeaders, build_wsa_response_headers
+        wsa = WsaHeaders(message_id="urn:uuid:req-1")
+        headers = build_wsa_response_headers(wsa, action="http://example.com/OpResponse")
+        action_elem = next((h for h in headers if local_name(h) == "Action"), None)
+        assert action_elem is not None
+        assert action_elem.text == "http://example.com/OpResponse"
+
+    def test_application_injects_wsa_headers_on_response(self) -> None:
+        """SoapApplication injects WSA RelatesTo + MessageID when request has WSA headers."""
+        from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
+        from soapbar.core.types import xsd
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+
+        class Svc(SoapService):
+            __service_name__ = "Calc"
+            __tns__ = "http://example.com/"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                input_params=[OperationParameter("a", int_type), OperationParameter("b", int_type)],
+                output_params=[OperationParameter("result", int_type)],
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        app = SoapApplication()
+        app.register(Svc())
+
+        req = (
+            b'<?xml version="1.0"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            b'                  xmlns:wsa="http://www.w3.org/2005/08/addressing"'
+            b'                  xmlns:tns="http://example.com/">'
+            b'  <soapenv:Header>'
+            b'    <wsa:MessageID>urn:uuid:test-req-001</wsa:MessageID>'
+            b'    <wsa:Action>http://example.com/add</wsa:Action>'
+            b'  </soapenv:Header>'
+            b'  <soapenv:Body><tns:add><a>3</a><b>4</b></tns:add></soapenv:Body>'
+            b'</soapenv:Envelope>'
+        )
+        status, _ct, resp_bytes = app.handle_request(req)
+        assert status == 200
+        resp_env = SoapEnvelope.from_xml(resp_bytes)
+        assert resp_env.ws_addressing is not None
+        assert resp_env.ws_addressing.relates_to == "urn:uuid:test-req-001"
+        assert resp_env.ws_addressing.message_id is not None
+        assert resp_env.ws_addressing.message_id != "urn:uuid:test-req-001"
+
+    def test_application_no_wsa_headers_when_request_has_none(self) -> None:
+        """SoapApplication does not add WSA headers when request has none."""
+        from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
+        from soapbar.core.types import xsd
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+
+        class Svc2(SoapService):
+            __service_name__ = "Calc2"
+            __tns__ = "http://example.com/"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                input_params=[OperationParameter("a", int_type)],
+                output_params=[OperationParameter("result", int_type)],
+            )
+            def add(self, a: int) -> int:
+                return a
+
+        app = SoapApplication()
+        app.register(Svc2())
+
+        req = (
+            b'<?xml version="1.0"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            b'                  xmlns:tns="http://example.com/">'
+            b'  <soapenv:Body><tns:add><a>5</a></tns:add></soapenv:Body>'
+            b'</soapenv:Envelope>'
+        )
+        status, _ct, resp_bytes = app.handle_request(req)
+        assert status == 200
+        resp_env = SoapEnvelope.from_xml(resp_bytes)
+        assert resp_env.ws_addressing is None
+
+
 # ---------------------------------------------------------------------------
 # WS-Security detection
 # ---------------------------------------------------------------------------

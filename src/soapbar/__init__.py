@@ -23,6 +23,7 @@ from soapbar.core.envelope import (
     build_fault,
     build_request,
     build_response,
+    build_wsa_response_headers,
     http_headers,
 )
 from soapbar.core.fault import SoapFault
@@ -76,6 +77,7 @@ __all__ = [  # noqa: RUF022
     "build_request",
     "build_response",
     "build_fault",
+    "build_wsa_response_headers",
     "http_headers",
     "WsdlBinding",
     "WsdlBindingOperation",

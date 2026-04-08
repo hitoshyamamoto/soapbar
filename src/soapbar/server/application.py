@@ -5,7 +5,7 @@ from soapbar.core.binding import (
     OperationSignature,
     get_serializer,
 )
-from soapbar.core.envelope import SoapEnvelope, SoapVersion
+from soapbar.core.envelope import SoapEnvelope, SoapVersion, build_wsa_response_headers
 from soapbar.core.fault import (
     SoapFault,
     build_not_understood_header_block,
@@ -145,6 +145,15 @@ class SoapApplication:
             serializer.serialize_response(sig, values, resp_body_container)
             for child in resp_body_container:
                 resp_envelope.add_body_content(child)
+
+            # WS-Addressing: echo MessageID as RelatesTo, generate new MessageID
+            if envelope.ws_addressing is not None:
+                req_action = envelope.ws_addressing.action
+                resp_action = (req_action + "Response") if req_action else None
+                for hdr in build_wsa_response_headers(
+                    envelope.ws_addressing, action=resp_action
+                ):
+                    resp_envelope.add_header(hdr)
 
             resp_bytes = resp_envelope.to_bytes()
             return 200, version.content_type, resp_bytes
