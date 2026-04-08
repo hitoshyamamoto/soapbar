@@ -19,6 +19,7 @@ class _Namespaces:
     WSU = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
     WSA = "http://www.w3.org/2005/08/addressing"
     SOAP_RPC = "http://www.w3.org/2003/05/soap-rpc"
+    XOP = "http://www.w3.org/2004/08/xop/include"
 
     DEFAULT_PREFIXES: ClassVar[dict[str, str]] = {
         SOAP_ENV: "soapenv",
@@ -34,6 +35,7 @@ class _Namespaces:
         WSU: "wsu",
         WSA: "wsa",
         SOAP_RPC: "rpc",
+        XOP: "xop",
     }
 
     REVERSE_PREFIXES: ClassVar[dict[str, str]] = {v: k for k, v in DEFAULT_PREFIXES.items()}

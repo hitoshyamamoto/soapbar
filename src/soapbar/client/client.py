@@ -31,6 +31,7 @@ class SoapClient:
         transport: HttpTransport | None = None,
         use_wsa: bool = False,
         wss_credential: Any = None,
+        use_mtom: bool = False,
     ) -> None:
         self._transport = transport or HttpTransport()
         self._wsdl: WsdlDefinition | None = None
@@ -40,6 +41,8 @@ class SoapClient:
         self._signatures: dict[str, OperationSignature] = {}
         self._use_wsa: bool = use_wsa
         self._wss_credential = wss_credential  # G09: UsernameTokenCredential or None
+        self._use_mtom: bool = use_mtom
+        self._mtom_attachments: list[Any] = []  # MtomAttachment items to send
 
         if wsdl_url is not None:
             wsdl_bytes = self._transport.fetch(wsdl_url)
@@ -69,6 +72,8 @@ class SoapClient:
         obj._signatures = {}
         obj._use_wsa = use_wsa
         obj._wss_credential = None
+        obj._use_mtom = False
+        obj._mtom_attachments = []
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl_file(path)
         obj._init_from_wsdl(defn)
@@ -85,6 +90,8 @@ class SoapClient:
         obj._signatures = {}
         obj._use_wsa = use_wsa
         obj._wss_credential = None
+        obj._use_mtom = False
+        obj._mtom_attachments = []
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl(wsdl)
         obj._init_from_wsdl(defn)
@@ -99,6 +106,7 @@ class SoapClient:
         transport: HttpTransport | None = None,
         use_wsa: bool = False,
         wss_credential: Any = None,
+        use_mtom: bool = False,
     ) -> SoapClient:
         obj: SoapClient = cls.__new__(cls)
         obj._transport = transport or HttpTransport()
@@ -109,11 +117,27 @@ class SoapClient:
         obj._signatures = {}
         obj._use_wsa = use_wsa
         obj._wss_credential = wss_credential
+        obj._use_mtom = use_mtom
+        obj._mtom_attachments = []
         obj.service = _ServiceProxy(obj)
         return obj
 
     def register_operation(self, sig: OperationSignature) -> None:
         self._signatures[sig.name] = sig
+
+    def add_attachment(self, data: bytes, content_type: str, content_id: str | None = None) -> str:
+        """Queue a binary attachment to be sent with the next MTOM call.
+
+        Returns the Content-ID (without angle brackets) that can be used in
+        an ``<xop:Include href="cid:…"/>`` element inside the SOAP body.
+        Only meaningful when ``use_mtom=True``.
+        """
+        from soapbar.core.mtom import MtomAttachment
+        cid = content_id or f"{uuid.uuid4()}@soapbar"
+        self._mtom_attachments.append(
+            MtomAttachment(content_id=cid, content_type=content_type, data=data)
+        )
+        return cid
 
     def _build_wsa_headers(self, sig: OperationSignature) -> list[Any]:
         """Return WS-Addressing request header elements for *sig* when use_wsa is True."""
@@ -153,6 +177,17 @@ class SoapClient:
         req_bytes = envelope.to_bytes()
         headers = http_headers(self._soap_version, sig.soap_action)
         headers["Content-Type"] = headers.get("Content-Type", self._soap_version.content_type)
+
+        if self._use_mtom and self._mtom_attachments:
+            from soapbar.core.mtom import build_mtom
+            attachments = list(self._mtom_attachments)
+            self._mtom_attachments.clear()
+            req_bytes, headers["Content-Type"] = build_mtom(
+                req_bytes,
+                attachments,
+                soap_version_content_type=self._soap_version.content_type,
+                soap_action=sig.soap_action or "",
+            )
 
         status, _ct, resp_body = self._transport.send(self._address, req_bytes, headers)
         return self._parse_response(sig, resp_body, status)

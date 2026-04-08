@@ -45,16 +45,6 @@ class AsgiSoapApp:
             return
 
         if method == "POST":
-            # MTOM/XOP not supported — return 415 before reading body
-            if _is_mtom(content_type):
-                from soapbar.core.envelope import SoapVersion, build_fault
-                from soapbar.core.xml import to_bytes
-                version = SoapVersion.SOAP_12 if "soap+xml" in content_type else SoapVersion.SOAP_11
-                msg = "MTOM/XOP is not supported by this endpoint"
-                fault_elem = build_fault(version, "Client", msg)
-                await self._send_response(send, 415, version.content_type, to_bytes(fault_elem))
-                return
-
             # Read body
             body_chunks: list[bytes] = []
             while True:
@@ -65,6 +55,19 @@ class AsgiSoapApp:
                 if not message.get("more_body", False):
                     break
             body_bytes = b"".join(body_chunks)
+
+            # Decode MTOM/XOP into plain XML before dispatch
+            if _is_mtom(content_type):
+                from soapbar.core.mtom import parse_mtom
+                mtom_msg = parse_mtom(body_bytes, content_type)
+                body_bytes = mtom_msg.soap_xml
+                # Adjust content_type so handle_request sees plain SOAP
+                content_type = (
+                    "application/soap+xml; charset=utf-8"
+                    if "soap+xml" in content_type
+                    else "text/xml; charset=utf-8"
+                )
+
             status, resp_ct, resp_body = self.soap_app.handle_request(
                 body_bytes, soap_action=soap_action, content_type=content_type
             )

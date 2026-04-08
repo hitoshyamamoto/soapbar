@@ -24,12 +24,21 @@ class HttpTransport:
             return self._send_urllib(url, body, headers)
 
     @staticmethod
-    def _check_mtom_response(content_type: str) -> None:
-        if "multipart/related" in content_type.lower():
-            raise NotImplementedError(
-                "MTOM/XOP responses are not supported. "
-                "The server returned a multipart response."
+    def _decode_mtom_if_needed(ct: str, body: bytes) -> tuple[str, bytes]:
+        """If *body* is an MTOM multipart response, resolve XOP includes and
+        return the plain SOAP XML with a normalised content-type.  Otherwise
+        pass through unchanged."""
+        ct_lower = ct.lower()
+        if "multipart/related" in ct_lower and "application/xop+xml" in ct_lower:
+            from soapbar.core.mtom import parse_mtom
+            mtom_msg = parse_mtom(body, ct)
+            normalised_ct = (
+                "application/soap+xml; charset=utf-8"
+                if "soap+xml" in ct_lower
+                else "text/xml; charset=utf-8"
             )
+            return normalised_ct, mtom_msg.soap_xml
+        return ct, body
 
     def _send_httpx(
         self,
@@ -42,8 +51,8 @@ class HttpTransport:
         with httpx.Client(timeout=self.timeout, verify=verify) as client:
             resp = client.post(url, content=body, headers=headers)
             ct = resp.headers.get("content-type", "text/xml")
-            self._check_mtom_response(ct)
-            return resp.status_code, ct, resp.content
+            ct, content = self._decode_mtom_if_needed(ct, resp.content)
+            return resp.status_code, ct, content
 
     def _send_urllib(
         self,
@@ -55,8 +64,9 @@ class HttpTransport:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
                 ct = resp.headers.get("Content-Type", "text/xml")
-                self._check_mtom_response(ct)
-                return resp.status, ct, resp.read()
+                raw = resp.read()
+                ct, raw = self._decode_mtom_if_needed(ct, raw)
+                return resp.status, ct, raw
         except urllib.error.HTTPError as e:
             ct = e.headers.get("Content-Type", "text/xml")
             return e.code, ct, e.read()
@@ -78,8 +88,8 @@ class HttpTransport:
         async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
             resp = await client.post(url, content=body, headers=headers)
             ct = resp.headers.get("content-type", "text/xml")
-            self._check_mtom_response(ct)
-            return resp.status_code, ct, resp.content
+            ct, content = self._decode_mtom_if_needed(ct, resp.content)
+            return resp.status_code, ct, content
 
     def fetch(self, url: str) -> bytes:
         """GET request for WSDL retrieval."""

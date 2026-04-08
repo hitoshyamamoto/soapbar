@@ -27,6 +27,7 @@ from soapbar.core.envelope import (
     http_headers,
 )
 from soapbar.core.fault import SoapFault
+from soapbar.core.mtom import MtomAttachment, MtomMessage, build_mtom, parse_mtom
 from soapbar.core.namespaces import NS
 from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType, XsdType, xsd
 from soapbar.core.wsdl import (
@@ -94,6 +95,10 @@ __all__ = [  # noqa: RUF022
     "build_wsdl",
     "build_wsdl_string",
     "build_wsdl_bytes",
+    "MtomAttachment",
+    "MtomMessage",
+    "parse_mtom",
+    "build_mtom",
     # server
     "SoapService",
     "SoapApplication",

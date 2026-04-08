@@ -2995,30 +2995,53 @@ class TestMtomDetectionAsgi:
         app.register(Svc())
         return AsgiSoapApp(app)
 
-    def test_asgi_mtom_returns_415(self) -> None:
+    def _build_mtom_request(self, name: str) -> bytes:
+        """Build a minimal MTOM multipart request wrapping a plain SOAP envelope."""
+        from soapbar.core.mtom import MtomAttachment, build_mtom
+
+        soap_xml = (
+            b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body>"
+            b"<Hello><name>" + name.encode() + b"</name></Hello>"
+            b"</soapenv:Body></soapenv:Envelope>"
+        )
+        body, _ = build_mtom(soap_xml, [], soap_version_content_type="text/xml")
+        return body
+
+    def test_asgi_mtom_dispatches_correctly(self) -> None:
+        """MTOM request should be decoded and dispatched — returns 200."""
         import asyncio
 
         asgi = self._make_app()
+        soap_xml = (
+            b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><Hello><name>World</name></Hello></soapenv:Body></soapenv:Envelope>"
+        )
+        from soapbar.core.mtom import build_mtom
+        body, outer_ct = build_mtom(soap_xml, [], soap_version_content_type="text/xml")
+
         scope = {
             "type": "http",
             "method": "POST",
             "query_string": b"",
             "headers": [
-                (b"content-type", b'multipart/related; type="application/xop+xml"; start="<rootpart>"; boundary="xxx"'),
+                (b"content-type", outer_ct.encode()),
+                (b"soapaction", b'"Hello"'),
             ],
         }
         responses = []
 
         async def run():
             async def receive():
-                return {"body": b"", "more_body": False}
+                return {"body": body, "more_body": False}
             async def send(msg):
                 responses.append(msg)
             await asgi(scope, receive, send)
 
         asyncio.run(run())
-        # First message is http.response.start
-        assert responses[0]["status"] == 415
+        assert responses[0]["status"] == 200
 
     def test_asgi_non_mtom_passes_through(self) -> None:
         import asyncio
@@ -3066,14 +3089,23 @@ class TestMtomDetectionWsgi:
         app.register(Svc())
         return WsgiSoapApp(app)
 
-    def test_wsgi_mtom_returns_415(self) -> None:
-        import io
+    def test_wsgi_mtom_dispatches_correctly(self) -> None:
+        """MTOM request should be decoded and dispatched — returns 200."""
         wsgi = self._make_wsgi()
+        soap_xml = (
+            b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><Greet><name>Test</name></Greet></soapenv:Body></soapenv:Envelope>"
+        )
+        from soapbar.core.mtom import build_mtom
+        body, outer_ct = build_mtom(soap_xml, [], soap_version_content_type="text/xml")
+
         environ = {
             "REQUEST_METHOD": "POST",
-            "CONTENT_TYPE": 'multipart/related; type="application/xop+xml"; boundary="boundary"',
-            "CONTENT_LENGTH": "0",
-            "wsgi.input": io.BytesIO(b""),
+            "CONTENT_TYPE": outer_ct,
+            "CONTENT_LENGTH": str(len(body)),
+            "wsgi.input": io.BytesIO(body),
+            "HTTP_SOAPACTION": '"Greet"',
             "QUERY_STRING": "",
         }
         status_holder = []
@@ -3081,7 +3113,7 @@ class TestMtomDetectionWsgi:
             status_holder.append(status)
 
         wsgi(environ, start_response)
-        assert "415" in status_holder[0]
+        assert "200" in status_holder[0]
 
     def test_wsgi_non_mtom_passes(self) -> None:
         import io
@@ -3111,14 +3143,29 @@ class TestMtomDetectionWsgi:
 # ---------------------------------------------------------------------------
 
 class TestMtomTransport:
-    def test_transport_mtom_raises(self) -> None:
-        transport = HttpTransport()
-        with pytest.raises(NotImplementedError, match="MTOM/XOP"):
-            transport._check_mtom_response("multipart/related; type=application/xop+xml")
+    def test_transport_mtom_decodes_response(self) -> None:
+        """Transport now decodes MTOM responses instead of raising."""
+        from soapbar.core.mtom import build_mtom
 
-    def test_transport_normal_does_not_raise(self) -> None:
+        soap_xml = (
+            b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><r>ok</r></soapenv:Body></soapenv:Envelope>"
+        )
+        body, outer_ct = build_mtom(soap_xml, [], soap_version_content_type="text/xml")
         transport = HttpTransport()
-        transport._check_mtom_response("text/xml; charset=utf-8")  # should not raise
+        normalised_ct, result_bytes = transport._decode_mtom_if_needed(outer_ct, body)
+        assert "multipart" not in normalised_ct
+        assert b"<r>ok</r>" in result_bytes
+
+    def test_transport_normal_passes_through(self) -> None:
+        """Non-MTOM responses pass through unchanged."""
+        transport = HttpTransport()
+        ct_in = "text/xml; charset=utf-8"
+        body = b"<x/>"
+        ct_out, body_out = transport._decode_mtom_if_needed(ct_in, body)
+        assert ct_out == ct_in
+        assert body_out == body
 
 
 # ---------------------------------------------------------------------------
@@ -3491,19 +3538,25 @@ class TestWsdlCircularImportGuard:
 
 
 class TestAsyncTransportMtomCheck:
-    def test_send_async_raises_on_mtom_response(self) -> None:
-        """send_async() must raise NotImplementedError for multipart/related responses."""
+    def test_send_async_decodes_mtom_response(self) -> None:
+        """send_async() now decodes MTOM responses instead of raising."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from soapbar.client.transport import HttpTransport
+        from soapbar.core.mtom import build_mtom
+
+        soap_xml = (
+            b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><r>async_ok</r></soapenv:Body></soapenv:Envelope>"
+        )
+        body, outer_ct = build_mtom(soap_xml, [], soap_version_content_type="text/xml")
 
         transport = HttpTransport()
 
         mock_resp = MagicMock()
-        mock_resp.headers = {"content-type": "multipart/related; type=\"application/xop+xml\""}
+        mock_resp.headers = {"content-type": outer_ct}
         mock_resp.status_code = 200
-        mock_resp.content = b""
+        mock_resp.content = body
 
         mock_client = AsyncMock()
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -3511,8 +3564,12 @@ class TestAsyncTransportMtomCheck:
         mock_client.post = AsyncMock(return_value=mock_resp)
 
         with patch("httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(NotImplementedError, match="MTOM"):
-                asyncio.run(transport.send_async("http://example.com/", b"<body/>", {}))
+            status, ct, resp_body = asyncio.run(
+                transport.send_async("http://example.com/", b"<body/>", {})
+            )
+        assert status == 200
+        assert "multipart" not in ct
+        assert b"async_ok" in resp_body
 
 
 class TestSoap12SubcodeNested:
@@ -3943,3 +4000,189 @@ class TestRpcResultOptIn:
         svc = Svc()
         ops = svc.get_operation_signatures()
         assert ops["Plain"].emit_rpc_result is False
+
+
+# ---------------------------------------------------------------------------
+# MTOM/XOP core — parse, build, round-trip, XOP include resolution
+# ---------------------------------------------------------------------------
+
+class TestMtomCore:
+    """Tests for soapbar.core.mtom: parse_mtom, build_mtom, round-trip."""
+
+    _SOAP_XML = (
+        b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+        b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+        b"<soapenv:Body><ping>pong</ping></soapenv:Body></soapenv:Envelope>"
+    )
+
+    def test_build_mtom_produces_multipart(self) -> None:
+        from soapbar.core.mtom import build_mtom
+        body, ct = build_mtom(self._SOAP_XML, [])
+        assert "multipart/related" in ct
+        assert "application/xop+xml" in ct
+        assert b"--MIMEBoundary_" in body
+
+    def test_build_mtom_boundary_in_content_type(self) -> None:
+        from soapbar.core.mtom import build_mtom
+        _, ct = build_mtom(self._SOAP_XML, [])
+        assert 'boundary="' in ct
+
+    def test_build_and_parse_round_trip_no_attachments(self) -> None:
+        from soapbar.core.mtom import build_mtom, parse_mtom
+        body, ct = build_mtom(self._SOAP_XML, [])
+        msg = parse_mtom(body, ct)
+        assert b"<ping>pong</ping>" in msg.soap_xml
+        assert msg.attachments == []
+
+    def test_build_with_attachment_round_trip(self) -> None:
+        from soapbar.core.mtom import MtomAttachment, build_mtom, parse_mtom
+        attachment_data = b"\x00\x01\x02\x03binary\xff"
+        att = MtomAttachment(
+            content_id="part1@test",
+            content_type="application/octet-stream",
+            data=attachment_data,
+        )
+        body, ct = build_mtom(self._SOAP_XML, [att])
+        msg = parse_mtom(body, ct)
+        assert len(msg.attachments) == 1
+        assert msg.attachments[0].content_id == "part1@test"
+        assert msg.attachments[0].data == attachment_data
+
+    def test_parse_mtom_no_boundary_raises(self) -> None:
+        from soapbar.core.mtom import parse_mtom
+        import pytest
+        with pytest.raises(ValueError, match="boundary"):
+            parse_mtom(b"garbage", "text/xml")
+
+    def test_xop_include_resolved_inline(self) -> None:
+        """An <xop:Include> element is replaced with base64-encoded attachment data."""
+        import base64
+        from soapbar.core.mtom import MtomAttachment, build_mtom, parse_mtom
+        from soapbar.core.namespaces import NS
+
+        binary_data = b"hello binary"
+        cid = "data@test"
+        # Build a SOAP envelope that references the attachment via xop:Include
+        soap_with_xop = (
+            b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            b' xmlns:xop="http://www.w3.org/2004/08/xop/include">'
+            b"<soapenv:Body>"
+            b'<file><xop:Include href="cid:data@test"/></file>'
+            b"</soapenv:Body></soapenv:Envelope>"
+        )
+        att = MtomAttachment(content_id=cid, content_type="application/octet-stream", data=binary_data)
+        body, ct = build_mtom(soap_with_xop, [att])
+        msg = parse_mtom(body, ct)
+        # The resolved XML should contain the base64-encoded data, not xop:Include
+        expected_b64 = base64.b64encode(binary_data).decode()
+        assert expected_b64.encode() in msg.soap_xml
+        assert b"xop:Include" not in msg.soap_xml
+
+    def test_add_attachment_and_use_mtom_client(self) -> None:
+        """SoapClient.add_attachment() queues attachments; call() packages them via MTOM."""
+        from unittest.mock import MagicMock, patch
+
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import BindingStyle, OperationSignature
+        from soapbar.core.envelope import SoapVersion
+
+        transport = MagicMock()
+        # Return a minimal SOAP 1.1 response
+        resp_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><r>done</r></soapenv:Body></soapenv:Envelope>"
+        )
+        transport.send.return_value = (200, "text/xml", resp_xml)
+
+        client = SoapClient.manual(
+            "http://example.com/soap",
+            binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+            soap_version=SoapVersion.SOAP_11,
+            transport=transport,
+            use_mtom=True,
+        )
+        sig = OperationSignature(name="Upload")
+        client.register_operation(sig)
+
+        cid = client.add_attachment(b"\xde\xad\xbe\xef", "application/octet-stream")
+        assert cid.endswith("@soapbar")
+        assert len(client._mtom_attachments) == 1
+
+        client.call("Upload")
+
+        # After call, attachments list should be cleared
+        assert client._mtom_attachments == []
+        # The Content-Type sent should be multipart/related
+        call_args = transport.send.call_args
+        sent_headers = call_args[0][2]
+        assert "multipart/related" in sent_headers.get("Content-Type", "")
+
+    def test_client_use_mtom_false_sends_plain_xml(self) -> None:
+        """Without use_mtom, attachments queued via add_attachment are NOT sent."""
+        from unittest.mock import MagicMock
+
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import BindingStyle, OperationSignature
+        from soapbar.core.envelope import SoapVersion
+
+        transport = MagicMock()
+        resp_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><r>ok</r></soapenv:Body></soapenv:Envelope>"
+        )
+        transport.send.return_value = (200, "text/xml", resp_xml)
+
+        client = SoapClient.manual(
+            "http://example.com/soap",
+            transport=transport,
+            use_mtom=False,
+        )
+        sig = OperationSignature(name="Op")
+        client.register_operation(sig)
+        client.call("Op")
+
+        call_args = transport.send.call_args
+        sent_headers = call_args[0][2]
+        assert "multipart" not in sent_headers.get("Content-Type", "")
+
+    def test_ns_xop_constant(self) -> None:
+        from soapbar.core.namespaces import NS
+        assert NS.XOP == "http://www.w3.org/2004/08/xop/include"
+        assert NS.DEFAULT_PREFIXES[NS.XOP] == "xop"
+
+    def test_mtom_attachment_dataclass(self) -> None:
+        from soapbar.core.mtom import MtomAttachment
+        att = MtomAttachment(content_id="x@y", content_type="image/png", data=b"\x89PNG")
+        assert att.content_id == "x@y"
+        assert att.data == b"\x89PNG"
+
+    def test_build_mtom_soap12_content_type(self) -> None:
+        from soapbar.core.mtom import build_mtom
+        _, ct = build_mtom(self._SOAP_XML, [], soap_version_content_type="application/soap+xml")
+        assert 'start-info="application/soap+xml"' in ct
+
+    def test_build_mtom_soap_action_in_outer_ct(self) -> None:
+        from soapbar.core.mtom import build_mtom
+        _, ct = build_mtom(self._SOAP_XML, [], soap_action="urn:MyAction")
+        assert 'action="urn:MyAction"' in ct
+
+    def test_multiple_attachments_all_included(self) -> None:
+        from soapbar.core.mtom import MtomAttachment, build_mtom, parse_mtom
+        atts = [
+            MtomAttachment("a@t", "application/octet-stream", b"AAAA"),
+            MtomAttachment("b@t", "image/jpeg", b"BBBB"),
+            MtomAttachment("c@t", "text/plain", b"CCCC"),
+        ]
+        body, ct = build_mtom(self._SOAP_XML, atts)
+        msg = parse_mtom(body, ct)
+        assert len(msg.attachments) == 3
+        cids = {a.content_id for a in msg.attachments}
+        assert cids == {"a@t", "b@t", "c@t"}
+
+    def test_mtom_message_exported_from_package(self) -> None:
+        import soapbar
+        assert hasattr(soapbar, "MtomAttachment")
+        assert hasattr(soapbar, "MtomMessage")
+        assert hasattr(soapbar, "parse_mtom")
+        assert hasattr(soapbar, "build_mtom")

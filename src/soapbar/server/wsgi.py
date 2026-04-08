@@ -34,25 +34,23 @@ class WsgiSoapApp:
             return [wsdl]
 
         if method == "POST":
-            if _is_mtom(content_type):
-                from soapbar.core.envelope import SoapVersion, build_fault
-                from soapbar.core.xml import to_bytes
-                version = SoapVersion.SOAP_12 if "soap+xml" in content_type else SoapVersion.SOAP_11
-                msg = "MTOM/XOP is not supported by this endpoint"
-                fault_elem = build_fault(version, "Client", msg)
-                body_mtom = to_bytes(fault_elem)
-                start_response("415 Unsupported Media Type", [
-                    ("Content-Type", version.content_type),
-                    ("Content-Length", str(len(body_mtom))),
-                ])
-                return [body_mtom]
-
             try:
                 content_length = int(environ.get("CONTENT_LENGTH", 0) or 0)
             except ValueError:
                 content_length = 0
             wsgi_input = environ.get("wsgi.input")
             body_bytes = wsgi_input.read(content_length) if wsgi_input else b""
+
+            # Decode MTOM/XOP into plain XML before dispatch
+            if _is_mtom(content_type):
+                from soapbar.core.mtom import parse_mtom
+                mtom_msg = parse_mtom(body_bytes, content_type)
+                body_bytes = mtom_msg.soap_xml
+                content_type = (
+                    "application/soap+xml; charset=utf-8"
+                    if "soap+xml" in content_type
+                    else "text/xml; charset=utf-8"
+                )
 
             status, resp_ct, resp_body = self.soap_app.handle_request(
                 body_bytes, soap_action=soap_action, content_type=content_type
