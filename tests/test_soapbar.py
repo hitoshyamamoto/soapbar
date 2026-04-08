@@ -4186,3 +4186,202 @@ class TestMtomCore:
         assert hasattr(soapbar, "MtomMessage")
         assert hasattr(soapbar, "parse_mtom")
         assert hasattr(soapbar, "build_mtom")
+
+
+# ---------------------------------------------------------------------------
+# XML Signature and XML Encryption (I03)
+# ---------------------------------------------------------------------------
+
+def _make_rsa_key_and_cert():
+    """Generate a fresh RSA-2048 key and self-signed certificate for tests."""
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    private_key = rsa.generate_private_key(
+        public_exponent=65537, key_size=2048, backend=default_backend()
+    )
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "soapbar-test")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.UTC))
+        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1))
+        .sign(private_key, hashes.SHA256())
+    )
+    return private_key, cert
+
+
+_SIMPLE_ENVELOPE = (
+    b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+    b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+    b"<soapenv:Body><ping>secret</ping></soapenv:Body></soapenv:Envelope>"
+)
+
+
+class TestXmlSignature:
+    """Tests for sign_envelope() and verify_envelope()."""
+
+    def test_sign_envelope_returns_bytes(self) -> None:
+        from soapbar.core.wssecurity import sign_envelope
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENVELOPE, key, cert)
+        assert isinstance(signed, bytes)
+        assert b"Signature" in signed
+
+    def test_signed_envelope_contains_signature_element(self) -> None:
+        from lxml import etree
+        from soapbar.core.wssecurity import sign_envelope
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENVELOPE, key, cert)
+        root = etree.fromstring(signed)
+        ds_ns = "http://www.w3.org/2000/09/xmldsig#"
+        sigs = root.findall(f".//{{{ds_ns}}}Signature")
+        assert len(sigs) == 1
+
+    def test_verify_valid_signature_succeeds(self) -> None:
+        from soapbar.core.wssecurity import sign_envelope, verify_envelope
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENVELOPE, key, cert)
+        verified = verify_envelope(signed, cert)
+        assert isinstance(verified, bytes)
+        # Original content preserved
+        assert b"ping" in verified
+
+    def test_verify_wrong_cert_raises(self) -> None:
+        from soapbar.core.wssecurity import XmlSecurityError, sign_envelope, verify_envelope
+        key, cert = _make_rsa_key_and_cert()
+        _, other_cert = _make_rsa_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENVELOPE, key, cert)
+        with pytest.raises(XmlSecurityError):
+            verify_envelope(signed, other_cert)
+
+    def test_verify_tampered_envelope_raises(self) -> None:
+        from soapbar.core.wssecurity import XmlSecurityError, sign_envelope, verify_envelope
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENVELOPE, key, cert)
+        # Tamper with signed content
+        tampered = signed.replace(b"<ping>secret</ping>", b"<ping>hacked</ping>")
+        with pytest.raises(XmlSecurityError):
+            verify_envelope(tampered, cert)
+
+    def test_sign_preserves_soap_structure(self) -> None:
+        from lxml import etree
+        from soapbar.core.wssecurity import sign_envelope
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENVELOPE, key, cert)
+        root = etree.fromstring(signed)
+        soap_ns = "http://schemas.xmlsoap.org/soap/envelope/"
+        body = root.find(f"{{{soap_ns}}}Body")
+        assert body is not None
+        assert body.find("ping") is not None
+
+    def test_xml_security_error_exported(self) -> None:
+        import soapbar
+        assert hasattr(soapbar, "XmlSecurityError")
+        assert hasattr(soapbar, "sign_envelope")
+        assert hasattr(soapbar, "verify_envelope")
+
+
+class TestXmlEncryption:
+    """Tests for encrypt_body() and decrypt_body()."""
+
+    def test_encrypt_body_hides_content(self) -> None:
+        from soapbar.core.wssecurity import encrypt_body
+        key, cert = _make_rsa_key_and_cert()
+        encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
+        assert b"secret" not in encrypted
+        assert b"EncryptedData" in encrypted
+
+    def test_encrypt_body_structure(self) -> None:
+        from lxml import etree
+        from soapbar.core.wssecurity import encrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
+        root = etree.fromstring(encrypted)
+        soap_ns = "http://schemas.xmlsoap.org/soap/envelope/"
+        xenc_ns = "http://www.w3.org/2001/04/xmlenc#"
+        body = root.find(f"{{{soap_ns}}}Body")
+        assert body is not None
+        enc_data = body.find(f"{{{xenc_ns}}}EncryptedData")
+        assert enc_data is not None
+
+    def test_decrypt_body_restores_content(self) -> None:
+        from soapbar.core.wssecurity import decrypt_body, encrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
+        decrypted = decrypt_body(encrypted, key)
+        assert b"secret" in decrypted
+        assert b"<ping>" in decrypted
+
+    def test_encrypt_decrypt_round_trip(self) -> None:
+        """Round-trip: encrypt then decrypt recovers original body children."""
+        from lxml import etree
+        from soapbar.core.wssecurity import decrypt_body, encrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
+        decrypted = decrypt_body(encrypted, key)
+        root = etree.fromstring(decrypted)
+        soap_ns = "http://schemas.xmlsoap.org/soap/envelope/"
+        body = root.find(f"{{{soap_ns}}}Body")
+        assert body is not None
+        ping = body.find("ping")
+        assert ping is not None
+        assert ping.text == "secret"
+
+    def test_decrypt_with_wrong_key_raises(self) -> None:
+        from soapbar.core.wssecurity import XmlSecurityError, decrypt_body, encrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        other_key, _ = _make_rsa_key_and_cert()
+        encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
+        with pytest.raises(XmlSecurityError):
+            decrypt_body(encrypted, other_key)
+
+    def test_decrypt_unencrypted_envelope_passthrough(self) -> None:
+        """decrypt_body on a plain envelope returns it unchanged."""
+        from soapbar.core.wssecurity import decrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        result = decrypt_body(_SIMPLE_ENVELOPE, key)
+        assert b"<ping>secret</ping>" in result
+
+    def test_encrypt_empty_body_passthrough(self) -> None:
+        """encrypt_body on an envelope with empty Body returns it unchanged."""
+        from soapbar.core.wssecurity import encrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        empty_env = (
+            b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body/></soapenv:Envelope>"
+        )
+        result = encrypt_body(empty_env, key.public_key())
+        # No EncryptedData added; original returned
+        assert b"EncryptedData" not in result
+
+    def test_encrypt_decrypt_exported_from_package(self) -> None:
+        import soapbar
+        assert hasattr(soapbar, "encrypt_body")
+        assert hasattr(soapbar, "decrypt_body")
+
+    def test_key_wrapping_algorithm_is_rsa_oaep(self) -> None:
+        """Verify the EncryptedKey uses RSA-OAEP algorithm URI."""
+        from lxml import etree
+        from soapbar.core.wssecurity import encrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
+        root = etree.fromstring(encrypted)
+        xenc_ns = "http://www.w3.org/2001/04/xmlenc#"
+        soap_ns = "http://schemas.xmlsoap.org/soap/envelope/"
+        body = root.find(f"{{{soap_ns}}}Body")
+        assert body is not None
+        key_method = body.find(
+            f".//{{{xenc_ns}}}EncryptedKey/{{{xenc_ns}}}EncryptionMethod"
+        )
+        assert key_method is not None
+        assert "rsa-oaep" in (key_method.get("Algorithm") or "")

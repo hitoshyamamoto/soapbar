@@ -44,6 +44,17 @@ from soapbar.core.wsdl import (
 )
 from soapbar.core.wsdl.builder import build_wsdl, build_wsdl_bytes, build_wsdl_string
 from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
+from soapbar.core.wssecurity import (
+    SecurityValidationError,
+    UsernameTokenCredential,
+    UsernameTokenValidator,
+    XmlSecurityError,
+    build_security_header,
+    decrypt_body,
+    encrypt_body,
+    sign_envelope,
+    verify_envelope,
+)
 from soapbar.core.xml import parse_xml, parse_xml_document, to_bytes, to_string
 from soapbar.server.application import SoapApplication
 from soapbar.server.asgi import AsgiSoapApp
@@ -99,6 +110,15 @@ __all__ = [  # noqa: RUF022
     "MtomMessage",
     "parse_mtom",
     "build_mtom",
+    "UsernameTokenCredential",
+    "UsernameTokenValidator",
+    "SecurityValidationError",
+    "build_security_header",
+    "XmlSecurityError",
+    "sign_envelope",
+    "verify_envelope",
+    "encrypt_body",
+    "decrypt_body",
     # server
     "SoapService",
     "SoapApplication",

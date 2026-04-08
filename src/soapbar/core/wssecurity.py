@@ -1,10 +1,13 @@
-"""WS-Security 1.0 UsernameToken support (OASIS WSS 2004).
+"""WS-Security 1.0 support (OASIS WSS 2004).
 
 Implements:
 - PasswordText (plain-text password in wsse:Password)
 - PasswordDigest (SHA-1 digest per WSS 1.0 §3.2.1)
+- XML Digital Signature (XML-DSIG) via signxml ≥ 3.0
+- XML Encryption (XMLEnc) via cryptography ≥ 41.0
 
 G09: WS-Security UsernameToken credential building and validation.
+I03: XML Signature and XML Encryption.
 """
 from __future__ import annotations
 
@@ -14,6 +17,7 @@ import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from lxml.etree import _Element
 
@@ -203,9 +207,343 @@ class UsernameTokenValidator(ABC):
         return username
 
 
+# ---------------------------------------------------------------------------
+# XML-DSIG — sign and verify SOAP envelopes
+# ---------------------------------------------------------------------------
+
+class XmlSecurityError(Exception):
+    """Raised when XML Signature verification or XML Encryption fails."""
+
+
+def sign_envelope(
+    envelope_bytes: bytes,
+    private_key: Any,
+    certificate: Any,
+) -> bytes:
+    """Sign a SOAP envelope with an XML Digital Signature (XML-DSIG).
+
+    The ``ds:Signature`` element is inserted into the envelope using the
+    enveloped-signature transform (W3C XML-DSIG §8.1).  RSA-SHA256 with
+    SHA-256 digest is used by default.
+
+    Args:
+        envelope_bytes: The SOAP envelope XML as bytes.
+        private_key: A ``cryptography`` RSA/EC private key object.
+        certificate: A ``cryptography`` X.509 certificate object
+            (or a PEM bytes string) whose public key corresponds to
+            *private_key*.
+
+    Returns:
+        The signed envelope as bytes.
+
+    Raises:
+        ImportError: If ``signxml`` is not installed.
+        XmlSecurityError: If signing fails.
+    """
+    try:
+        from signxml import SignatureConstructionMethod, XMLSigner  # type: ignore[attr-defined]
+    except ImportError as exc:
+        raise ImportError(
+            "signxml is required for XML Signature support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    from lxml import etree
+
+    from soapbar.core.xml import parse_xml
+
+    try:
+        root = parse_xml(envelope_bytes)
+        signer = XMLSigner(method=SignatureConstructionMethod.enveloped)
+        signed: Any = signer.sign(root, key=private_key, cert=[certificate])
+        result_bytes: bytes = etree.tostring(signed, xml_declaration=True, encoding="utf-8")
+        return result_bytes
+    except Exception as exc:
+        raise XmlSecurityError(f"XML Signature failed: {exc}") from exc
+
+
+def verify_envelope(
+    envelope_bytes: bytes,
+    certificate: Any,
+) -> bytes:
+    """Verify the XML Digital Signature on a SOAP envelope.
+
+    Args:
+        envelope_bytes: The signed SOAP envelope as bytes.
+        certificate: The expected signer's ``cryptography`` X.509 certificate
+            or PEM bytes used to verify the signature.
+
+    Returns:
+        The verified envelope bytes (same content, parsed and re-serialised
+        to confirm the signature covers the body).
+
+    Raises:
+        ImportError: If ``signxml`` is not installed.
+        XmlSecurityError: If signature verification fails.
+    """
+    try:
+        from signxml import XMLVerifier  # type: ignore[attr-defined]
+    except ImportError as exc:
+        raise ImportError(
+            "signxml is required for XML Signature support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    from lxml import etree
+
+    from soapbar.core.xml import parse_xml
+
+    try:
+        root = parse_xml(envelope_bytes)
+        verifier: Any = XMLVerifier()
+        verify_result: Any = verifier.verify(root, x509_cert=certificate)
+        # verify() may return a VerifyResult or list[VerifyResult]
+        if isinstance(verify_result, list):
+            verify_result = verify_result[0]
+        signed_xml: Any = verify_result.signed_xml
+        verified_bytes: bytes = etree.tostring(signed_xml, xml_declaration=True, encoding="utf-8")
+        return verified_bytes
+    except XmlSecurityError:
+        raise
+    except Exception as exc:
+        raise XmlSecurityError(f"XML Signature verification failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# XML Encryption — encrypt and decrypt the SOAP Body
+# ---------------------------------------------------------------------------
+
+#: XML Encryption namespace URI
+_XENC_NS = "http://www.w3.org/2001/04/xmlenc#"
+#: Algorithm URIs
+_AES256_CBC = "http://www.w3.org/2001/04/xmlenc#aes256-cbc"
+_RSA_OAEP = "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"
+
+
+def encrypt_body(
+    envelope_bytes: bytes,
+    recipient_public_key: Any,
+) -> bytes:
+    """Encrypt the SOAP Body content using XML Encryption (AES-256-CBC + RSA-OAEP).
+
+    The Body's child elements are replaced with an ``xenc:EncryptedData``
+    element.  The AES-256 session key is wrapped with RSA-OAEP (SHA-256)
+    using *recipient_public_key*.
+
+    Args:
+        envelope_bytes: The SOAP envelope XML as bytes.
+        recipient_public_key: A ``cryptography`` RSA public key object.
+
+    Returns:
+        The envelope with an encrypted Body as bytes.
+
+    Raises:
+        ImportError: If ``cryptography`` is not installed.
+        XmlSecurityError: If encryption fails.
+    """
+    try:
+        import os
+
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives import padding as sym_padding
+        from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError as exc:
+        raise ImportError(
+            "cryptography is required for XML Encryption support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    from lxml import etree
+
+    from soapbar.core.xml import parse_xml
+
+    try:
+        root = parse_xml(envelope_bytes)
+        # Find the Body element
+        body = None
+        for child in root:
+            raw_tag = child.tag if isinstance(child.tag, str) else str(child.tag)
+            local = raw_tag.split("}")[-1] if "}" in raw_tag else raw_tag
+            if local == "Body":
+                body = child
+                break
+        if body is None:
+            raise XmlSecurityError("No SOAP Body element found")
+
+        # Serialize Body children
+        body_content = b"".join(etree.tostring(c) for c in body)
+        if not body_content:
+            return envelope_bytes  # nothing to encrypt
+
+        # Generate AES-256 session key and IV
+        session_key = os.urandom(32)
+        iv = os.urandom(16)
+
+        # Encrypt body content with AES-256-CBC
+        padder = sym_padding.PKCS7(128).padder()
+        padded = padder.update(body_content) + padder.finalize()
+        cipher = Cipher(algorithms.AES(session_key), modes.CBC(iv))
+        enc = cipher.encryptor()
+        ciphertext = enc.update(padded) + enc.finalize()
+
+        # Wrap session key with RSA-OAEP (SHA-256)
+        wrapped_key = recipient_public_key.encrypt(
+            session_key,
+            asym_padding.OAEP(
+                mgf=asym_padding.MGF1(hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        # Build xenc:EncryptedData element
+        import base64 as _b64
+
+        nsmap_enc: dict[str | None, str] = {"xenc": _XENC_NS}
+        encrypted_data = etree.SubElement(body, f"{{{_XENC_NS}}}EncryptedData", nsmap=nsmap_enc)
+        encrypted_data.set("Type", "http://www.w3.org/2001/04/xmlenc#Content")
+
+        enc_method = etree.SubElement(encrypted_data, f"{{{_XENC_NS}}}EncryptionMethod")
+        enc_method.set("Algorithm", _AES256_CBC)
+
+        key_info = etree.SubElement(encrypted_data, f"{{{_XENC_NS}}}KeyInfo")
+        enc_key = etree.SubElement(key_info, f"{{{_XENC_NS}}}EncryptedKey")
+        key_method = etree.SubElement(enc_key, f"{{{_XENC_NS}}}EncryptionMethod")
+        key_method.set("Algorithm", _RSA_OAEP)
+        cipher_data_key = etree.SubElement(enc_key, f"{{{_XENC_NS}}}CipherData")
+        cipher_value_key = etree.SubElement(cipher_data_key, f"{{{_XENC_NS}}}CipherValue")
+        cipher_value_key.text = _b64.b64encode(wrapped_key).decode()
+
+        cipher_data = etree.SubElement(encrypted_data, f"{{{_XENC_NS}}}CipherData")
+        cipher_value = etree.SubElement(cipher_data, f"{{{_XENC_NS}}}CipherValue")
+        # CipherValue = IV || ciphertext (base64-encoded)
+        cipher_value.text = _b64.b64encode(iv + ciphertext).decode()
+
+        # Remove original body children (now replaced by EncryptedData)
+        for c in list(body):
+            if c is not encrypted_data:
+                body.remove(c)
+
+        return etree.tostring(root, xml_declaration=True, encoding="utf-8")
+
+    except XmlSecurityError:
+        raise
+    except Exception as exc:
+        raise XmlSecurityError(f"XML Encryption failed: {exc}") from exc
+
+
+def decrypt_body(
+    envelope_bytes: bytes,
+    private_key: Any,
+) -> bytes:
+    """Decrypt the SOAP Body content encrypted by :func:`encrypt_body`.
+
+    Args:
+        envelope_bytes: The SOAP envelope with an encrypted Body as bytes.
+        private_key: The recipient's ``cryptography`` RSA private key.
+
+    Returns:
+        The envelope with the decrypted Body content as bytes.
+
+    Raises:
+        ImportError: If ``cryptography`` is not installed.
+        XmlSecurityError: If decryption fails.
+    """
+    try:
+        import base64 as _b64
+
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives import padding as sym_padding
+        from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError as exc:
+        raise ImportError(
+            "cryptography is required for XML Encryption support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    from lxml import etree
+
+    from soapbar.core.xml import parse_xml
+
+    try:
+        root = parse_xml(envelope_bytes)
+
+        # Find Body
+        body = None
+        for child in root:
+            raw_tag = child.tag if isinstance(child.tag, str) else str(child.tag)
+            local = raw_tag.split("}")[-1] if "}" in raw_tag else raw_tag
+            if local == "Body":
+                body = child
+                break
+        if body is None:
+            raise XmlSecurityError("No SOAP Body element found")
+
+        # Find xenc:EncryptedData
+        enc_data_tag = f"{{{_XENC_NS}}}EncryptedData"
+        enc_data = body.find(enc_data_tag)
+        if enc_data is None:
+            return envelope_bytes  # not encrypted
+
+        # Extract wrapped key
+        wrapped_key_b64 = enc_data.findtext(
+            f"{{{_XENC_NS}}}KeyInfo/{{{_XENC_NS}}}EncryptedKey"
+            f"/{{{_XENC_NS}}}CipherData/{{{_XENC_NS}}}CipherValue"
+        )
+        if wrapped_key_b64 is None:
+            raise XmlSecurityError("Missing xenc:EncryptedKey CipherValue")
+        wrapped_key = _b64.b64decode(wrapped_key_b64)
+
+        # Unwrap session key
+        session_key = private_key.decrypt(
+            wrapped_key,
+            asym_padding.OAEP(
+                mgf=asym_padding.MGF1(hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+
+        # Extract IV + ciphertext
+        cipher_val_b64 = enc_data.findtext(
+            f"{{{_XENC_NS}}}CipherData/{{{_XENC_NS}}}CipherValue"
+        )
+        if cipher_val_b64 is None:
+            raise XmlSecurityError("Missing xenc:CipherData/CipherValue")
+        iv_and_ct = _b64.b64decode(cipher_val_b64)
+        iv, ciphertext = iv_and_ct[:16], iv_and_ct[16:]
+
+        # Decrypt AES-256-CBC
+        cipher = Cipher(algorithms.AES(session_key), modes.CBC(iv))
+        dec = cipher.decryptor()
+        padded_plain = dec.update(ciphertext) + dec.finalize()
+        unpadder = sym_padding.PKCS7(128).unpadder()
+        plain_bytes = unpadder.update(padded_plain) + unpadder.finalize()
+
+        # Replace EncryptedData with parsed children
+        body.remove(enc_data)
+        wrapper = etree.fromstring(b"<_w>" + plain_bytes + b"</_w>")
+        for child in wrapper:
+            body.append(child)
+
+        return etree.tostring(root, xml_declaration=True, encoding="utf-8")
+
+    except XmlSecurityError:
+        raise
+    except Exception as exc:
+        raise XmlSecurityError(f"XML Decryption failed: {exc}") from exc
+
+
 __all__ = [
     "SecurityValidationError",
     "UsernameTokenCredential",
     "UsernameTokenValidator",
+    "XmlSecurityError",
     "build_security_header",
+    "decrypt_body",
+    "encrypt_body",
+    "sign_envelope",
+    "verify_envelope",
 ]
