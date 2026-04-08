@@ -1,6 +1,8 @@
 """SOAP application dispatcher."""
 from __future__ import annotations
 
+from typing import Any
+
 from soapbar.core.binding import (
     OperationSignature,
     get_serializer,
@@ -27,6 +29,28 @@ from soapbar.core.wsdl import (
 from soapbar.core.wsdl.builder import _type_ref, build_wsdl_bytes
 from soapbar.core.xml import to_bytes
 from soapbar.server.service import SoapService, _SoapMethod
+
+
+def _validate_input_params(sig: OperationSignature, kwargs: dict[str, Any]) -> None:
+    """Validate deserialized request parameters against the operation signature.
+
+    Raises ``SoapFault("Client", ...)`` for any required parameter that is
+    absent from *kwargs* or whose value is ``None``.  This check runs before
+    the service handler is invoked so that schema violations produce a clean,
+    spec-compliant Client fault instead of an unhandled Python TypeError or
+    AttributeError from inside the handler.
+    """
+    missing = [
+        p.name
+        for p in sig.input_params
+        if p.required and kwargs.get(p.name) is None
+    ]
+    if missing:
+        params = ", ".join(missing)
+        raise SoapFault(
+            "Client",
+            f"Missing required input parameter(s): {params}",
+        )
 
 
 class SoapApplication:
@@ -124,6 +148,9 @@ class SoapApplication:
                 container.append(body_elem)
 
             kwargs = serializer.deserialize_request(sig, container)
+
+            # F09 — validate required input parameters before dispatch
+            _validate_input_params(sig, kwargs)
 
             # Call the service method
             result = method(**kwargs)

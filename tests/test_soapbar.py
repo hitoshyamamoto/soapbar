@@ -2414,6 +2414,98 @@ class TestApplicationValueErrorFault:
         assert b"Fault" in body
 
 
+class TestInputParamValidation:
+    """F09 — required input parameter validation before service dispatch."""
+
+    def _make_app(self, required: bool = True) -> SoapApplication:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+
+        class ValSvc(SoapService):
+            __service_name__ = "ValSvc"
+            __tns__ = "http://example.com/"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", int_type, required=required),
+                    OperationParameter("b", int_type, required=required),
+                ],
+                output_params=[OperationParameter("result", int_type)],
+            )
+            def add(self, a: int = 0, b: int = 0) -> int:
+                return a + b
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(ValSvc())
+        return app
+
+    def _req(self, body_inner: str) -> bytes:
+        return (
+            b'<?xml version="1.0"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            b'                  xmlns:tns="http://example.com/">'
+            b'  <soapenv:Body>' + body_inner.encode() + b'</soapenv:Body>'
+            b'</soapenv:Envelope>'
+        )
+
+    def test_valid_request_dispatches_correctly(self) -> None:
+        app = self._make_app()
+        req = self._req("<tns:Add><a>3</a><b>4</b></tns:Add>")
+        status, _ct, body = app.handle_request(req)
+        assert status == 200
+        assert b"Fault" not in body
+
+    def test_missing_required_param_returns_fault(self) -> None:
+        app = self._make_app(required=True)
+        req = self._req("<tns:Add><b>4</b></tns:Add>")  # 'a' is absent
+        status, _ct, body = app.handle_request(req)
+        assert status == 500
+        assert b"Fault" in body
+
+    def test_missing_required_param_names_the_param(self) -> None:
+        app = self._make_app(required=True)
+        req = self._req("<tns:Add><b>4</b></tns:Add>")  # 'a' is absent
+        _status, _ct, body = app.handle_request(req)
+        assert b"a" in body  # fault message names the missing param
+
+    def test_missing_optional_param_does_not_fault(self) -> None:
+        app = self._make_app(required=False)
+        req = self._req("<tns:Add><b>4</b></tns:Add>")  # 'a' absent but optional
+        status, _ct, body = app.handle_request(req)
+        # No validation fault — handler receives a=None (or default)
+        assert b"Missing required" not in body
+
+    def test_both_params_missing_lists_both(self) -> None:
+        app = self._make_app(required=True)
+        req = self._req("<tns:Add/>")  # both absent
+        _status, _ct, body = app.handle_request(req)
+        assert b"a" in body
+        assert b"b" in body
+
+    def test_validate_input_params_directly(self) -> None:
+        """Unit-test _validate_input_params in isolation."""
+        from soapbar.server.application import _validate_input_params
+        from soapbar.core.fault import SoapFault
+
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        sig = OperationSignature(
+            name="Op",
+            input_params=[OperationParameter("x", int_type, required=True)],
+        )
+        # Present → no exception
+        _validate_input_params(sig, {"x": 5})
+
+        # Missing → SoapFault
+        with pytest.raises(SoapFault) as exc_info:
+            _validate_input_params(sig, {})
+        assert "x" in str(exc_info.value)
+        assert exc_info.value.faultcode == "Client"
+
+
 class TestDurationType:
     def test_duration_valid(self) -> None:
         dt = xsd.resolve("duration")
