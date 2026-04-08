@@ -1914,6 +1914,88 @@ class TestSoapClientCall:
         assert result == 7
 
 
+class TestSoapClientWsaHeaders:
+    """Client-side WS-Addressing header injection (use_wsa=True)."""
+
+    def _mock_client(self, use_wsa: bool = True) -> tuple[SoapClient, MagicMock]:
+        mock_transport = MagicMock(spec=HttpTransport)
+        mock_transport.send.return_value = (200, "text/xml", _ADD_RESPONSE_XML)
+        client = SoapClient.manual(
+            "http://example.com/soap",
+            binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+            transport=mock_transport,
+            use_wsa=use_wsa,
+        )
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        client.register_operation(OperationSignature(
+            name="Add",
+            input_params=[OperationParameter("a", int_type), OperationParameter("b", int_type)],
+            output_params=[OperationParameter("result", int_type)],
+            soap_action="http://example.com/Add",
+        ))
+        return client, mock_transport
+
+    def _sent_envelope(self, mock_transport: MagicMock) -> SoapEnvelope:
+        req_bytes = mock_transport.send.call_args[0][1]
+        return SoapEnvelope.from_xml(req_bytes)
+
+    def test_wsa_disabled_by_default(self) -> None:
+        client, transport = self._mock_client(use_wsa=False)
+        client.call("Add", a=1, b=2)
+        env = self._sent_envelope(transport)
+        assert env.ws_addressing is None
+
+    def test_wsa_message_id_injected(self) -> None:
+        client, transport = self._mock_client(use_wsa=True)
+        client.call("Add", a=1, b=2)
+        env = self._sent_envelope(transport)
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.message_id is not None
+        assert env.ws_addressing.message_id.startswith("urn:uuid:")
+
+    def test_wsa_action_injected(self) -> None:
+        client, transport = self._mock_client(use_wsa=True)
+        client.call("Add", a=1, b=2)
+        env = self._sent_envelope(transport)
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.action == "http://example.com/Add"
+
+    def test_wsa_message_id_unique_per_call(self) -> None:
+        client, transport = self._mock_client(use_wsa=True)
+        client.call("Add", a=1, b=2)
+        id1 = self._sent_envelope(transport).ws_addressing  # type: ignore[union-attr]
+        client.call("Add", a=3, b=4)
+        id2 = self._sent_envelope(transport).ws_addressing  # type: ignore[union-attr]
+        assert id1 is not None and id2 is not None
+        assert id1.message_id != id2.message_id
+
+    async def test_wsa_injected_in_call_async(self) -> None:
+        mock_transport = MagicMock(spec=HttpTransport)
+        mock_transport.send_async = AsyncMock(
+            return_value=(200, "text/xml", _ADD_RESPONSE_XML)
+        )
+        client = SoapClient.manual(
+            "http://example.com/soap",
+            binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+            transport=mock_transport,
+            use_wsa=True,
+        )
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        client.register_operation(OperationSignature(
+            name="Add",
+            input_params=[OperationParameter("a", int_type)],
+            output_params=[OperationParameter("result", int_type)],
+            soap_action="http://example.com/Add",
+        ))
+        await client.call_async("Add", a=5)
+        req_bytes = mock_transport.send_async.call_args[0][1]
+        env = SoapEnvelope.from_xml(req_bytes)
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.message_id is not None
+
+
 # =============================================================================
 # 26. End-to-end round-trip for all 5 binding styles
 # =============================================================================

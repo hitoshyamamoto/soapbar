@@ -1,6 +1,7 @@
 """SOAP client."""
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from soapbar.core.envelope import SoapEnvelope, SoapVersion, http_headers
 from soapbar.core.namespaces import NS
 from soapbar.core.wsdl import WsdlDefinition
 from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
+from soapbar.core.xml import make_element
 
 
 class _ServiceProxy:
@@ -27,6 +29,7 @@ class SoapClient:
         self,
         wsdl_url: str | None = None,
         transport: HttpTransport | None = None,
+        use_wsa: bool = False,
     ) -> None:
         self._transport = transport or HttpTransport()
         self._wsdl: WsdlDefinition | None = None
@@ -34,6 +37,7 @@ class SoapClient:
         self._binding_style: BindingStyle = BindingStyle.DOCUMENT_LITERAL_WRAPPED
         self._soap_version: SoapVersion = SoapVersion.SOAP_11
         self._signatures: dict[str, OperationSignature] = {}
+        self._use_wsa: bool = use_wsa
 
         if wsdl_url is not None:
             wsdl_bytes = self._transport.fetch(wsdl_url)
@@ -53,7 +57,7 @@ class SoapClient:
                 self._soap_version = SoapVersion.SOAP_12
 
     @classmethod
-    def from_file(cls, path: str | Path) -> SoapClient:
+    def from_file(cls, path: str | Path, use_wsa: bool = False) -> SoapClient:
         obj: SoapClient = cls.__new__(cls)
         obj._transport = HttpTransport()
         obj._wsdl = None
@@ -61,13 +65,14 @@ class SoapClient:
         obj._binding_style = BindingStyle.DOCUMENT_LITERAL_WRAPPED
         obj._soap_version = SoapVersion.SOAP_11
         obj._signatures = {}
+        obj._use_wsa = use_wsa
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl_file(path)
         obj._init_from_wsdl(defn)
         return obj
 
     @classmethod
-    def from_wsdl_string(cls, wsdl: str | bytes) -> SoapClient:
+    def from_wsdl_string(cls, wsdl: str | bytes, use_wsa: bool = False) -> SoapClient:
         obj: SoapClient = cls.__new__(cls)
         obj._transport = HttpTransport()
         obj._wsdl = None
@@ -75,6 +80,7 @@ class SoapClient:
         obj._binding_style = BindingStyle.DOCUMENT_LITERAL_WRAPPED
         obj._soap_version = SoapVersion.SOAP_11
         obj._signatures = {}
+        obj._use_wsa = use_wsa
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl(wsdl)
         obj._init_from_wsdl(defn)
@@ -87,6 +93,7 @@ class SoapClient:
         binding_style: BindingStyle = BindingStyle.DOCUMENT_LITERAL_WRAPPED,
         soap_version: SoapVersion = SoapVersion.SOAP_11,
         transport: HttpTransport | None = None,
+        use_wsa: bool = False,
     ) -> SoapClient:
         obj: SoapClient = cls.__new__(cls)
         obj._transport = transport or HttpTransport()
@@ -95,17 +102,36 @@ class SoapClient:
         obj._binding_style = binding_style
         obj._soap_version = soap_version
         obj._signatures = {}
+        obj._use_wsa = use_wsa
         obj.service = _ServiceProxy(obj)
         return obj
 
     def register_operation(self, sig: OperationSignature) -> None:
         self._signatures[sig.name] = sig
 
+    def _build_wsa_headers(self, sig: OperationSignature) -> list[Any]:
+        """Return WS-Addressing request header elements for *sig* when use_wsa is True."""
+        wsa_ns = NS.WSA
+        nsmap: dict[str | None, str] = {"wsa": wsa_ns}
+
+        msg_id = make_element(f"{{{wsa_ns}}}MessageID", nsmap=nsmap)
+        msg_id.text = f"urn:uuid:{uuid.uuid4()}"
+
+        action_uri = sig.soap_action or sig.name
+        action = make_element(f"{{{wsa_ns}}}Action", nsmap=nsmap)
+        action.text = action_uri
+
+        return [msg_id, action]
+
     def call(self, operation: str, **kwargs: Any) -> Any:
         sig = self._get_sig(operation)
         serializer = get_serializer(self._binding_style)
 
         envelope = SoapEnvelope(version=self._soap_version)
+
+        if self._use_wsa:
+            for hdr in self._build_wsa_headers(sig):
+                envelope.add_header(hdr)
 
         from lxml import etree
         body_container = etree.Element("_body")
@@ -125,6 +151,10 @@ class SoapClient:
         serializer = get_serializer(self._binding_style)
 
         envelope = SoapEnvelope(version=self._soap_version)
+
+        if self._use_wsa:
+            for hdr in self._build_wsa_headers(sig):
+                envelope.add_header(hdr)
 
         from lxml import etree
         body_container = etree.Element("_body")
