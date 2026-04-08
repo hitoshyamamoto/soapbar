@@ -10,6 +10,7 @@ from lxml.etree import _Element
 
 from soapbar.core.namespaces import NS
 from soapbar.core.xml import (
+    clone,
     local_name,
     make_element,
     namespace_uri,
@@ -310,6 +311,12 @@ def build_wsa_response_headers(
         action_elem = make_element(f"{{{NS.WSA}}}Action", nsmap={"wsa": NS.WSA})
         action_elem.text = action
         headers.append(action_elem)
+
+    # WS-Addressing 1.0 Core §5.4.1 — propagate ReferenceParameters from the
+    # request's ReplyTo EPR as header blocks in the response.
+    if request_wsa.reply_to is not None:
+        for ref_param in request_wsa.reply_to.reference_parameters:
+            headers.append(clone(ref_param))
 
     return headers
 

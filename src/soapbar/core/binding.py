@@ -41,6 +41,16 @@ class BindingStyle(Enum):
     def is_wrapped(self) -> bool:
         return self == BindingStyle.DOCUMENT_LITERAL_WRAPPED
 
+    @property
+    def is_wsi_conformant(self) -> bool:
+        """Return False for styles that violate WS-I Basic Profile 1.1 R2706.
+
+        ``RPC_ENCODED`` and ``DOCUMENT_ENCODED`` use SOAP Section 5 encoding,
+        which WS-I BP 1.1 R2706 prohibits.  Use them only for WITSML or other
+        legacy protocols that explicitly require Section 5 encoding.
+        """
+        return self not in (BindingStyle.RPC_ENCODED, BindingStyle.DOCUMENT_ENCODED)
+
 
 @dataclass
 class OperationParameter:
@@ -58,6 +68,7 @@ class OperationSignature:
     soap_action: str = ""
     input_namespace: str | None = None
     output_namespace: str | None = None
+    one_way: bool = False  # G08: HTTP 202 / SOAP 1.2 P2 §7.5.1 one-way MEP
 
 
 class BindingSerializer(ABC):
@@ -261,6 +272,10 @@ class RpcLiteralSerializer(BindingSerializer):
         ns = sig.output_namespace or ""
         tag = f"{{{ns}}}{sig.name}Response" if ns else f"{sig.name}Response"
         wrapper = sub_element(body_elem, tag)
+        # rpc:result (SOAP 1.2 Part 2 §4.2.1 SHOULD) is intentionally omitted.
+        # zeep and other strict-mode clients reject it as an undeclared element
+        # because it is not represented in the WSDL schema, causing XMLParseError.
+        # Omitting it is valid (SHOULD, not MUST) and preserves interoperability.
         for param in sig.output_params:
             value = values.get(param.name)
             self._serialize_param_value(wrapper, param.name, "", param, value)

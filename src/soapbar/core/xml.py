@@ -58,6 +58,28 @@ def sub_element(
 # Parsing
 # ---------------------------------------------------------------------------
 
+def check_xml_depth(data: bytes, max_depth: int = 100) -> None:
+    """Raise ValueError if the XML nesting depth exceeds *max_depth*.
+
+    Uses ``iterparse`` so the check runs before a full parse tree is built,
+    limiting memory exposure from pathologically nested documents.
+
+    :raises ValueError: if depth > max_depth (caller converts to SoapFault).
+    """
+    from io import BytesIO
+    depth = 0
+    for event, _ in etree.iterparse(BytesIO(data), events=("start", "end"),
+                                    recover=False, resolve_entities=False):
+        if event == "start":
+            depth += 1
+            if depth > max_depth:
+                raise ValueError(
+                    f"XML nesting depth exceeds limit ({max_depth})"
+                )
+        else:
+            depth -= 1
+
+
 def parse_xml(data: str | bytes) -> _Element:
     if isinstance(data, str):
         data = data.encode()
@@ -163,6 +185,7 @@ def clone(elem: _Element) -> _Element:
 __all__ = [
     "_Element",
     "build_nsmap",
+    "check_xml_depth",
     "clone",
     "collect_namespaces",
     "compile_schema",

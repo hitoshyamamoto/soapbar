@@ -35,6 +35,7 @@ def soap_operation(
     output_params: list[OperationParameter] | None = None,
     soap_action: str | None = None,
     documentation: str = "",
+    one_way: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator that marks a method as a SOAP operation."""
 
@@ -82,6 +83,7 @@ def soap_operation(
             input_params=input_params,
             output_params=output_params,
             soap_action=soap_action or "",
+            one_way=one_way,
         )
         func.__soap_documentation__ = documentation  # type: ignore[attr-defined]
         return func

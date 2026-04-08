@@ -1,6 +1,8 @@
 """SOAP application dispatcher."""
 from __future__ import annotations
 
+import logging
+import warnings
 from typing import Any
 
 from soapbar.core.binding import (
@@ -27,8 +29,10 @@ from soapbar.core.wsdl import (
     WsdlService,
 )
 from soapbar.core.wsdl.builder import _type_ref, build_wsdl_bytes
-from soapbar.core.xml import to_bytes
+from soapbar.core.xml import check_xml_depth, to_bytes
 from soapbar.server.service import SoapService, _SoapMethod
+
+_log = logging.getLogger(__name__)
 
 
 def _validate_input_params(sig: OperationSignature, kwargs: dict[str, Any]) -> None:
@@ -58,14 +62,24 @@ class SoapApplication:
         self,
         custom_wsdl: bytes | None = None,
         service_url: str = "http://localhost:8000/soap",
+        max_body_size: int = 10 * 1024 * 1024,  # 10 MB — G01
     ) -> None:
         self._custom_wsdl = custom_wsdl
         self.service_url = service_url
+        self._max_body_size = max_body_size
         self._services: list[SoapService] = []
         # operation_name → (service, method)
         self._dispatch: dict[str, tuple[SoapService, _SoapMethod]] = {}
         # soap_action → operation_name
         self._action_map: dict[str, str] = {}
+        # G11 — warn if service_url is plain HTTP (not HTTPS)
+        if service_url.startswith("http://"):
+            warnings.warn(
+                f"service_url uses plain HTTP ({service_url!r}). "
+                "Use HTTPS in production to protect SOAP message confidentiality.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def register(self, service: SoapService) -> None:
         self._services.append(service)
@@ -99,6 +113,17 @@ class SoapApplication:
         _mu_tag: str | None = None  # Clark-notation tag of unrecognised mandatory header
 
         try:
+            # G01 — reject oversized requests before any XML parsing
+            if len(body) > self._max_body_size:
+                raise SoapFault(
+                    "Client",
+                    f"Request body size ({len(body)} bytes) exceeds the "
+                    f"server limit ({self._max_body_size} bytes).",
+                )
+
+            # G03 — reject deeply nested XML before full parse (DoS prevention)
+            check_xml_depth(body)
+
             envelope = SoapEnvelope.from_xml(body)
             version = envelope.version
 
@@ -155,6 +180,10 @@ class SoapApplication:
             # Call the service method
             result = method(**kwargs)
 
+            # G08 — one-way MEP: HTTP 202 Accepted, empty body (SOAP 1.2 P2 §7.5.1)
+            if sig.one_way:
+                return 202, version.content_type, b""
+
             # Build response
             if isinstance(result, dict):
                 values = result
@@ -192,7 +221,9 @@ class SoapApplication:
             caught_fault = SoapFault("Client", str(exc))
 
         except Exception as exc:
-            caught_fault = SoapFault("Server", f"Internal error: {exc}")
+            # G02 — log full exception server-side; return generic message to client
+            _log.exception("Unhandled exception during SOAP request processing: %s", exc)
+            caught_fault = SoapFault("Server", "An internal error occurred.")
             http_status = 500
 
         if version == SoapVersion.SOAP_11:
