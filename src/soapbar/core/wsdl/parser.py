@@ -70,7 +70,16 @@ def parse_wsdl(
     source: str | bytes | Path | _Element,
     base_url: str | None = None,
     _visited: set[str] | None = None,
+    allow_remote_imports: bool = False,
 ) -> WsdlDefinition:
+    """Parse a WSDL document from *source*.
+
+    *allow_remote_imports* controls whether ``wsdl:import`` elements whose
+    resolved location starts with ``http://`` or ``https://`` are fetched.
+    It defaults to ``False`` to prevent Server-Side Request Forgery (SSRF)
+    when parsing WSDLs from untrusted sources.  Set it to ``True`` only when
+    the WSDL originates from a trusted location and remote imports are expected.
+    """
     if _visited is None:
         _visited = set()
     root = parse_xml_document(source)
@@ -88,12 +97,18 @@ def parse_wsdl(
             location = child.get("location")
             if location:
                 resolved = _resolve_location(location, base_url)
+                if resolved.startswith(("http://", "https://")) and not allow_remote_imports:
+                    raise ValueError(
+                        f"Remote WSDL import blocked (SSRF guard): {resolved!r}. "
+                        "Pass allow_remote_imports=True to permit outbound HTTP fetches."
+                    )
                 if resolved not in _visited:
                     _visited.add(resolved)
                     imported = parse_wsdl(
                         _fetch_wsdl_source(resolved),
                         base_url=resolved,
                         _visited=_visited,
+                        allow_remote_imports=allow_remote_imports,
                     )
                     _merge_definition(defn, imported)
             # namespace-only import (no location=) is silently skipped

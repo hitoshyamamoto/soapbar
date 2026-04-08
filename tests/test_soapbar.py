@@ -3176,7 +3176,11 @@ class TestWsdlCircularImportGuard:
         # Make _fetch_wsdl_source always return wsdl_a, creating a cycle.
         with patch("soapbar.core.wsdl.parser._fetch_wsdl_source", return_value=wsdl_a):
             # Should return without RecursionError; cycle is silently skipped.
-            defn = parse_wsdl(wsdl_a, base_url="http://example.com/a.wsdl")
+            defn = parse_wsdl(
+                wsdl_a,
+                base_url="http://example.com/a.wsdl",
+                allow_remote_imports=True,
+            )
         assert defn.name == "CircularA"
 
 

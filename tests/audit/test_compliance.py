@@ -531,6 +531,49 @@ class TestWsdl11Compliance:
         defn = parse_wsdl(wsdl_with_ns_import)
         assert "PT" in defn.port_types
 
+    def test_wsdl_remote_import_blocked_by_default(self):
+        """I04 — Remote wsdl:import MUST be blocked by default (SSRF guard)."""
+        wsdl_with_remote_import = b"""
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     targetNamespace="http://example.com/">
+          <import namespace="http://example.com/ext"
+                  location="http://attacker.example.com/evil.wsdl"/>
+          <portType name="PT"/>
+        </definitions>"""
+        with pytest.raises(ValueError, match="Remote WSDL import blocked"):
+            parse_wsdl(wsdl_with_remote_import)
+
+    def test_wsdl_remote_import_allowed_when_opt_in(self, monkeypatch):
+        """I04 — allow_remote_imports=True bypasses the SSRF guard."""
+        import urllib.request
+
+        fake_wsdl = b"""
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     targetNamespace="http://example.com/remote">
+          <portType name="RemotePT"/>
+        </definitions>"""
+
+        class _FakeResp:
+            def read(self) -> bytes:
+                return fake_wsdl
+            def __enter__(self) -> _FakeResp:
+                return self
+            def __exit__(self, *_: object) -> None:
+                pass
+
+        monkeypatch.setattr(urllib.request, "urlopen", lambda _url: _FakeResp())
+
+        wsdl = b"""
+        <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+                     targetNamespace="http://example.com/">
+          <import namespace="http://example.com/remote"
+                  location="http://trusted.example.com/remote.wsdl"/>
+          <portType name="LocalPT"/>
+        </definitions>"""
+        defn = parse_wsdl(wsdl, allow_remote_imports=True)
+        assert "LocalPT" in defn.port_types
+        assert "RemotePT" in defn.port_types
+
     def test_wsdl_roundtrip_parse_build_parse(self):
         """Parse → build → re-parse should produce equivalent structure."""
         wsdl1 = self._make_wsdl_bytes()
