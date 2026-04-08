@@ -2,11 +2,13 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/license-MIT%20with%20Attribution-green)
-![Coverage](https://img.shields.io/badge/coverage-good-green)
+![Conformance](https://img.shields.io/badge/SOAP%20conformance-100%25-brightgreen)
 
 A SOAP framework for Python — client, server, and WSDL handling.
 
 soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates WSDL from Python service classes, parses existing WSDL to drive a typed client, and integrates with any ASGI or WSGI framework via thin adapter classes. The XML parser is hardened against XXE attacks using lxml with `resolve_entities=False`.
+
+> **Conformance** — soapbar v0.3.0 passes a full SOAP Protocol Conformance Audit at **100% (42/42 checkpoints)**. All F01–F09 original findings and G01–G11 gap findings are resolved. See `AUDIT_REPORT.md` for the full report.
 
 ---
 
@@ -24,15 +26,19 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 10. [XSD type system](#xsd-type-system)
 11. [Fault handling](#fault-handling)
 12. [Security](#security)
-13. [Interoperability](#interoperability)
-14. [Architecture](#architecture)
-15. [Public API](#public-api)
-16. [Comparison with alternatives](#comparison-with-alternatives)
-17. [Development setup](#development-setup)
-18. [Inspired by](#inspired-by)
-19. [Learn more](#learn-more)
-20. [Known Limitations](#known-limitations)
-21. [License](#license)
+13. [WS-Security — UsernameToken](#ws-security--usernametoken)
+14. [One-way operations](#one-way-operations)
+15. [SOAP array attributes](#soap-array-attributes)
+16. [rpc:result (SOAP 1.2)](#rpcresult-soap-12)
+17. [Interoperability](#interoperability)
+18. [Architecture](#architecture)
+19. [Public API](#public-api)
+20. [Comparison with alternatives](#comparison-with-alternatives)
+21. [Development setup](#development-setup)
+22. [Inspired by](#inspired-by)
+23. [Learn more](#learn-more)
+24. [Known Limitations](#known-limitations)
+25. [License](#license)
 
 ---
 
@@ -43,7 +49,14 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - Auto-generates WSDL from service class definitions — no config files needed
 - Parses existing WSDL to drive a typed client
 - ASGI adapter (`AsgiSoapApp`) and WSGI adapter (`WsgiSoapApp`)
-- ⚠️ XXE-safe hardened XML parser (lxml, `resolve_entities=False`, `no_network=True`, `load_dtd=False`)
+- XXE-safe hardened XML parser (lxml, `resolve_entities=False`, `no_network=True`, `load_dtd=False`)
+- Message size limit (10 MB default) and XML nesting depth limit (100 levels) — DoS protection
+- **WS-Security UsernameToken** — PasswordText and PasswordDigest (SHA-1) on both client and server
+- **One-way MEP** — `@soap_operation(one_way=True)` returns HTTP 202 with empty body
+- **SOAP array attributes** — `enc:itemType`/`enc:arraySize` (SOAP 1.2) and `SOAP-ENC:arrayType` (SOAP 1.1) emitted automatically
+- **Multi-reference encoding** — shared complex objects serialized with `id`/`href` per SOAP 1.1 §5.2.5
+- **rpc:result** — opt-in `@soap_operation(emit_rpc_result=True)` per SOAP 1.2 Part 2 §4.2.1
+- WS-Addressing 1.0 — MessageID, RelatesTo, Action, ReferenceParameters propagated in responses
 - XSD type registry with 27 built-in types
 - Sync and async HTTP client (httpx optional)
 - Interoperable with zeep and spyne out-of-the-box (verified by integration tests)
@@ -530,17 +543,155 @@ Fault code translation is automatic:
 
 ## Security
 
-⚠️ soapbar uses a hardened lxml parser with the following settings:
+soapbar uses a hardened lxml parser:
 
 ```python
 lxml.etree.XMLParser(
-    resolve_entities=False,
-    no_network=True,
-    load_dtd=False,
+    resolve_entities=False,   # XXE prevention
+    no_network=True,          # SSRF prevention
+    load_dtd=False,           # DTD injection prevention
+    huge_tree=False,          # Billion-Laughs prevention
+    remove_comments=True,     # comment injection prevention
+    remove_pis=True,
 )
 ```
 
 Entity references (potential XXE payloads) are silently dropped rather than expanded. No network connections are made during parsing. DTDs are not loaded.
+
+Additional hardening:
+- **Message size limit**: `SoapApplication(max_body_size=10*1024*1024)` — requests exceeding 10 MB are rejected with a `Client` fault before XML parsing.
+- **XML nesting depth**: requests exceeding 100 levels of nesting are rejected to prevent stack exhaustion.
+- **Error scrubbing**: unhandled exceptions produce `"An internal error occurred."` — no stack traces or exception text are returned to clients.
+- **HTTPS warning**: `SoapApplication` warns at construction time if `service_url` uses plain HTTP.
+
+---
+
+## WS-Security — UsernameToken
+
+soapbar supports WS-Security 1.0 UsernameToken (OASIS 2004), both plain-text and SHA-1 digest.
+
+### Client — attaching credentials
+
+```python
+from soapbar import SoapClient
+from soapbar.core.wssecurity import UsernameTokenCredential
+
+# Plain-text password
+cred = UsernameTokenCredential(username="alice", password="secret")
+
+# SHA-1 PasswordDigest (recommended for non-TLS scenarios)
+cred = UsernameTokenCredential(username="alice", password="secret", use_digest=True)
+
+client = SoapClient.manual(
+    "https://example.com/soap",
+    wss_credential=cred,
+)
+result = client.call("GetData", id=42)
+```
+
+The `wsse:Security` header is injected automatically on every call.
+
+### Server — validating credentials
+
+```python
+from soapbar import SoapApplication
+from soapbar.core.wssecurity import UsernameTokenValidator, SecurityValidationError
+
+
+class MyValidator(UsernameTokenValidator):
+    _users = {"alice": "secret", "bob": "hunter2"}
+
+    def get_password(self, username: str) -> str | None:
+        return self._users.get(username)
+
+
+app = SoapApplication(
+    service_url="https://example.com/soap",
+    security_validator=MyValidator(),
+)
+app.register(MyService())
+```
+
+`SecurityValidationError` is converted to a `Client` SOAP fault automatically. Both PasswordText and PasswordDigest token types are verified; Digest requires `wsse:Nonce` and `wsu:Created` to be present.
+
+---
+
+## One-way operations
+
+One-way operations fire-and-forget: the server processes the message and returns HTTP 202 Accepted with an empty body (SOAP 1.2 Part 2 §7.5.1).
+
+```python
+from soapbar import SoapService, soap_operation
+
+
+class EventService(SoapService):
+    __service_name__ = "EventService"
+    __tns__ = "http://example.com/events"
+
+    @soap_operation(one_way=True)
+    def publish_event(self, event_type: str, payload: str) -> None:
+        # Process asynchronously — no response is sent
+        _event_queue.put((event_type, payload))
+```
+
+The client receives `202 Accepted` with no body. `SoapClient.call()` returns `None` for one-way operations.
+
+---
+
+## SOAP array attributes
+
+When using encoded binding styles (`RPC_ENCODED`, `DOCUMENT_ENCODED`), array elements are annotated with the correct version-specific attributes automatically.
+
+SOAP 1.1 (`SOAP-ENC:arrayType`):
+```xml
+<names soapenc:arrayType="xsd:string[3]"
+       xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/">
+  <item>Alice</item><item>Bob</item><item>Carol</item>
+</names>
+```
+
+SOAP 1.2 (`enc:itemType` + `enc:arraySize`):
+```xml
+<names enc:itemType="xsd:string" enc:arraySize="3"
+       xmlns:enc="http://www.w3.org/2003/05/soap-encoding">
+  <item>Alice</item><item>Bob</item><item>Carol</item>
+</names>
+```
+
+The correct attributes are emitted automatically based on the SOAP version in use — no manual configuration needed. The `get_serializer(style, soap_version)` factory handles the selection.
+
+---
+
+## rpc:result (SOAP 1.2)
+
+SOAP 1.2 Part 2 §4.2.1 defines a `rpc:result` SHOULD convention for naming the return value in RPC responses. soapbar omits it by default (preserving interoperability with zeep and other strict-mode clients) and offers an opt-in:
+
+```python
+from soapbar import SoapService, soap_operation
+
+
+class CalcService(SoapService):
+    __service_name__ = "Calc"
+    __tns__ = "http://example.com/calc"
+
+    # Default: no rpc:result (interoperable with zeep, WCF, etc.)
+    @soap_operation()
+    def add(self, a: int, b: int) -> int:
+        return a + b
+
+    # Opt-in: emit rpc:result for strict SOAP 1.2 consumers
+    @soap_operation(emit_rpc_result=True)
+    def add_strict(self, a: int, b: int) -> int:
+        return a + b
+```
+
+When opted in, the response wrapper contains:
+```xml
+<CalcResponse>
+  <rpc:result xmlns:rpc="http://www.w3.org/2003/05/soap-rpc">return</rpc:result>
+  <return>8</return>
+</CalcResponse>
+```
 
 ---
 
@@ -609,6 +760,10 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | `build_wsdl_string` | `from soapbar import build_wsdl_string` | Generate WSDL as string |
 | `OperationParameter` | `from soapbar import OperationParameter` | Parameter descriptor for operations |
 | `OperationSignature` | `from soapbar import OperationSignature` | Full operation signature (manual client) |
+| `UsernameTokenCredential` | `from soapbar.core.wssecurity import UsernameTokenCredential` | WS-Security credential for client |
+| `UsernameTokenValidator` | `from soapbar.core.wssecurity import UsernameTokenValidator` | Abstract base for server-side token validation |
+| `SecurityValidationError` | `from soapbar.core.wssecurity import SecurityValidationError` | Raised on authentication failure |
+| `build_security_header` | `from soapbar.core.wssecurity import build_security_header` | Build `wsse:Security` header element |
 
 ---
 
@@ -625,11 +780,17 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | Auto WSDL generation | ✓ | ✗ | ✓ | ✓ |
 | WSDL-driven client | ✓ | ✓ | ✗ | ✗ |
 | XXE hardened by default | ✓ | ? | ? | ? |
+| Message size + depth limits | ✓ | ✗ | ✗ | ✗ |
+| WS-Security UsernameToken | ✓ | ✓ (client) | ✓ | ✗ |
+| WS-Addressing 1.0 | ✓ | ✓ | Partial | ✗ |
+| One-way MEP (HTTP 202) | ✓ | ✓ | ✓ | ✗ |
+| SOAP array attributes | ✓ | ✓ | ✓ | ✗ |
+| 100% SOAP protocol audit | ✓ | — | — | — |
 | Core dependency | lxml | lxml, requests | lxml | fastapi, lxml |
 | Async HTTP client | httpx (optional) | httpx (optional) | — | — |
 | Python versions | 3.10–3.14 | 3.8+ | 3.8+ | 3.8+ |
 
-soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, and is hardened against XXE attacks out of the box.
+soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, is hardened against XXE/DoS attacks out of the box, and has passed a full SOAP Protocol Conformance Audit at 100%.
 
 ---
 
@@ -695,8 +856,8 @@ The following features are intentionally out-of-scope for the current release.  
 | Area | Status | Notes |
 |------|--------|-------|
 | **MTOM/XOP** | Detected; HTTP 415 + SOAP fault returned | Full multipart SOAP attachment processing is not implemented. If the client sends a `multipart/related` request that carries XOP, the server returns a `415 Unsupported Media Type` response with a SOAP fault. The transport layer raises `NotImplementedError` if an MTOM response is received. |
-| **WS-Security** | Header element exposed, not processed | The `wsse:Security` header is detected and the raw element is available as `envelope.ws_security_element`. Signature verification, token validation, and encryption are out of scope. |
-| **WS-Addressing** | Headers parsed into `WsaHeaders` dataclass | Inbound WS-Addressing headers (`MessageID`, `To`, `Action`, `ReplyTo`, `FaultTo`, etc.) are parsed and exposed on `envelope.ws_addressing`. The server does **not** automatically set `MessageID` or `Action` in response envelopes. |
+| **WS-Security** | UsernameToken (PasswordText + PasswordDigest) implemented | `UsernameTokenCredential` / `UsernameTokenValidator` are fully functional. XML Signature and XML Encryption are out of scope — use a dedicated WS-Security gateway or `signxml` for those. |
+| **WS-Addressing** | Fully parsed + response headers generated | Inbound headers (`MessageID`, `To`, `Action`, `ReplyTo`, `FaultTo`, `ReferenceParameters`) are parsed into `WsaHeaders`. Response headers (`MessageID`, `RelatesTo`, `Action`, ReferenceParameters) are generated automatically when `use_wsa=True`. |
 | **SOAP 1.2 `relay` attribute** | Parsed and exposed on `SoapHeaderBlock` | The `relay` boolean is available on each `SoapHeaderBlock` instance. Full SOAP intermediary forwarding (actually relaying the message) is not implemented. |
 | **`xsd:complexType` / `xsd:array` / `xsd:choice`** | Fully supported for round-trip serialization | Recursive (`self-referencing`) complex types are resolved lazily. `xsd:complexContent/restriction` for SOAP-encoded arrays is also parsed from WSDL. |
 | **External schema `xsd:import`** | Not followed | `wsdl:import` (document-level) is resolved. `xsd:import` elements *inside* a `<types>` schema are silently ignored; type resolution falls back to built-in primitives. |
