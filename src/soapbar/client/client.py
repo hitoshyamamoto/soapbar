@@ -30,6 +30,7 @@ class SoapClient:
         wsdl_url: str | None = None,
         transport: HttpTransport | None = None,
         use_wsa: bool = False,
+        wss_credential: Any = None,
     ) -> None:
         self._transport = transport or HttpTransport()
         self._wsdl: WsdlDefinition | None = None
@@ -38,6 +39,7 @@ class SoapClient:
         self._soap_version: SoapVersion = SoapVersion.SOAP_11
         self._signatures: dict[str, OperationSignature] = {}
         self._use_wsa: bool = use_wsa
+        self._wss_credential = wss_credential  # G09: UsernameTokenCredential or None
 
         if wsdl_url is not None:
             wsdl_bytes = self._transport.fetch(wsdl_url)
@@ -66,6 +68,7 @@ class SoapClient:
         obj._soap_version = SoapVersion.SOAP_11
         obj._signatures = {}
         obj._use_wsa = use_wsa
+        obj._wss_credential = None
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl_file(path)
         obj._init_from_wsdl(defn)
@@ -81,6 +84,7 @@ class SoapClient:
         obj._soap_version = SoapVersion.SOAP_11
         obj._signatures = {}
         obj._use_wsa = use_wsa
+        obj._wss_credential = None
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl(wsdl)
         obj._init_from_wsdl(defn)
@@ -94,6 +98,7 @@ class SoapClient:
         soap_version: SoapVersion = SoapVersion.SOAP_11,
         transport: HttpTransport | None = None,
         use_wsa: bool = False,
+        wss_credential: Any = None,
     ) -> SoapClient:
         obj: SoapClient = cls.__new__(cls)
         obj._transport = transport or HttpTransport()
@@ -103,6 +108,7 @@ class SoapClient:
         obj._soap_version = soap_version
         obj._signatures = {}
         obj._use_wsa = use_wsa
+        obj._wss_credential = wss_credential
         obj.service = _ServiceProxy(obj)
         return obj
 
@@ -125,9 +131,14 @@ class SoapClient:
 
     def call(self, operation: str, **kwargs: Any) -> Any:
         sig = self._get_sig(operation)
-        serializer = get_serializer(self._binding_style)
+        serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
+
+        # G09: inject WS-Security header before other headers
+        if self._wss_credential is not None:
+            from soapbar.core.wssecurity import build_security_header
+            envelope.add_header(build_security_header(self._wss_credential))
 
         if self._use_wsa:
             for hdr in self._build_wsa_headers(sig):
@@ -148,7 +159,7 @@ class SoapClient:
 
     async def call_async(self, operation: str, **kwargs: Any) -> Any:
         sig = self._get_sig(operation)
-        serializer = get_serializer(self._binding_style)
+        serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
 
@@ -189,7 +200,7 @@ class SoapClient:
         if body_elem is None:
             return None
 
-        serializer = get_serializer(self._binding_style)
+        serializer = get_serializer(self._binding_style, self._soap_version)
         from lxml import etree
         container = etree.Element("_body")
         container.append(body_elem)

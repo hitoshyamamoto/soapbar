@@ -69,6 +69,7 @@ class OperationSignature:
     input_namespace: str | None = None
     output_namespace: str | None = None
     one_way: bool = False  # G08: HTTP 202 / SOAP 1.2 P2 §7.5.1 one-way MEP
+    emit_rpc_result: bool = False  # G10: rpc:result SHOULD per SOAP 1.2 P2 §4.2.1
 
 
 class BindingSerializer(ABC):
@@ -138,11 +139,12 @@ class BindingSerializer(ABC):
 class RpcEncodedSerializer(BindingSerializer):
     """RPC/Encoded: wrapper element with xsi:type on each param."""
 
-    _ENCODING = "http://schemas.xmlsoap.org/soap/encoding/"
+    def __init__(self, soap_enc_ns: str = NS.SOAP_ENC) -> None:
+        self.soap_enc_ns = soap_enc_ns
 
     def _wrapper_nsmap(self) -> dict[str | None, str]:
         return {
-            "soapenc": NS.SOAP_ENC,
+            "soapenc": self.soap_enc_ns,
             "xsi": NS.XSI,
             "xsd": NS.XSD,
         }
@@ -159,14 +161,19 @@ class RpcEncodedSerializer(BindingSerializer):
         wrapper = sub_element(
             body_elem,
             tag,
-            attrib={f"{{{NS.SOAP_ENC}}}encodingStyle": self._ENCODING},
+            attrib={f"{{{self.soap_enc_ns}}}encodingStyle": self.soap_enc_ns},
             nsmap=self._wrapper_nsmap(),
         )
         from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
+        ref_map = self._collect_shared_ids(kwargs)
+        seen: set[int] = set()
         for param in sig.input_params:
             value = kwargs.get(param.name)
             if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
-                wrapper.append(param.xsd_type.to_element(param.name, value or {}, ""))
+                se = self._soap_enc_ns_for_type(param.xsd_type)
+                elem = param.xsd_type.to_element(param.name, value or {}, "", soap_encoding=se)
+                self._apply_multiref(elem, value, ref_map, seen, wrapper)
+                wrapper.append(elem)
             else:
                 text = param.xsd_type.to_xml(value) if value is not None else ""
                 sub_element(
@@ -188,14 +195,19 @@ class RpcEncodedSerializer(BindingSerializer):
         wrapper = sub_element(
             body_elem,
             tag,
-            attrib={f"{{{NS.SOAP_ENC}}}encodingStyle": self._ENCODING},
+            attrib={f"{{{self.soap_enc_ns}}}encodingStyle": self.soap_enc_ns},
             nsmap=self._wrapper_nsmap(),
         )
         from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
+        ref_map = self._collect_shared_ids(values)
+        seen: set[int] = set()
         for param in sig.output_params:
             value = values.get(param.name)
             if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
-                wrapper.append(param.xsd_type.to_element(param.name, value or {}, ""))
+                se = self._soap_enc_ns_for_type(param.xsd_type)
+                elem = param.xsd_type.to_element(param.name, value or {}, "", soap_encoding=se)
+                self._apply_multiref(elem, value, ref_map, seen, wrapper)
+                wrapper.append(elem)
             else:
                 text = param.xsd_type.to_xml(value) if value is not None else ""
                 sub_element(
@@ -205,13 +217,74 @@ class RpcEncodedSerializer(BindingSerializer):
                     text=text,
                 )
 
+    # ------------------------------------------------------------------
+    # G06 — multi-reference href/id helpers (SOAP 1.1 §5.2.5)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _collect_shared_ids(values: dict[str, Any]) -> dict[int, str]:
+        """Return {id(obj): refN} for complex objects that appear >1 time."""
+        counts: dict[int, int] = {}
+        for v in values.values():
+            if isinstance(v, (dict, list)) and v is not None:
+                counts[id(v)] = counts.get(id(v), 0) + 1
+        ref_map: dict[int, str] = {}
+        n = 0
+        for obj_id, count in counts.items():
+            if count > 1:
+                n += 1
+                ref_map[obj_id] = f"ref-{n}"
+        return ref_map
+
+    @staticmethod
+    def _apply_multiref(
+        elem: _Element,
+        value: Any,
+        ref_map: dict[int, str],
+        seen: set[int],
+        siblings: _Element,
+    ) -> None:
+        """If *value* is a shared object, tag *elem* with id= (first time) or
+        replace its children/text with href= (subsequent times)."""
+        if not isinstance(value, (dict, list)):
+            return
+        obj_id = id(value)
+        if obj_id not in ref_map:
+            return
+        ref_id = ref_map[obj_id]
+        if obj_id not in seen:
+            seen.add(obj_id)
+            elem.set("id", ref_id)
+        else:
+            # Subsequent reference: clear content and emit href
+            for child in list(elem):
+                elem.remove(child)
+            elem.text = None
+            elem.set("href", f"#{ref_id}")
+
+    @staticmethod
+    def _build_id_map(root: _Element) -> dict[str, _Element]:
+        """Collect all elements with id= in the subtree."""
+        result: dict[str, _Element] = {}
+        for elem in root.iter():
+            eid = elem.get("id")
+            if eid is not None:
+                result[eid] = elem
+        return result
+
+    def _soap_enc_ns_for_type(self, xsd_type: Any) -> str | None:
+        """Return encoding NS for array types, None for others."""
+        from soapbar.core.types import ArrayXsdType
+        return self.soap_enc_ns if isinstance(xsd_type, ArrayXsdType) else None
+
     def deserialize_request(
         self,
         sig: OperationSignature,
         body_elem: _Element,
     ) -> dict[str, Any]:
         wrapper = body_elem[0] if len(body_elem) else body_elem
-        return self._extract_params(sig.input_params, wrapper)
+        id_map = self._build_id_map(body_elem)
+        return self._extract_params(sig.input_params, wrapper, id_map)
 
     def deserialize_response(
         self,
@@ -219,20 +292,29 @@ class RpcEncodedSerializer(BindingSerializer):
         body_elem: _Element,
     ) -> dict[str, Any]:
         wrapper = body_elem[0] if len(body_elem) else body_elem
-        return self._extract_params(sig.output_params, wrapper)
+        id_map = self._build_id_map(body_elem)
+        return self._extract_params(sig.output_params, wrapper, id_map)
 
     def _extract_params(
         self,
         params: list[OperationParameter],
         wrapper: _Element,
+        id_map: dict[str, _Element] | None = None,
     ) -> dict[str, Any]:
         from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
         from soapbar.core.types import xsd as xsd_registry
+        id_map = id_map or {}
         result: dict[str, Any] = {}
         for param in params:
             child = wrapper.find(param.name)
             if child is None:
                 continue
+            # G06: resolve href references
+            href = child.get("href")
+            if href and href.startswith("#"):
+                resolved = id_map.get(href[1:])
+                if resolved is not None:
+                    child = resolved
             if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
                 result[param.name] = param.xsd_type.from_element(child)
             else:
@@ -272,10 +354,16 @@ class RpcLiteralSerializer(BindingSerializer):
         ns = sig.output_namespace or ""
         tag = f"{{{ns}}}{sig.name}Response" if ns else f"{sig.name}Response"
         wrapper = sub_element(body_elem, tag)
-        # rpc:result (SOAP 1.2 Part 2 §4.2.1 SHOULD) is intentionally omitted.
-        # zeep and other strict-mode clients reject it as an undeclared element
-        # because it is not represented in the WSDL schema, causing XMLParseError.
-        # Omitting it is valid (SHOULD, not MUST) and preserves interoperability.
+        # G10: rpc:result per SOAP 1.2 Part 2 §4.2.1 (SHOULD, not MUST).
+        # Only emitted when sig.emit_rpc_result is True (opt-in) to avoid
+        # breaking strict-mode clients (e.g. zeep) that reject undeclared elements.
+        if sig.emit_rpc_result and sig.output_params:
+            sub_element(
+                wrapper,
+                f"{{{NS.SOAP_RPC}}}result",
+                nsmap={"rpc": NS.SOAP_RPC},
+                text=sig.output_params[0].name,
+            )
         for param in sig.output_params:
             value = values.get(param.name)
             self._serialize_param_value(wrapper, param.name, "", param, value)
@@ -428,8 +516,15 @@ class DocumentLiteralWrappedSerializer(BindingSerializer):
 class DocumentEncodedSerializer(BindingSerializer):
     """Document/Encoded: direct Body children with xsi:type, no operation wrapper."""
 
+    def __init__(self, soap_enc_ns: str = NS.SOAP_ENC) -> None:
+        self.soap_enc_ns = soap_enc_ns
+
     def _nsmap(self) -> dict[str | None, str]:
         return {"xsi": NS.XSI, "xsd": NS.XSD}
+
+    def _soap_enc_ns_for_type(self, xsd_type: Any) -> str | None:
+        from soapbar.core.types import ArrayXsdType
+        return self.soap_enc_ns if isinstance(xsd_type, ArrayXsdType) else None
 
     def serialize_request(
         self,
@@ -439,11 +534,16 @@ class DocumentEncodedSerializer(BindingSerializer):
     ) -> None:
         self._check_required(sig.input_params, kwargs, "input")
         from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
+        ref_map = RpcEncodedSerializer._collect_shared_ids(kwargs)
+        seen: set[int] = set()
         for param in sig.input_params:
             value = kwargs.get(param.name)
             ns = param.namespace or sig.input_namespace or ""
             if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
-                body_elem.append(param.xsd_type.to_element(param.name, value or {}, ns))
+                se = self._soap_enc_ns_for_type(param.xsd_type)
+                elem = param.xsd_type.to_element(param.name, value or {}, ns, soap_encoding=se)
+                RpcEncodedSerializer._apply_multiref(elem, value, ref_map, seen, body_elem)
+                body_elem.append(elem)
             else:
                 text = param.xsd_type.to_xml(value) if value is not None else ""
                 tag = f"{{{ns}}}{param.name}" if ns else param.name
@@ -463,11 +563,16 @@ class DocumentEncodedSerializer(BindingSerializer):
     ) -> None:
         self._check_required(sig.output_params, values, "output")
         from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
+        ref_map = RpcEncodedSerializer._collect_shared_ids(values)
+        seen: set[int] = set()
         for param in sig.output_params:
             value = values.get(param.name)
             ns = param.namespace or sig.output_namespace or ""
             if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
-                body_elem.append(param.xsd_type.to_element(param.name, value or {}, ns))
+                se = self._soap_enc_ns_for_type(param.xsd_type)
+                elem = param.xsd_type.to_element(param.name, value or {}, ns, soap_encoding=se)
+                RpcEncodedSerializer._apply_multiref(elem, value, ref_map, seen, body_elem)
+                body_elem.append(elem)
             else:
                 text = param.xsd_type.to_xml(value) if value is not None else ""
                 tag = f"{{{ns}}}{param.name}" if ns else param.name
@@ -484,29 +589,41 @@ class DocumentEncodedSerializer(BindingSerializer):
         sig: OperationSignature,
         body_elem: _Element,
     ) -> dict[str, Any]:
-        return self._extract_params(sig.input_params, body_elem, sig.input_namespace or "")
+        id_map = RpcEncodedSerializer._build_id_map(body_elem)
+        return self._extract_params(sig.input_params, body_elem, sig.input_namespace or "", id_map)
 
     def deserialize_response(
         self,
         sig: OperationSignature,
         body_elem: _Element,
     ) -> dict[str, Any]:
-        return self._extract_params(sig.output_params, body_elem, sig.output_namespace or "")
+        id_map = RpcEncodedSerializer._build_id_map(body_elem)
+        return self._extract_params(
+            sig.output_params, body_elem, sig.output_namespace or "", id_map
+        )
 
     def _extract_params(
         self,
         params: list[OperationParameter],
         body_elem: _Element,
         op_namespace: str = "",
+        id_map: dict[str, _Element] | None = None,
     ) -> dict[str, Any]:
         from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
         from soapbar.core.types import xsd as xsd_registry
+        id_map = id_map or {}
         result: dict[str, Any] = {}
         for param in params:
             ns = param.namespace or op_namespace
             child = body_elem.find(f"{{{ns}}}{param.name}") if ns else body_elem.find(param.name)
             if child is None:
                 continue
+            # G06: resolve href references
+            href = child.get("href")
+            if href and href.startswith("#"):
+                resolved = id_map.get(href[1:])
+                if resolved is not None:
+                    child = resolved
             if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
                 result[param.name] = param.xsd_type.from_element(child)
             else:
@@ -519,13 +636,22 @@ class DocumentEncodedSerializer(BindingSerializer):
 
 
 _SERIALIZER_MAP: dict[BindingStyle, BindingSerializer] = {
-    BindingStyle.RPC_ENCODED: RpcEncodedSerializer(),
     BindingStyle.RPC_LITERAL: RpcLiteralSerializer(),
     BindingStyle.DOCUMENT_LITERAL: DocumentLiteralSerializer(),
     BindingStyle.DOCUMENT_LITERAL_WRAPPED: DocumentLiteralWrappedSerializer(),
-    BindingStyle.DOCUMENT_ENCODED: DocumentEncodedSerializer(),
 }
 
 
-def get_serializer(style: BindingStyle) -> BindingSerializer:
+def get_serializer(style: BindingStyle, soap_version: Any = None) -> BindingSerializer:
+    """Return a serializer for *style*.
+
+    For encoded styles (G05), pass *soap_version* (a ``SoapVersion`` enum value)
+    so the serializer can emit the correct array attributes for SOAP 1.1 vs 1.2.
+    """
+    if style in (BindingStyle.RPC_ENCODED, BindingStyle.DOCUMENT_ENCODED):
+        from soapbar.core.envelope import SoapVersion
+        enc_ns = NS.SOAP12_ENC if soap_version == SoapVersion.SOAP_12 else NS.SOAP_ENC
+        if style == BindingStyle.RPC_ENCODED:
+            return RpcEncodedSerializer(soap_enc_ns=enc_ns)
+        return DocumentEncodedSerializer(soap_enc_ns=enc_ns)
     return _SERIALIZER_MAP[style]

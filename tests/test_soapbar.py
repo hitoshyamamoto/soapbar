@@ -26,7 +26,12 @@ from soapbar.core.binding import (
 from soapbar.core.envelope import SoapEnvelope, SoapVersion, build_fault, http_headers
 from soapbar.core.fault import SoapFault
 from soapbar.core.namespaces import NS
-from soapbar.core.types import ArrayXsdType, ChoiceXsdType, xsd
+from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType, xsd
+
+_xsd_string = xsd.resolve("string")
+_xsd_int = xsd.resolve("int")
+assert _xsd_string is not None
+assert _xsd_int is not None
 from soapbar.core.wsdl import WsdlDefinition
 from soapbar.core.wsdl.builder import build_wsdl_string
 from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
@@ -3556,3 +3561,385 @@ class TestSoap12SubcodeNested:
         # No sibling Value under the first Subcode (non-nested would have 2 Values)
         values_under_sc1 = sc1.findall(f"{{{NS.SOAP12_ENV}}}Value")
         assert len(values_under_sc1) == 1
+
+
+# ===========================================================================
+# G05 — SOAP Array Attributes
+# ===========================================================================
+
+class TestSoapArrayAttributes:
+    """G05: SOAP 1.1/1.2 array attributes on ArrayXsdType.to_element()."""
+
+    def test_soap11_array_type_attribute(self) -> None:
+        """SOAP 1.1 §5.4.2: SOAP-ENC:arrayType='xsd:T[N]' emitted."""
+        arr = ArrayXsdType("StringArray", _xsd_string, element_tag="item")
+        elem = arr.to_element("names", ["a", "b", "c"], soap_encoding=NS.SOAP_ENC)
+        attr_key = f"{{{NS.SOAP_ENC}}}arrayType"
+        assert attr_key in elem.attrib
+        assert elem.attrib[attr_key] == "xsd:string[3]"
+
+    def test_soap12_array_type_attributes(self) -> None:
+        """SOAP 1.2 Part 2 §3.3: enc:itemType and enc:arraySize emitted."""
+        arr = ArrayXsdType("IntArray", _xsd_int, element_tag="item")
+        elem = arr.to_element("numbers", [1, 2], soap_encoding=NS.SOAP12_ENC)
+        item_type_key = f"{{{NS.SOAP12_ENC}}}itemType"
+        array_size_key = f"{{{NS.SOAP12_ENC}}}arraySize"
+        assert item_type_key in elem.attrib
+        assert array_size_key in elem.attrib
+        assert elem.attrib[item_type_key] == "xsd:int"
+        assert elem.attrib[array_size_key] == "2"
+
+    def test_no_array_attr_without_soap_encoding(self) -> None:
+        """No encoding attributes emitted when soap_encoding is None."""
+        arr = ArrayXsdType("StringArray", _xsd_string, element_tag="item")
+        elem = arr.to_element("names", ["x"], soap_encoding=None)
+        assert f"{{{NS.SOAP_ENC}}}arrayType" not in elem.attrib
+        assert f"{{{NS.SOAP12_ENC}}}itemType" not in elem.attrib
+
+    def test_rpc_encoded_serializer_soap11_array(self) -> None:
+        """RpcEncodedSerializer with SOAP 1.1 emits SOAP-ENC:arrayType."""
+        from lxml import etree
+        arr = ArrayXsdType("StrList", _xsd_string, element_tag="item")
+        sig = OperationSignature(
+            name="ListOp",
+            input_params=[OperationParameter("names", arr)],
+        )
+        ser = RpcEncodedSerializer(soap_enc_ns=NS.SOAP_ENC)
+        body = etree.Element("_body")
+        ser.serialize_request(sig, {"names": ["x", "y"]}, body)
+        wrapper = body[0]
+        names_elem = wrapper.find("names")
+        assert names_elem is not None
+        assert f"{{{NS.SOAP_ENC}}}arrayType" in names_elem.attrib
+
+    def test_rpc_encoded_serializer_soap12_array(self) -> None:
+        """RpcEncodedSerializer with SOAP 1.2 emits enc:itemType/enc:arraySize."""
+        from lxml import etree
+        arr = ArrayXsdType("StrList", _xsd_string, element_tag="item")
+        sig = OperationSignature(
+            name="ListOp",
+            input_params=[OperationParameter("names", arr)],
+        )
+        ser = RpcEncodedSerializer(soap_enc_ns=NS.SOAP12_ENC)
+        body = etree.Element("_body")
+        ser.serialize_request(sig, {"names": ["a", "b", "c"]}, body)
+        wrapper = body[0]
+        names_elem = wrapper.find("names")
+        assert names_elem is not None
+        assert f"{{{NS.SOAP12_ENC}}}itemType" in names_elem.attrib
+        assert names_elem.attrib[f"{{{NS.SOAP12_ENC}}}arraySize"] == "3"
+
+    def test_get_serializer_soap12_returns_soap12_enc(self) -> None:
+        """get_serializer for RPC_ENCODED + SOAP_12 returns SOAP 1.2 encoded serializer."""
+        ser = get_serializer(BindingStyle.RPC_ENCODED, SoapVersion.SOAP_12)
+        assert isinstance(ser, RpcEncodedSerializer)
+        assert ser.soap_enc_ns == NS.SOAP12_ENC
+
+    def test_get_serializer_soap11_returns_soap11_enc(self) -> None:
+        """get_serializer for RPC_ENCODED + SOAP_11 returns SOAP 1.1 encoded serializer."""
+        ser = get_serializer(BindingStyle.RPC_ENCODED, SoapVersion.SOAP_11)
+        assert isinstance(ser, RpcEncodedSerializer)
+        assert ser.soap_enc_ns == NS.SOAP_ENC
+
+
+# ===========================================================================
+# G06 — Multi-reference href/id encoding
+# ===========================================================================
+
+class TestMultiReferenceEncoding:
+    """G06: SOAP 1.1 §5.2.5 multi-reference value encoding."""
+
+    def test_first_occurrence_gets_id_attribute(self) -> None:
+        """Shared complex value gets id= on first serialization."""
+        from soapbar.core.types import ComplexXsdType
+        from lxml import etree
+        ct = ComplexXsdType("Address", [("street", _xsd_string)])
+        shared = {"street": "Main St"}
+        sig = OperationSignature(
+            name="Test",
+            input_params=[
+                OperationParameter("addr1", ct),
+                OperationParameter("addr2", ct),
+            ],
+        )
+        ser = RpcEncodedSerializer()
+        body = etree.Element("_body")
+        # Same object identity
+        ser.serialize_request(sig, {"addr1": shared, "addr2": shared}, body)
+        wrapper = body[0]
+        addr1 = wrapper.find("addr1")
+        addr2 = wrapper.find("addr2")
+        assert addr1 is not None
+        assert addr2 is not None
+        assert "id" in addr1.attrib
+        assert "href" in addr2.attrib
+        assert addr2.attrib["href"] == f"#{addr1.attrib['id']}"
+
+    def test_non_shared_objects_no_id(self) -> None:
+        """Distinct objects with same content do not get shared encoding."""
+        from soapbar.core.types import ComplexXsdType
+        from lxml import etree
+        ct = ComplexXsdType("Item", [("name", _xsd_string)])
+        sig = OperationSignature(
+            name="Test",
+            input_params=[
+                OperationParameter("a", ct),
+                OperationParameter("b", ct),
+            ],
+        )
+        ser = RpcEncodedSerializer()
+        body = etree.Element("_body")
+        # Different Python objects (no shared identity)
+        ser.serialize_request(sig, {"a": {"name": "X"}, "b": {"name": "Y"}}, body)
+        wrapper = body[0]
+        a_elem = wrapper.find("a")
+        b_elem = wrapper.find("b")
+        assert a_elem is not None and "id" not in a_elem.attrib
+        assert b_elem is not None and "href" not in b_elem.attrib
+
+    def test_href_resolved_on_deserialization(self) -> None:
+        """href references are resolved to id'd elements during deserialization."""
+        from soapbar.core.types import ComplexXsdType
+        from lxml import etree
+        ct = ComplexXsdType("Address", [("street", _xsd_string)])
+        shared = {"street": "Broadway"}
+        sig = OperationSignature(
+            name="Test",
+            input_params=[
+                OperationParameter("addr1", ct),
+                OperationParameter("addr2", ct),
+            ],
+        )
+        ser = RpcEncodedSerializer()
+        body = etree.Element("_body")
+        ser.serialize_request(sig, {"addr1": shared, "addr2": shared}, body)
+        # Now deserialize
+        result = ser.deserialize_request(sig, body)
+        assert result["addr1"] == {"street": "Broadway"}
+        assert result["addr2"] == {"street": "Broadway"}
+
+
+# ===========================================================================
+# G09 — WS-Security UsernameToken
+# ===========================================================================
+
+class TestWsSecurityUsernameToken:
+    """G09: WS-Security UsernameToken building and validation."""
+
+    def test_build_security_header_text(self) -> None:
+        """build_security_header emits wsse:Security with wsse:UsernameToken/Password."""
+        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
+        cred = UsernameTokenCredential(username="alice", password="secret")
+        elem = build_security_header(cred)
+        wsse_ns = NS.WSSE
+        assert elem.tag == f"{{{wsse_ns}}}Security"
+        token = elem.find(f"{{{wsse_ns}}}UsernameToken")
+        assert token is not None
+        uname = token.find(f"{{{wsse_ns}}}Username")
+        assert uname is not None and uname.text == "alice"
+        pw = token.find(f"{{{wsse_ns}}}Password")
+        assert pw is not None and pw.text == "secret"
+
+    def test_build_security_header_digest(self) -> None:
+        """Digest credential contains Nonce, Created, and hashed Password."""
+        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
+        import base64
+        cred = UsernameTokenCredential(
+            username="bob",
+            password="pass",
+            use_digest=True,
+            nonce=b"\x00" * 16,
+            created="2026-01-01T00:00:00Z",
+        )
+        elem = build_security_header(cred)
+        wsse_ns = NS.WSSE
+        token = elem.find(f"{{{wsse_ns}}}UsernameToken")
+        assert token is not None
+        nonce_elem = token.find(f"{{{wsse_ns}}}Nonce")
+        assert nonce_elem is not None
+        assert base64.b64decode(nonce_elem.text or "") == b"\x00" * 16
+        pw = token.find(f"{{{wsse_ns}}}Password")
+        assert pw is not None
+        assert "PasswordDigest" in (pw.get("Type") or "")
+
+    def test_validator_password_text_success(self) -> None:
+        """UsernameTokenValidator accepts correct PasswordText credentials."""
+        from soapbar.core.wssecurity import (
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+
+        class SimpleValidator(UsernameTokenValidator):
+            def get_password(self, username: str) -> str | None:
+                return "secret" if username == "alice" else None
+
+        cred = UsernameTokenCredential(username="alice", password="secret")
+        security = build_security_header(cred)
+        validated = SimpleValidator().validate(security)
+        assert validated == "alice"
+
+    def test_validator_wrong_password_raises(self) -> None:
+        """Wrong password raises SecurityValidationError."""
+        from soapbar.core.wssecurity import (
+            SecurityValidationError,
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+
+        class SimpleValidator(UsernameTokenValidator):
+            def get_password(self, username: str) -> str | None:
+                return "right"
+
+        cred = UsernameTokenCredential(username="alice", password="wrong")
+        security = build_security_header(cred)
+        with pytest.raises(SecurityValidationError, match="Password mismatch"):
+            SimpleValidator().validate(security)
+
+    def test_validator_digest_success(self) -> None:
+        """Validator accepts correct PasswordDigest credentials."""
+        from soapbar.core.wssecurity import (
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+
+        class SimpleValidator(UsernameTokenValidator):
+            def get_password(self, username: str) -> str | None:
+                return "pass"
+
+        cred = UsernameTokenCredential(
+            username="alice",
+            password="pass",
+            use_digest=True,
+            nonce=b"\xde\xad\xbe\xef",
+            created="2026-01-01T00:00:00Z",
+        )
+        security = build_security_header(cred)
+        validated = SimpleValidator().validate(security)
+        assert validated == "alice"
+
+    def test_application_rejects_missing_security(self) -> None:
+        """SoapApplication with security_validator rejects requests without header."""
+        import warnings
+        from soapbar.core.wssecurity import UsernameTokenValidator
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class SimpleValidator(UsernameTokenValidator):
+            def get_password(self, username: str) -> str | None:
+                return "secret"
+
+        class EchoService(SoapService):
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation()
+            def Echo(self, msg: str) -> str:
+                return msg
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication(security_validator=SimpleValidator())
+        svc = EchoService()
+        app.register(svc)
+
+        xml = b"""<?xml version="1.0"?>
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+          <soapenv:Body><Echo><msg>hi</msg></Echo></soapenv:Body>
+        </soapenv:Envelope>"""
+        status, _, body = app.handle_request(xml)
+        assert status == 500
+        assert b"Security" in body or b"security" in body.lower()
+
+    def test_client_adds_security_header(self) -> None:
+        """SoapClient with wss_credential adds wsse:Security header to request."""
+        from soapbar.core.wssecurity import UsernameTokenCredential
+
+        sent: list[bytes] = []
+
+        class FakeTransport(HttpTransport):
+            def send(self, url, data, headers):
+                sent.append(data)
+                return (
+                    200,
+                    "text/xml",
+                    b'<?xml version="1.0"?>'
+                    b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+                    b"<soapenv:Body/></soapenv:Envelope>",
+                )
+
+        cred = UsernameTokenCredential(username="bob", password="pw")
+        client = SoapClient.manual(
+            "http://test",
+            transport=FakeTransport(),
+            wss_credential=cred,
+        )
+        client.call("Ping")
+        assert sent, "transport was not called"
+        assert b"Security" in sent[0]
+        assert b"bob" in sent[0]
+
+
+# ===========================================================================
+# G10 — rpc:result opt-in
+# ===========================================================================
+
+class TestRpcResultOptIn:
+    """G10: rpc:result SHOULD per SOAP 1.2 Part 2 §4.2.1 (opt-in only)."""
+
+    def test_rpc_result_not_emitted_by_default(self) -> None:
+        """rpc:result is NOT emitted by default (preserves zeep interop)."""
+        from lxml import etree
+        sig = OperationSignature(
+            name="Add",
+            output_params=[OperationParameter("result", _xsd_int)],
+        )
+        ser = RpcLiteralSerializer()
+        body = etree.Element("_body")
+        ser.serialize_response(sig, {"result": 42}, body)
+        wrapper = body[0]
+        rpc_result = wrapper.find(f"{{{NS.SOAP_RPC}}}result")
+        assert rpc_result is None
+
+    def test_rpc_result_emitted_when_opted_in(self) -> None:
+        """rpc:result is emitted when sig.emit_rpc_result=True."""
+        from lxml import etree
+        sig = OperationSignature(
+            name="Add",
+            output_params=[OperationParameter("result", _xsd_int)],
+            emit_rpc_result=True,
+        )
+        ser = RpcLiteralSerializer()
+        body = etree.Element("_body")
+        ser.serialize_response(sig, {"result": 42}, body)
+        wrapper = body[0]
+        rpc_result = wrapper.find(f"{{{NS.SOAP_RPC}}}result")
+        assert rpc_result is not None
+        assert rpc_result.text == "result"
+
+    def test_emit_rpc_result_decorator_flag(self) -> None:
+        """@soap_operation(emit_rpc_result=True) propagates to OperationSignature."""
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Svc(SoapService):
+            @soap_operation(emit_rpc_result=True)
+            def Compute(self) -> int:
+                return 0
+
+        svc = Svc()
+        ops = svc.get_operation_signatures()
+        assert ops["Compute"].emit_rpc_result is True
+
+    def test_emit_rpc_result_false_by_default_decorator(self) -> None:
+        """@soap_operation() leaves emit_rpc_result=False by default."""
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Svc(SoapService):
+            @soap_operation()
+            def Plain(self) -> int:
+                return 0
+
+        svc = Svc()
+        ops = svc.get_operation_signatures()
+        assert ops["Plain"].emit_rpc_result is False

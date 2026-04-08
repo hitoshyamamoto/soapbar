@@ -63,10 +63,12 @@ class SoapApplication:
         custom_wsdl: bytes | None = None,
         service_url: str = "http://localhost:8000/soap",
         max_body_size: int = 10 * 1024 * 1024,  # 10 MB — G01
+        security_validator: Any = None,
     ) -> None:
         self._custom_wsdl = custom_wsdl
         self.service_url = service_url
         self._max_body_size = max_body_size
+        self._security_validator = security_validator  # G09: UsernameTokenValidator or None
         self._services: list[SoapService] = []
         # operation_name → (service, method)
         self._dispatch: dict[str, tuple[SoapService, _SoapMethod]] = {}
@@ -148,6 +150,16 @@ class SoapApplication:
                         f"Header not understood: {block.element.tag!s}",
                     )
 
+            # G09: WS-Security validation
+            if self._security_validator is not None:
+                if envelope.ws_security_element is None:
+                    raise SoapFault("Client", "Missing wsse:Security header")
+                from soapbar.core.wssecurity import SecurityValidationError
+                try:
+                    self._security_validator.validate(envelope.ws_security_element)
+                except SecurityValidationError as exc:
+                    raise SoapFault("Client", f"Security validation failed: {exc}") from exc
+
             # Determine operation name
             op_name = self._resolve_operation(soap_action, envelope)
             if op_name is None:
@@ -159,7 +171,7 @@ class SoapApplication:
 
             sig: OperationSignature = method.__soap_operation__
             style = service.__binding_style__  # type: ignore[union-attr]
-            serializer = get_serializer(style)
+            serializer = get_serializer(style, version)
 
             if not envelope.body_elements:
                 raise SoapFault("Client", "Empty SOAP Body")

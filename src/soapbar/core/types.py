@@ -330,7 +330,9 @@ class ComplexXsdType(XsdType):
     def from_xml(self, s: str) -> Any:
         raise TypeError(f"ComplexXsdType '{self.name}' requires element-level deserialization")
 
-    def to_element(self, tag: str, value: dict[str, Any], ns: str = "") -> Any:
+    def to_element(
+        self, tag: str, value: dict[str, Any], ns: str = "", soap_encoding: str | None = None
+    ) -> Any:
         from lxml import etree
         full_tag = f"{{{ns}}}{tag}" if ns else tag
         elem = etree.Element(full_tag)
@@ -382,11 +384,28 @@ class ArrayXsdType(XsdType):
     def from_xml(self, s: str) -> Any:
         raise TypeError(f"ArrayXsdType '{self.name}' requires element-level deserialization")
 
-    def to_element(self, tag: str, value: Any, ns: str = "") -> Any:
+    def to_element(
+        self, tag: str, value: Any, ns: str = "", soap_encoding: str | None = None
+    ) -> Any:
         from lxml import etree
         full_tag = f"{{{ns}}}{tag}" if ns else tag
-        elem = etree.Element(full_tag)
         items = value if isinstance(value, list) else []
+        n = len(items)
+        attrib: dict[str, str] = {}
+        nsmap: dict[str | None, str] = {}
+        type_name = getattr(self.element_type, "name", "anyType")
+        if soap_encoding == NS.SOAP12_ENC:
+            # SOAP 1.2 Part 2 §3.3: enc:itemType + enc:arraySize MUST attributes
+            attrib[f"{{{NS.SOAP12_ENC}}}itemType"] = f"xsd:{type_name}"
+            attrib[f"{{{NS.SOAP12_ENC}}}arraySize"] = str(n)
+            nsmap["enc"] = NS.SOAP12_ENC
+            nsmap["xsd"] = NS.XSD
+        elif soap_encoding == NS.SOAP_ENC:
+            # SOAP 1.1 §5.4.2: SOAP-ENC:arrayType="xsd:T[N]"
+            attrib[f"{{{NS.SOAP_ENC}}}arrayType"] = f"xsd:{type_name}[{n}]"
+            nsmap["soapenc"] = NS.SOAP_ENC
+            nsmap["xsd"] = NS.XSD
+        elem = etree.Element(full_tag, attrib=attrib, nsmap=nsmap)
         for item in items:
             et = self.element_type
             if isinstance(et, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
@@ -422,7 +441,9 @@ class ChoiceXsdType(XsdType):
     def from_xml(self, s: str) -> Any:
         raise TypeError(f"ChoiceXsdType '{self.name}' requires element-level deserialization")
 
-    def to_element(self, tag: str, value: Any, ns: str = "") -> Any:
+    def to_element(
+        self, tag: str, value: Any, ns: str = "", soap_encoding: str | None = None
+    ) -> Any:
         from lxml import etree
         full_tag = f"{{{ns}}}{tag}" if ns else tag
         elem = etree.Element(full_tag)
