@@ -42,8 +42,8 @@ def _make_spyne_wsgi() -> WsgiApplication:
     app = Application(
         [_CalcService],
         tns="http://example.com/calc",
-        in_protocol=Soap11(validator="lxml", style="rpc"),
-        out_protocol=Soap11(style="rpc"),
+        in_protocol=Soap11(validator="lxml"),
+        out_protocol=Soap11(),
     )
     return WsgiApplication(app)
 
