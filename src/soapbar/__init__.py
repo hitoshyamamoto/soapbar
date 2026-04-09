@@ -49,11 +49,15 @@ from soapbar.core.wssecurity import (
     UsernameTokenCredential,
     UsernameTokenValidator,
     XmlSecurityError,
+    build_binary_security_token,
     build_security_header,
     decrypt_body,
     encrypt_body,
+    extract_certificate_from_security,
     sign_envelope,
+    sign_envelope_bsp,
     verify_envelope,
+    verify_envelope_bsp,
 )
 from soapbar.core.xml import parse_xml, parse_xml_document, to_bytes, to_string
 from soapbar.server.application import SoapApplication
@@ -113,10 +117,14 @@ __all__ = [  # noqa: RUF022
     "UsernameTokenCredential",
     "UsernameTokenValidator",
     "SecurityValidationError",
+    "build_binary_security_token",
     "build_security_header",
+    "extract_certificate_from_security",
     "XmlSecurityError",
     "sign_envelope",
+    "sign_envelope_bsp",
     "verify_envelope",
+    "verify_envelope_bsp",
     "encrypt_body",
     "decrypt_body",
     # server

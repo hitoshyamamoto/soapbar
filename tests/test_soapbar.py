@@ -4290,6 +4290,144 @@ class TestXmlSignature:
         assert hasattr(soapbar, "verify_envelope")
 
 
+class TestX509TokenProfile:
+    """Tests for WS-I BSP 1.1 X.509 token profile (S10).
+
+    Covers build_binary_security_token, extract_certificate_from_security,
+    sign_envelope_bsp, and verify_envelope_bsp.
+    """
+
+    _WSSE_NS = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+    _WSU_NS = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+    _X509V3 = (
+        "http://docs.oasis-open.org/wss/2004/01/"
+        "oasis-200401-wss-x509-token-profile-1.0#X509v3"
+    )
+    _BASE64 = (
+        "http://docs.oasis-open.org/wss/2004/01/"
+        "oasis-200401-wss-soap-message-security-1.0#Base64Binary"
+    )
+
+    def test_build_binary_security_token_valuetype(self) -> None:
+        from soapbar.core.wssecurity import build_binary_security_token
+        _, cert = _make_rsa_key_and_cert()
+        bst = build_binary_security_token(cert)
+        assert bst.get("ValueType") == self._X509V3
+
+    def test_build_binary_security_token_encoding_type(self) -> None:
+        from soapbar.core.wssecurity import build_binary_security_token
+        _, cert = _make_rsa_key_and_cert()
+        bst = build_binary_security_token(cert)
+        assert bst.get("EncodingType") == self._BASE64
+
+    def test_build_binary_security_token_wsu_id(self) -> None:
+        from soapbar.core.wssecurity import build_binary_security_token
+        _, cert = _make_rsa_key_and_cert()
+        bst = build_binary_security_token(cert, token_id="MyToken-1")
+        wsu_id_attr = f"{{{self._WSU_NS}}}Id"
+        assert bst.get(wsu_id_attr) == "MyToken-1"
+
+    def test_build_binary_security_token_content_is_valid_base64_der(self) -> None:
+        import base64
+        from cryptography import x509 as cx509
+        from soapbar.core.wssecurity import build_binary_security_token
+        _, cert = _make_rsa_key_and_cert()
+        bst = build_binary_security_token(cert)
+        b64 = (bst.text or "").strip()
+        der = base64.b64decode(b64)
+        recovered = cx509.load_der_x509_certificate(der)
+        assert recovered.serial_number == cert.serial_number
+
+    def test_extract_certificate_from_security_round_trips(self) -> None:
+        from lxml import etree
+        from soapbar.core.wssecurity import (
+            build_binary_security_token,
+            extract_certificate_from_security,
+        )
+        _, cert = _make_rsa_key_and_cert()
+        bst = build_binary_security_token(cert)
+        security = etree.Element(f"{{{self._WSSE_NS}}}Security")
+        security.append(bst)
+        extracted = extract_certificate_from_security(security)
+        assert extracted.serial_number == cert.serial_number
+
+    def test_extract_certificate_raises_when_no_bst(self) -> None:
+        from lxml import etree
+        from soapbar.core.wssecurity import XmlSecurityError, extract_certificate_from_security
+        security = etree.Element(f"{{{self._WSSE_NS}}}Security")
+        try:
+            extract_certificate_from_security(security)
+            assert False, "expected XmlSecurityError"
+        except XmlSecurityError as exc:
+            assert "BinarySecurityToken" in str(exc)
+
+    def test_sign_envelope_bsp_adds_binary_security_token(self) -> None:
+        from lxml import etree
+        from soapbar.core.wssecurity import sign_envelope_bsp
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
+        root = etree.fromstring(signed)
+        bst_tag = f"{{{self._WSSE_NS}}}BinarySecurityToken"
+        bst_elems = root.findall(f".//{bst_tag}")
+        assert len(bst_elems) == 1
+        assert bst_elems[0].get("ValueType") == self._X509V3
+
+    def test_sign_envelope_bsp_keyinfo_uses_security_token_reference(self) -> None:
+        from lxml import etree
+        from soapbar.core.wssecurity import sign_envelope_bsp
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
+        root = etree.fromstring(signed)
+        ds_ns = "http://www.w3.org/2000/09/xmldsig#"
+        key_info = root.find(f".//{{{ds_ns}}}KeyInfo")
+        assert key_info is not None
+        # Must NOT contain ds:X509Data
+        assert key_info.find(f"{{{ds_ns}}}X509Data") is None
+        # Must contain wsse:SecurityTokenReference
+        str_tag = f"{{{self._WSSE_NS}}}SecurityTokenReference"
+        str_elem = key_info.find(str_tag)
+        assert str_elem is not None
+
+    def test_sign_envelope_bsp_reference_uri_matches_token_id(self) -> None:
+        from lxml import etree
+        from soapbar.core.wssecurity import sign_envelope_bsp
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert, token_id="Tok-99")
+        root = etree.fromstring(signed)
+        ds_ns = "http://www.w3.org/2000/09/xmldsig#"
+        ref_tag = f"{{{self._WSSE_NS}}}Reference"
+        ref = root.find(f".//{{{ds_ns}}}KeyInfo//{ref_tag}")
+        assert ref is not None
+        assert ref.get("URI") == "#Tok-99"
+        assert ref.get("ValueType") == self._X509V3
+
+    def test_verify_envelope_bsp_round_trip_succeeds(self) -> None:
+        from soapbar.core.wssecurity import sign_envelope_bsp, verify_envelope_bsp
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
+        verified = verify_envelope_bsp(signed)
+        assert isinstance(verified, bytes)
+        assert b"ping" in verified
+
+    def test_verify_envelope_bsp_tampered_body_fails(self) -> None:
+        from soapbar.core.wssecurity import XmlSecurityError, sign_envelope_bsp, verify_envelope_bsp
+        key, cert = _make_rsa_key_and_cert()
+        signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
+        tampered = signed.replace(b"secret", b"hacked")
+        try:
+            verify_envelope_bsp(tampered)
+            assert False, "expected XmlSecurityError"
+        except XmlSecurityError:
+            pass
+
+    def test_bsp_symbols_exported_from_top_level(self) -> None:
+        import soapbar
+        assert hasattr(soapbar, "build_binary_security_token")
+        assert hasattr(soapbar, "extract_certificate_from_security")
+        assert hasattr(soapbar, "sign_envelope_bsp")
+        assert hasattr(soapbar, "verify_envelope_bsp")
+
+
 class TestXmlEncryption:
     """Tests for encrypt_body() and decrypt_body()."""
 

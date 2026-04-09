@@ -40,6 +40,13 @@ _Base64Binary = (
     "http://docs.oasis-open.org/wss/2004/01/"
     "oasis-200401-wss-soap-message-security-1.0#Base64Binary"
 )
+#: ValueType for WS-I BSP X.509 v3 token (R3029)
+_X509V3_VALUETYPE = (
+    "http://docs.oasis-open.org/wss/2004/01/"
+    "oasis-200401-wss-x509-token-profile-1.0#X509v3"
+)
+#: XML-DSIG namespace (used to locate ds:KeyInfo in signed envelopes)
+_DS_NS = "http://www.w3.org/2000/09/xmldsig#"
 
 
 # ---------------------------------------------------------------------------
@@ -536,14 +543,270 @@ def decrypt_body(
         raise XmlSecurityError(f"XML Decryption failed: {exc}") from exc
 
 
+# ---------------------------------------------------------------------------
+# WS-I BSP 1.1 X.509 Token Profile (S10)
+# ---------------------------------------------------------------------------
+
+def build_binary_security_token(
+    certificate: Any,
+    token_id: str = "X509Token-1",  # noqa: S107
+) -> _Element:
+    """Build a ``wsse:BinarySecurityToken`` from an X.509 certificate.
+
+    The certificate is DER-encoded then Base64-encoded per WS-I BSP 1.1
+    R3029 (``ValueType``) and R3031 (``EncodingType``).  The ``wsu:Id``
+    attribute is set so that a ``wsse:SecurityTokenReference`` can reference
+    this element by URI fragment.
+
+    Args:
+        certificate: A ``cryptography`` X.509 certificate object.
+        token_id: Value for the ``wsu:Id`` attribute (default ``"X509Token-1"``).
+
+    Returns:
+        A ``wsse:BinarySecurityToken`` lxml element.
+
+    Raises:
+        ImportError: If ``cryptography`` is not installed.
+    """
+    try:
+        from cryptography.hazmat.primitives.serialization import Encoding
+    except ImportError as exc:
+        raise ImportError(
+            "cryptography is required for X.509 token profile support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    der_bytes = certificate.public_bytes(Encoding.DER)
+    b64_cert = base64.b64encode(der_bytes).decode("ascii")
+
+    wsse_ns = NS.WSSE
+    wsu_ns = NS.WSU
+    nsmap: dict[str | None, str] = {"wsse": wsse_ns, "wsu": wsu_ns}
+
+    return make_element(
+        f"{{{wsse_ns}}}BinarySecurityToken",
+        nsmap=nsmap,
+        attrib={
+            f"{{{wsu_ns}}}Id": token_id,
+            "ValueType": _X509V3_VALUETYPE,
+            "EncodingType": _Base64Binary,
+        },
+        text=b64_cert,
+    )
+
+
+def extract_certificate_from_security(security_element: _Element) -> Any:
+    """Extract the X.509 certificate from a ``wsse:BinarySecurityToken``.
+
+    Args:
+        security_element: The ``wsse:Security`` element from the SOAP header.
+
+    Returns:
+        A ``cryptography`` X.509 certificate object.
+
+    Raises:
+        ImportError: If ``cryptography`` is not installed.
+        XmlSecurityError: If no BST is found or the certificate cannot be decoded.
+    """
+    try:
+        from cryptography import x509 as _x509
+    except ImportError as exc:
+        raise ImportError(
+            "cryptography is required for X.509 token profile support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    wsse_ns = NS.WSSE
+    bst = security_element.find(f"{{{wsse_ns}}}BinarySecurityToken")
+    if bst is None:
+        raise XmlSecurityError("No wsse:BinarySecurityToken found in Security header")
+
+    b64_text = (bst.text or "").strip()
+    if not b64_text:
+        raise XmlSecurityError("wsse:BinarySecurityToken is empty")
+
+    try:
+        der_bytes = base64.b64decode(b64_text)
+        return _x509.load_der_x509_certificate(der_bytes)
+    except Exception as exc:
+        raise XmlSecurityError(
+            f"Failed to decode BinarySecurityToken certificate: {exc}"
+        ) from exc
+
+
+def sign_envelope_bsp(
+    envelope_bytes: bytes,
+    private_key: Any,
+    certificate: Any,
+    token_id: str = "X509Token-1",  # noqa: S107
+) -> bytes:
+    """Sign a SOAP envelope using the WS-I BSP 1.1 X.509 token profile.
+
+    Inserts a ``wsse:BinarySecurityToken`` (DER-encoded X.509 certificate)
+    into the ``wsse:Security`` SOAP header, then applies an enveloped
+    XML-DSIG signature.  The ``ds:Signature/ds:KeyInfo`` is rewritten to
+    use a ``wsse:SecurityTokenReference/wsse:Reference`` that points to the
+    token via ``wsu:Id``, as required by WS-I BSP 1.1.
+
+    Args:
+        envelope_bytes: The SOAP envelope XML as bytes.
+        private_key: A ``cryptography`` RSA/EC private key.
+        certificate: The corresponding ``cryptography`` X.509 certificate.
+        token_id: The ``wsu:Id`` value assigned to the BST and referenced
+            from the signature (default ``"X509Token-1"``).
+
+    Returns:
+        The signed envelope bytes with BSP-conformant key reference.
+
+    Raises:
+        ImportError: If ``signxml`` or ``cryptography`` is not installed.
+        XmlSecurityError: If signing fails.
+    """
+    try:
+        from signxml import SignatureConstructionMethod, XMLSigner  # type: ignore[attr-defined]
+    except ImportError as exc:
+        raise ImportError(
+            "signxml is required for XML Signature support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    from lxml import etree
+
+    from soapbar.core.xml import parse_xml
+
+    try:
+        root = parse_xml(envelope_bytes)
+        wsse_ns = NS.WSSE
+        wsu_ns = NS.WSU
+
+        # Derive envelope namespace from root tag for Header creation
+        raw_root = root.tag if isinstance(root.tag, str) else str(root.tag)
+        env_ns = raw_root.split("}")[0].lstrip("{") if "}" in raw_root else ""
+        header_tag = f"{{{env_ns}}}Header" if env_ns else "Header"
+
+        # Find or create soap:Header (must precede soap:Body)
+        header = root.find(header_tag)
+        if header is None:
+            header = etree.Element(header_tag)
+            root.insert(0, header)
+
+        # Find or create wsse:Security within header
+        security = header.find(f"{{{wsse_ns}}}Security")
+        if security is None:
+            security = etree.SubElement(
+                header,
+                f"{{{wsse_ns}}}Security",
+                nsmap={"wsse": wsse_ns, "wsu": wsu_ns},
+            )
+
+        # Prepend wsse:BinarySecurityToken to the Security header
+        bst = build_binary_security_token(certificate, token_id=token_id)
+        security.insert(0, bst)
+
+        # Sign envelope with signxml (produces ds:X509Data KeyInfo)
+        signer = XMLSigner(method=SignatureConstructionMethod.enveloped)
+        signed: Any = signer.sign(root, key=private_key, cert=[certificate])
+
+        # Replace ds:X509Data in ds:KeyInfo with wsse:SecurityTokenReference
+        # (BSP R3057: KeyInfo MUST contain SecurityTokenReference, not X509Data)
+        for key_info in signed.findall(f".//{{{_DS_NS}}}KeyInfo"):
+            x509_data = key_info.find(f"{{{_DS_NS}}}X509Data")
+            if x509_data is not None:
+                key_info.remove(x509_data)
+                str_elem = etree.SubElement(
+                    key_info,
+                    f"{{{wsse_ns}}}SecurityTokenReference",
+                    nsmap={"wsse": wsse_ns},
+                )
+                ref = etree.SubElement(str_elem, f"{{{wsse_ns}}}Reference")
+                ref.set("URI", f"#{token_id}")
+                ref.set("ValueType", _X509V3_VALUETYPE)
+
+        result: bytes = etree.tostring(signed, xml_declaration=True, encoding="utf-8")
+        return result
+
+    except (XmlSecurityError, ImportError):
+        raise
+    except Exception as exc:
+        raise XmlSecurityError(f"BSP X.509 signing failed: {exc}") from exc
+
+
+def verify_envelope_bsp(envelope_bytes: bytes) -> bytes:
+    """Verify a SOAP envelope signed with the WS-I BSP 1.1 X.509 token profile.
+
+    Extracts the ``wsse:BinarySecurityToken`` certificate from the
+    ``wsse:Security`` header and uses it to verify the enveloped ``ds:Signature``.
+
+    Args:
+        envelope_bytes: The signed SOAP envelope as bytes.
+
+    Returns:
+        The verified envelope bytes (same content, re-serialised after
+        signature verification).
+
+    Raises:
+        ImportError: If ``signxml`` or ``cryptography`` is not installed.
+        XmlSecurityError: If signature verification fails or no token is found.
+    """
+    try:
+        from signxml import XMLVerifier  # type: ignore[attr-defined]
+    except ImportError as exc:
+        raise ImportError(
+            "signxml is required for XML Signature support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    from lxml import etree
+
+    from soapbar.core.xml import parse_xml
+
+    try:
+        root = parse_xml(envelope_bytes)
+        wsse_ns = NS.WSSE
+
+        # Locate wsse:Security in any soap:Header child
+        security = None
+        for child in root:
+            raw = child.tag if isinstance(child.tag, str) else str(child.tag)
+            local = raw.split("}")[-1] if "}" in raw else raw
+            if local == "Header":
+                security = child.find(f"{{{wsse_ns}}}Security")
+                break
+        if security is None:
+            raise XmlSecurityError("No wsse:Security header found")
+
+        # Extract certificate from wsse:BinarySecurityToken
+        cert = extract_certificate_from_security(security)
+
+        # Verify using the extracted certificate (bypasses KeyInfo resolution)
+        verifier: Any = XMLVerifier()
+        verify_result: Any = verifier.verify(root, x509_cert=cert)
+        if isinstance(verify_result, list):
+            verify_result = verify_result[0]
+        signed_xml: Any = verify_result.signed_xml
+        verified_bytes: bytes = etree.tostring(
+            signed_xml, xml_declaration=True, encoding="utf-8"
+        )
+        return verified_bytes
+
+    except XmlSecurityError:
+        raise
+    except Exception as exc:
+        raise XmlSecurityError(f"BSP X.509 verification failed: {exc}") from exc
+
+
 __all__ = [
     "SecurityValidationError",
     "UsernameTokenCredential",
     "UsernameTokenValidator",
     "XmlSecurityError",
+    "build_binary_security_token",
     "build_security_header",
     "decrypt_body",
     "encrypt_body",
+    "extract_certificate_from_security",
     "sign_envelope",
+    "sign_envelope_bsp",
     "verify_envelope",
+    "verify_envelope_bsp",
 ]

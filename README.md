@@ -2,13 +2,13 @@
 
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/license-MIT%20with%20Attribution-green)
-![Conformance](https://img.shields.io/badge/SOAP%20conformance-98%25-brightgreen)
+![Conformance](https://img.shields.io/badge/SOAP%20conformance-100%25-brightgreen)
 
 A SOAP framework for Python — client, server, and WSDL handling.
 
 soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates WSDL from Python service classes, parses existing WSDL to drive a typed client, and integrates with any ASGI or WSGI framework via thin adapter classes. The XML parser is hardened against XXE attacks using lxml with `resolve_entities=False`.
 
-> **Conformance** — soapbar v0.4.0 passes a full SOAP Protocol Conformance Audit at **98% (45/46 checkpoints)**. All F01–F09 original findings, G01–G11 gap findings, and I01–I04 informational observations are resolved. The single partial checkpoint (S10) is the WS-I BSP X.509 token profile. See `AUDIT_REPORT.md` for the full report.
+> **Conformance** — soapbar v0.4.1 passes a full SOAP Protocol Conformance Audit at **100% (46/46 checkpoints)**. All F01–F09 original findings, G01–G11 gap findings, I01–I04 informational observations, and S10 (WS-I BSP X.509 token profile) are resolved. See `AUDIT_REPORT.md` for the full report.
 
 ---
 
@@ -704,6 +704,28 @@ decrypted_bytes = decrypt_body(encrypted_bytes, recipient_private_key)
 
 The `xenc:EncryptedData` element is placed as the sole child of `<soap:Body>`. The AES-256-CBC session key is wrapped with RSA-OAEP (SHA-256) in an `xenc:EncryptedKey` element inside `xenc:KeyInfo`.
 
+### WS-I BSP X.509 Token Profile (S10)
+
+For interoperability with WS-I Basic Security Profile 1.1 compliant clients and servers, use the BSP variant which embeds the certificate as a `wsse:BinarySecurityToken` and references it from `ds:Signature/ds:KeyInfo`:
+
+```python
+from soapbar.core.wssecurity import (
+    sign_envelope_bsp,
+    verify_envelope_bsp,
+    build_binary_security_token,
+    extract_certificate_from_security,
+)
+
+# Sign — adds wsse:BinarySecurityToken + wsse:SecurityTokenReference in KeyInfo
+signed_bytes = sign_envelope_bsp(envelope_bytes, private_key, certificate)
+
+# Verify — extracts cert from BST, verifies ds:Signature
+verified_bytes = verify_envelope_bsp(signed_bytes)
+
+# Build a standalone BinarySecurityToken element (e.g. to add to an existing header)
+bst = build_binary_security_token(certificate, token_id="MyToken-1")
+```
+
 ---
 
 ## WSDL schema validation
@@ -877,6 +899,10 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | `encrypt_body` | `from soapbar.core.wssecurity import encrypt_body` | AES-256-CBC body encryption + RSA-OAEP key wrap |
 | `decrypt_body` | `from soapbar.core.wssecurity import decrypt_body` | Decrypt `xenc:EncryptedData` body and restore children |
 | `XmlSecurityError` | `from soapbar.core.wssecurity import XmlSecurityError` | Raised on XML signature/encryption failure |
+| `build_binary_security_token` | `from soapbar.core.wssecurity import build_binary_security_token` | Build WS-I BSP `wsse:BinarySecurityToken` from X.509 cert |
+| `extract_certificate_from_security` | `from soapbar.core.wssecurity import extract_certificate_from_security` | Extract X.509 cert from `wsse:BinarySecurityToken` |
+| `sign_envelope_bsp` | `from soapbar.core.wssecurity import sign_envelope_bsp` | BSP-compliant signing with `wsse:SecurityTokenReference` |
+| `verify_envelope_bsp` | `from soapbar.core.wssecurity import verify_envelope_bsp` | Verify BSP-signed envelope using embedded BST cert |
 | `MtomAttachment` | `from soapbar import MtomAttachment` | MTOM attachment descriptor (content_id, content_type, data) |
 | `MtomMessage` | `from soapbar import MtomMessage` | Parsed MTOM message (soap_xml + attachments list) |
 | `parse_mtom` | `from soapbar import parse_mtom` | Parse a raw `multipart/related` MTOM body |
@@ -904,12 +930,12 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | WS-Addressing 1.0 | ✓ | ✓ | Partial | ✗ |
 | One-way MEP (HTTP 202) | ✓ | ✓ | ✓ | ✗ |
 | SOAP array attributes | ✓ | ✓ | ✓ | ✗ |
-| 98% SOAP protocol audit | ✓ | — | — | — |
+| 100% SOAP protocol audit | ✓ | — | — | — |
 | Core dependency | lxml | lxml, requests | lxml | fastapi, lxml |
 | Async HTTP client | httpx (optional) | httpx (optional) | — | — |
 | Python versions | 3.10–3.14 | 3.8+ | 3.8+ | 3.8+ |
 
-soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, is hardened against XXE/DoS attacks out of the box, and has passed a full SOAP Protocol Conformance Audit at 98% (45/46 checkpoints).
+soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, is hardened against XXE/DoS attacks out of the box, and has passed a full SOAP Protocol Conformance Audit at 100% (46/46 checkpoints).
 
 ---
 
@@ -975,7 +1001,7 @@ The following features are intentionally out-of-scope for the current release.  
 | Area | Status | Notes |
 |------|--------|-------|
 | **MTOM/XOP** | Fully implemented | `parse_mtom` / `build_mtom` handle `multipart/related` MIME packaging and XOP Include resolution. `AsgiSoapApp` and `WsgiSoapApp` decode inbound MTOM automatically. `SoapClient` sends MTOM when `use_mtom=True`. |
-| **WS-Security** | UsernameToken + XML Sig/Enc implemented | `UsernameTokenCredential` / `UsernameTokenValidator` for PasswordText and PasswordDigest. `sign_envelope` / `verify_envelope` for XML-DSIG (requires `soapbar[security]`). `encrypt_body` / `decrypt_body` for XML Encryption (AES-256-CBC + RSA-OAEP). WS-I BSP X.509 token profile (S10) is partial — X.509 token binding to UsernameToken not implemented. |
+| **WS-Security** | Fully implemented | `UsernameTokenCredential` / `UsernameTokenValidator` for PasswordText and PasswordDigest. `sign_envelope` / `verify_envelope` for XML-DSIG. `encrypt_body` / `decrypt_body` for XML Encryption (AES-256-CBC + RSA-OAEP). `sign_envelope_bsp` / `verify_envelope_bsp` + `build_binary_security_token` for WS-I BSP X.509 token profile (S10). All require `soapbar[security]`. |
 | **WS-Addressing** | Fully parsed + response headers generated | Inbound headers (`MessageID`, `To`, `Action`, `ReplyTo`, `FaultTo`, `ReferenceParameters`) are parsed into `WsaHeaders`. Response headers (`MessageID`, `RelatesTo`, `Action`, ReferenceParameters) are generated automatically when `use_wsa=True`. |
 | **SOAP 1.2 `relay` attribute** | Parsed and exposed on `SoapHeaderBlock` | The `relay` boolean is available on each `SoapHeaderBlock` instance. Full SOAP intermediary forwarding (actually relaying the message) is not implemented. |
 | **`xsd:complexType` / `xsd:array` / `xsd:choice`** | Fully supported for round-trip serialization | Recursive (`self-referencing`) complex types are resolved lazily. `xsd:complexContent/restriction` for SOAP-encoded arrays is also parsed from WSDL. |

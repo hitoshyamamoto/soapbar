@@ -100,11 +100,10 @@ class SoapApplication:
 
         from lxml import etree
 
-        # Collect all <xsd:schema> elements across all registered services
+        # Collect all <xsd:schema> elements from the combined WSDL definition
         schema_elems: list[Any] = []
-        for svc in self._services:
-            defn = self._build_wsdl_definition()
-            schema_elems.extend(defn.schema_elements)
+        defn = self._build_wsdl_definition()
+        schema_elems.extend(defn.schema_elements)
 
         if not schema_elems:
             return None
