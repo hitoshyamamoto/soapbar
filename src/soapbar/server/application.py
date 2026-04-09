@@ -29,7 +29,7 @@ from soapbar.core.wsdl import (
     WsdlService,
 )
 from soapbar.core.wsdl.builder import _type_ref, build_wsdl_bytes
-from soapbar.core.xml import check_xml_depth, to_bytes
+from soapbar.core.xml import check_xml_depth, compile_schema, to_bytes, validate_schema
 from soapbar.server.service import SoapService, _SoapMethod
 
 _log = logging.getLogger(__name__)
@@ -64,11 +64,14 @@ class SoapApplication:
         service_url: str = "http://localhost:8000/soap",
         max_body_size: int = 10 * 1024 * 1024,  # 10 MB — G01
         security_validator: Any = None,
+        validate_body_schema: bool = False,
     ) -> None:
         self._custom_wsdl = custom_wsdl
         self.service_url = service_url
         self._max_body_size = max_body_size
         self._security_validator = security_validator  # G09: UsernameTokenValidator or None
+        self._validate_body_schema = validate_body_schema  # X07
+        self._compiled_schema: Any = None  # etree.XMLSchema | None; lazy-built
         self._services: list[SoapService] = []
         # operation_name → (service, method)
         self._dispatch: dict[str, tuple[SoapService, _SoapMethod]] = {}
@@ -82,6 +85,56 @@ class SoapApplication:
                 UserWarning,
                 stacklevel=2,
             )
+
+    def _get_compiled_schema(self) -> Any:
+        """Return a compiled lxml XMLSchema from registered services' WSDL types.
+
+        Builds a composite ``<xs:schema>`` element that imports each inline
+        ``<xsd:schema>`` block found in the registered services' WSDL types
+        sections, then compiles it once and caches the result.
+
+        Returns ``None`` if no embedded schemas are available.
+        """
+        if self._compiled_schema is not None:
+            return self._compiled_schema
+
+        from lxml import etree
+
+        # Collect all <xsd:schema> elements across all registered services
+        schema_elems: list[Any] = []
+        for svc in self._services:
+            defn = self._build_wsdl_definition()
+            schema_elems.extend(defn.schema_elements)
+
+        if not schema_elems:
+            return None
+
+        # Build a wrapper schema that imports all discovered schemas via xs:any
+        # For validation purposes, build a single combined schema element.
+        # If there is exactly one, use it directly.  If there are multiple,
+        # wrap them in a single xs:schema with xs:import directives.
+        xsd_ns = NS.XSD
+        if len(schema_elems) == 1:
+            try:
+                self._compiled_schema = compile_schema(schema_elems[0])
+                return self._compiled_schema
+            except etree.XMLSchemaParseError:
+                return None
+
+        # Multiple schemas: create a composite wrapper
+        wrapper = etree.Element(f"{{{xsd_ns}}}schema", nsmap={"xs": xsd_ns})
+        for s in schema_elems:
+            tns = s.get("targetNamespace", "")
+            imp = etree.SubElement(wrapper, f"{{{xsd_ns}}}import")
+            if tns:
+                imp.set("namespace", tns)
+            for child in s:
+                wrapper.append(child)
+        try:
+            self._compiled_schema = compile_schema(wrapper)
+        except etree.XMLSchemaParseError:
+            return None
+        return self._compiled_schema
 
     def register(self, service: SoapService) -> None:
         self._services.append(service)
@@ -188,6 +241,16 @@ class SoapApplication:
 
             # F09 — validate required input parameters before dispatch
             _validate_input_params(sig, kwargs)
+
+            # X07 — optional WSDL schema validation of Body elements
+            if self._validate_body_schema:
+                schema = self._get_compiled_schema()
+                if schema is not None:
+                    for body_elem in list(container):
+                        if not validate_schema(schema, body_elem):
+                            errors = schema.error_log
+                            first = errors[0].message if errors else "schema mismatch"
+                            raise SoapFault("Client", f"Schema validation failed: {first}")
 
             # Call the service method
             result = method(**kwargs)
