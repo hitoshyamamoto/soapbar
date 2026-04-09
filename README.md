@@ -1,6 +1,6 @@
 # soapbar
 
-![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue)
 ![License](https://img.shields.io/badge/license-MIT%20with%20Attribution-green)
 ![Conformance](https://img.shields.io/badge/SOAP%20conformance-100%25-brightgreen)
 
@@ -68,7 +68,7 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - Sync and async HTTP client (httpx optional)
 - Interoperable with zeep and spyne out-of-the-box (verified by integration tests)
 - Full type annotations + `py.typed` marker (PEP 561)
-- Python 3.10 – 3.14
+- Python 3.12 – 3.14
 
 ---
 
@@ -379,6 +379,18 @@ defn = parse_wsdl_file("service.wsdl") # from file
 ```python
 soap_app = SoapApplication(custom_wsdl=open("my_service.wsdl", "rb").read())
 ```
+
+**Remote `wsdl:import` — SSRF guard** — `parse_wsdl` blocks outbound HTTP fetches by default. `wsdl:import` elements whose resolved location starts with `http://` or `https://` raise `ValueError` unless you explicitly opt in:
+
+```python
+# Default — safe for untrusted WSDLs; remote imports raise ValueError
+defn = parse_wsdl(wsdl_bytes)
+
+# Opt-in — only when the WSDL source is trusted
+defn = parse_wsdl(wsdl_bytes, allow_remote_imports=True)
+```
+
+This prevents Server-Side Request Forgery (SSRF) when parsing WSDLs from user-supplied URLs or untrusted data. The top-level WSDL fetch (e.g. `SoapClient(wsdl_url=...)`) is always explicit; only `wsdl:import` resolution inside the document is guarded.
 
 ---
 
@@ -933,7 +945,7 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | 100% SOAP protocol audit | ✓ | — | — | — |
 | Core dependency | lxml | lxml, requests | lxml | fastapi, lxml |
 | Async HTTP client | httpx (optional) | httpx (optional) | — | — |
-| Python versions | 3.10–3.14 | 3.8+ | 3.8+ | 3.8+ |
+| Python versions | 3.12–3.14 | 3.8+ | 3.8+ | 3.8+ |
 
 soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, is hardened against XXE/DoS attacks out of the box, and has passed a full SOAP Protocol Conformance Audit at 100% (46/46 checkpoints).
 
@@ -1005,7 +1017,7 @@ The following features are intentionally out-of-scope for the current release.  
 | **WS-Addressing** | Fully parsed + response headers generated | Inbound headers (`MessageID`, `To`, `Action`, `ReplyTo`, `FaultTo`, `ReferenceParameters`) are parsed into `WsaHeaders`. Response headers (`MessageID`, `RelatesTo`, `Action`, ReferenceParameters) are generated automatically when `use_wsa=True`. |
 | **SOAP 1.2 `relay` attribute** | Parsed and exposed on `SoapHeaderBlock` | The `relay` boolean is available on each `SoapHeaderBlock` instance. Full SOAP intermediary forwarding (actually relaying the message) is not implemented. |
 | **`xsd:complexType` / `xsd:array` / `xsd:choice`** | Fully supported for round-trip serialization | Recursive (`self-referencing`) complex types are resolved lazily. `xsd:complexContent/restriction` for SOAP-encoded arrays is also parsed from WSDL. |
-| **External schema `xsd:import`** | Not followed | `wsdl:import` (document-level) is resolved. `xsd:import` elements *inside* a `<types>` schema are silently ignored; type resolution falls back to built-in primitives. |
+| **External schema `xsd:import`** | Not followed | `wsdl:import` (document-level) is resolved with an SSRF guard (`allow_remote_imports=False` by default). `xsd:import` elements *inside* a `<types>` schema are silently ignored; type resolution falls back to built-in primitives. |
 
 ---
 
