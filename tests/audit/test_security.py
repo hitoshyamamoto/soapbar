@@ -6,15 +6,17 @@ All tests are self-contained with no outbound HTTP.
 """
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 from lxml import etree
 
+from soapbar.core.binding import BindingStyle
 from soapbar.core.envelope import SoapEnvelope
 from soapbar.core.fault import SoapFault
-from soapbar.core.xml import parse_xml, parse_xml_document
+from soapbar.core.xml import parse_xml
 from soapbar.server.application import SoapApplication
 from soapbar.server.service import SoapService, soap_operation
-from soapbar.core.binding import BindingStyle
 
 
 def _make_app() -> SoapApplication:
@@ -90,7 +92,7 @@ class TestXxePrevention:
           <soapenv:Body><data>&xxe;</data></soapenv:Body>
         </soapenv:Envelope>"""
         app = _make_app()
-        status, ct, body = app.handle_request(xxe_xml)
+        _status, _ct, body = app.handle_request(xxe_xml)
         # Body response must not contain /etc/passwd content
         assert b"root:" not in body, "XXE: /etc/passwd content leaked in response"
         assert b"/bin/" not in body, "XXE: /etc/passwd content leaked in response"
@@ -135,7 +137,9 @@ class TestBillionLaughsPrevention:
             root = parse_xml(billion_laughs)
             # If parsed, entities must not be expanded
             text = etree.tostring(root, encoding="unicode")
-            assert len(text) < 10_000, f"Billion Laughs expansion occurred: output length {len(text)}"
+            assert len(text) < 10_000, (
+                f"Billion Laughs expansion occurred: output length {len(text)}"
+            )
         except etree.XMLSyntaxError:
             pass  # Rejection is the preferred outcome
 
@@ -147,11 +151,9 @@ class TestBillionLaughsPrevention:
           <!ENTITY b "&a;">
         ]>
         <root>&a;</root>"""
-        try:
-            root = parse_xml(recursive)
+        with contextlib.suppress(etree.XMLSyntaxError):
+            parse_xml(recursive)
             # Should parse without crash
-        except etree.XMLSyntaxError:
-            pass  # Rejection is acceptable
 
 
 # ---------------------------------------------------------------------------
@@ -167,11 +169,9 @@ class TestSsrfPrevention:
         <!DOCTYPE root SYSTEM "http://attacker.example.com/evil.dtd">
         <root>data</root>"""
         # Should either parse without fetching or raise XMLSyntaxError
-        try:
-            root = parse_xml(external_dtd)
+        with contextlib.suppress(etree.XMLSyntaxError):
+            parse_xml(external_dtd)
             # Parsed successfully without network access — good
-        except etree.XMLSyntaxError:
-            pass  # Also acceptable
 
     def test_ssrf_via_parameter_entity_url(self):
         """Parameter entity with URL must not trigger SSRF."""
@@ -181,10 +181,8 @@ class TestSsrfPrevention:
           %remote;
         ]>
         <root/>"""
-        try:
-            root = parse_xml(ssrf_xml)
-        except etree.XMLSyntaxError:
-            pass  # Expected — good
+        with contextlib.suppress(etree.XMLSyntaxError):
+            parse_xml(ssrf_xml)
 
 
 # ---------------------------------------------------------------------------
@@ -198,11 +196,9 @@ class TestXmlBombPrevention:
         """10MB attribute value should be handled without OOM."""
         big_attr = "A" * (10 * 1024 * 1024)  # 10MB
         xml = f'<root attr="{big_attr}"/>'.encode()
-        try:
-            root = parse_xml(xml)
+        with contextlib.suppress(etree.XMLSyntaxError):
+            parse_xml(xml)
             # If parsed, must not expand beyond acceptable memory
-        except etree.XMLSyntaxError:
-            pass  # Rejection for huge_tree=False is correct
 
     def test_large_text_content_handled(self):
         """1MB text content must be handled without crash."""
@@ -261,7 +257,7 @@ class TestCommentAndPiRemoval:
           </soapenv:Body>
         </soapenv:Envelope>"""
         app = _make_app()
-        status, ct, body = app.handle_request(xml)
+        _status, _ct, body = app.handle_request(xml)
         # Comment content must NOT appear in the response body as executed data.
         # The service either processes "normal" or returns a fault — not the comment text.
         assert b"injection attempt" not in body, \

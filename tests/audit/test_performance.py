@@ -12,9 +12,7 @@ from __future__ import annotations
 import statistics
 import time
 import tracemalloc
-from typing import Any
 
-import pytest
 from lxml import etree
 
 from soapbar.core.binding import (
@@ -42,7 +40,6 @@ from soapbar.core.wsdl.builder import build_wsdl_bytes
 from soapbar.core.wsdl.parser import parse_wsdl
 from soapbar.server.application import SoapApplication
 from soapbar.server.service import SoapService, soap_operation
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -171,7 +168,7 @@ class TestPerformanceBenchmarks:
 
         for _ in range(N):
             t0 = time.perf_counter_ns()
-            status, ct, body = app.handle_request(DLW_ADD_REQUEST, soap_action="add")
+            status, _ct, _body = app.handle_request(DLW_ADD_REQUEST, soap_action="add")
             times.append(time.perf_counter_ns() - t0)
             assert status == 200
 
@@ -188,7 +185,7 @@ class TestPerformanceBenchmarks:
 
         for _ in range(100):
             t0 = time.perf_counter_ns()
-            defn = parse_wsdl(wsdl_bytes)
+            parse_wsdl(wsdl_bytes)
             times.append(time.perf_counter_ns() - t0)
 
         stats = _percentiles(times)
@@ -233,7 +230,9 @@ class TestPerformanceBenchmarks:
         times: list[float] = []
         for _ in range(N):
             t0 = time.perf_counter_ns()
-            fault = SoapFault("Server", "Internal error", subcodes=[("http://example.com/", "DBError")])
+            fault = SoapFault(
+                "Server", "Internal error", subcodes=[("http://example.com/", "DBError")]
+            )
             envelope_elem = fault.to_soap12_envelope()
             from soapbar.core.xml import to_bytes
             fault_bytes = to_bytes(envelope_elem)

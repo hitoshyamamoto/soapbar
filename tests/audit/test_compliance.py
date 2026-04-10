@@ -20,28 +20,15 @@ from soapbar.core.binding import (
     OperationSignature,
     get_serializer,
 )
-from soapbar.core.envelope import SoapEnvelope, SoapVersion, build_fault, http_headers
+from soapbar.core.envelope import SoapEnvelope, SoapVersion, http_headers
 from soapbar.core.fault import SoapFault
 from soapbar.core.namespaces import NS
 from soapbar.core.types import xsd
-from soapbar.core.wsdl import (
-    WsdlBinding,
-    WsdlBindingOperation,
-    WsdlDefinition,
-    WsdlMessage,
-    WsdlOperation,
-    WsdlOperationMessage,
-    WsdlPart,
-    WsdlPort,
-    WsdlPortType,
-    WsdlService,
-)
-from soapbar.core.wsdl.builder import build_wsdl_bytes, build_wsdl_string
+from soapbar.core.wsdl.builder import build_wsdl_bytes
 from soapbar.core.wsdl.parser import parse_wsdl
-from soapbar.core.xml import local_name, namespace_uri, to_bytes, to_string
+from soapbar.core.xml import local_name, namespace_uri, to_bytes
 from soapbar.server.application import SoapApplication
 from soapbar.server.service import SoapService, soap_operation
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -286,7 +273,9 @@ class TestSoap12EnvelopeCompliance:
             val_elem = code_elem.find(f"{{{SOAP12_ENV}}}Value")
             assert val_elem is not None and val_elem.text is not None
             wire_code = val_elem.text.split(":")[-1]
-            assert wire_code == expected_wire, f"Input {input_code!r} → expected {expected_wire!r}, got {wire_code!r}"
+            assert wire_code == expected_wire, (
+                f"Input {input_code!r} → expected {expected_wire!r}, got {wire_code!r}"
+            )
 
     def test_fault_subcode_support_12(self):
         """§5.4.6 — Subcodes enable nested fault classification."""
@@ -412,7 +401,7 @@ class TestSoap12EnvelopeCompliance:
           <env:Body/>
         </env:Envelope>"""
         app, _ = _make_app()
-        status, ct, body = app.handle_request(bad_xml)
+        status, _ct, body = app.handle_request(bad_xml)
         # Should be 4xx (Client) since it's a parsing/version error
         assert status in (400, 500)
         root = _parse(body)
@@ -579,7 +568,6 @@ class TestWsdl11Compliance:
         wsdl1 = self._make_wsdl_bytes()
         defn1 = parse_wsdl(wsdl1)
         # Build from parsed definition
-        from soapbar.core.wsdl.builder import build_wsdl
         rebuilt = build_wsdl_bytes(defn1, "http://example.com/calc")
         defn2 = parse_wsdl(rebuilt)
         # Key structural equivalence
@@ -802,7 +790,7 @@ class TestSoapActionCompliance:
     def test_soap_action_dispatch_exact_match(self):
         """Route by SOAPAction header (exact match)."""
         app, _ = _make_app()
-        status, ct, body = app.handle_request(self._dlw_add_request(), soap_action="add")
+        status, _ct, _body = app.handle_request(self._dlw_add_request(), soap_action="add")
         assert status == 200
 
     def test_soap_action_adds_quotes_on_send_11(self):
@@ -820,7 +808,7 @@ class TestSoapActionCompliance:
         """application.py strips quotes from received SOAPAction."""
         app, _ = _make_app()
         # Quoted SOAPAction header (as sent by WS-I-compliant client)
-        status, ct, body = app.handle_request(
+        status, _ct, _body = app.handle_request(
             self._dlw_add_request(), soap_action='"add"'
         )
         assert status == 200, f"Quoted SOAPAction dispatch failed, status={status}"
@@ -828,13 +816,13 @@ class TestSoapActionCompliance:
     def test_soap_action_fallback_body_element(self):
         """Fallback to body element local name when SOAPAction is empty."""
         app, _ = _make_app()
-        status, ct, body = app.handle_request(self._dlw_add_request(), soap_action="")
+        status, _ct, _body = app.handle_request(self._dlw_add_request(), soap_action="")
         assert status == 200, f"Body-element fallback dispatch failed, status={status}"
 
     def test_soap_action_fragment_dispatch(self):
         """#OpName fragment in SOAPAction is resolved to operation name."""
         app, _ = _make_app()
-        status, ct, body = app.handle_request(
+        status, _ct, _body = app.handle_request(
             self._dlw_add_request(), soap_action="#add"
         )
         assert status == 200
@@ -881,7 +869,7 @@ class TestHttpBindingCompliance:
           </soapenv:Body>
         </soapenv:Envelope>"""
         app, _ = _make_app()
-        status, _, body = app.handle_request(xml, soap_action="divide")
+        status, _ct, _body = app.handle_request(xml, soap_action="divide")
         assert status == 500  # WS-I BP R1109: ALL SOAP faults MUST return HTTP 500
 
     def test_http_500_for_client_fault(self):
@@ -926,6 +914,7 @@ class TestHttpBindingCompliance:
         servers follow the same convention.
         """
         import asyncio
+
         from soapbar.server.asgi import AsgiSoapApp
 
         app, _ = _make_app()
@@ -957,6 +946,7 @@ class TestHttpBindingCompliance:
     def test_get_without_wsdl_param_returns_405(self):
         """GET without ?wsdl returns 405 Method Not Allowed (MINOR-002 fixed)."""
         import asyncio
+
         from soapbar.server.asgi import AsgiSoapApp
 
         app, _ = _make_app()
@@ -994,13 +984,13 @@ class TestEdgeCasesAndRobustness:
     """Edge cases for parser robustness and protocol tolerance."""
 
     def _add_request(self, extra: str = "") -> bytes:
-        return f"""<?xml version="1.0" encoding="UTF-8"?>
+        return b"""<?xml version="1.0" encoding="UTF-8"?>
         <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                           xmlns:tns="http://example.com/calc">
           <soapenv:Body>
             <tns:add><a>3</a><b>5</b></tns:add>
           </soapenv:Body>
-        </soapenv:Envelope>""".encode()
+        </soapenv:Envelope>"""
 
     def test_soap_message_with_xml_declaration(self):
         """XML <?xml?> prolog should be accepted."""
@@ -1084,7 +1074,7 @@ class TestEdgeCasesAndRobustness:
     def test_malformed_xml_returns_fault(self):
         """Malformed XML MUST NOT crash the server — returns a SOAP Fault."""
         app, _ = _make_app()
-        status, ct, body = app.handle_request(b"<unclosed>")
+        status, _ct, body = app.handle_request(b"<unclosed>")
         assert status in (400, 500), "Malformed XML must return 4xx or 5xx"
         # Body must still be valid XML containing an Envelope
         root = _parse(body)
@@ -1182,7 +1172,7 @@ class TestMustUnderstandEnforcement:
           </soapenv:Body>
         </soapenv:Envelope>"""
         app, _ = _make_app()
-        status, ct, body = app.handle_request(xml)
+        status, _ct, body = app.handle_request(xml)
         # MUST return 500 with MustUnderstand faultcode
         assert status == 500
         root = _parse(body)
@@ -1204,7 +1194,7 @@ class TestMustUnderstandEnforcement:
           </soap12:Body>
         </soap12:Envelope>"""
         app, _ = _make_app()
-        status, ct, body = app.handle_request(xml)
+        status, _ct, body = app.handle_request(xml)
         assert status == 500
         root = _parse(body)
         fault_elem = root.find(f".//{{{SOAP12_ENV}}}Fault")
@@ -1243,7 +1233,6 @@ class TestMustUnderstandEnforcement:
         for se in supported:
             assert se.get("qname"), "SupportedEnvelope MUST have a qname attribute"
         # SOAP 1.2 namespace must be listed
-        qnames = [se.get("qname", "") for se in supported]
         soap12_listed = any(
             se.nsmap.get(q.split(":")[0]) == SOAP12_ENV
             for se in supported

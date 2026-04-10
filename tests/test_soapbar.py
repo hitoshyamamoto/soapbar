@@ -724,7 +724,6 @@ class TestWsdlParserPaths:
 
     def test_complexcontent_array_type_on_restriction_attrib(self) -> None:
         """wsdl:arrayType declared as an XML attribute on <xsd:restriction>."""
-        soapenc = "http://schemas.xmlsoap.org/soap/encoding/"
         wsdl = (
             b"""<?xml version="1.0"?>
         <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
@@ -1743,7 +1742,7 @@ class TestWsgiAdapter:
         def start_response(status, headers):
             status_list.append(status)
 
-        result = app(self._make_environ("GET"), start_response)
+        app(self._make_environ("GET"), start_response)
         assert status_list[0].startswith("405")
 
     def test_get_wsdl(self) -> None:
@@ -2386,7 +2385,7 @@ class TestApplicationValueErrorFault:
         assert b"invalid input value" in body
 
     def test_missing_required_param_returns_500(self) -> None:
-        """Sending a request without a required parameter should produce a 500 fault (WS-I BP R1109)."""
+        """Sending a request without a required parameter should produce a 500 fault (WS-I BP R1109)."""  # noqa: E501
         int_type = xsd.resolve("int")
         assert int_type is not None
 
@@ -2481,7 +2480,7 @@ class TestInputParamValidation:
     def test_missing_optional_param_does_not_fault(self) -> None:
         app = self._make_app(required=False)
         req = self._req("<tns:Add><b>4</b></tns:Add>")  # 'a' absent but optional
-        status, _ct, body = app.handle_request(req)
+        _status, _ct, body = app.handle_request(req)
         # No validation fault — handler receives a=None (or default)
         assert b"Missing required" not in body
 
@@ -2494,8 +2493,8 @@ class TestInputParamValidation:
 
     def test_validate_input_params_directly(self) -> None:
         """Unit-test _validate_input_params in isolation."""
-        from soapbar.server.application import _validate_input_params
         from soapbar.core.fault import SoapFault
+        from soapbar.server.application import _validate_input_params
 
         int_type = xsd.resolve("int")
         assert int_type is not None
@@ -2640,7 +2639,7 @@ class TestArrayXsdType:
             arr.from_xml("a")
 
     def test_nested_complex(self) -> None:
-        from soapbar.core.types import ArrayXsdType, ComplexXsdType
+        from soapbar.core.types import ArrayXsdType
         st = self._string_type()
         assert st is not None
         it = self._string_type()
@@ -2731,7 +2730,6 @@ class TestChoiceXsdType:
 
 class TestComplexXsdTypeRecursive:
     def test_lazy_string_field(self) -> None:
-        from soapbar.core.types import ComplexXsdType
         # Register a type first, then reference by name
         ct = ComplexXsdType("Point", [("x", "int"), ("y", "int")])
         elem = ct.to_element("pt", {"x": 1, "y": 2})
@@ -2741,7 +2739,6 @@ class TestComplexXsdTypeRecursive:
         assert result["y"] == 2
 
     def test_nested_complex_to_element(self) -> None:
-        from soapbar.core.types import ComplexXsdType
         st = xsd.resolve("string")
         assert st
         inner = ComplexXsdType("Inner", [("val", st)])
@@ -2753,7 +2750,6 @@ class TestComplexXsdTypeRecursive:
         assert val_elem is not None and val_elem.text == "hello"
 
     def test_nested_complex_from_element(self) -> None:
-        from soapbar.core.types import ComplexXsdType
         st = xsd.resolve("string")
         assert st
         inner = ComplexXsdType("Inner2", [("val", st)])
@@ -2764,7 +2760,6 @@ class TestComplexXsdTypeRecursive:
         assert result["inner"] == {"val": "world"}
 
     def test_invalid_string_reference_raises(self) -> None:
-        from soapbar.core.types import ComplexXsdType
         ct = ComplexXsdType("Bad", [("x", "nonexistent_type_xyz")])
         with pytest.raises(ValueError, match="Cannot resolve XSD type"):
             ct.to_element("bad", {"x": "v"})
@@ -2828,7 +2823,6 @@ class TestSchemaDrivenWsdl:
 </definitions>"""
 
     def test_parse_complex_type(self) -> None:
-        from soapbar.core.types import ComplexXsdType
         defn = parse_wsdl(self._WSDL_WITH_COMPLEX)
         assert "Address" in defn.complex_types
         ct = defn.complex_types["Address"]
@@ -2855,7 +2849,6 @@ class TestSchemaDrivenWsdl:
         assert "AddressList" in defn.complex_types
         ct = defn.complex_types["AddressList"]
         # maxOccurs=unbounded on a field makes it an ArrayXsdType field inside ComplexXsdType
-        from soapbar.core.types import ComplexXsdType
         assert isinstance(ct, ComplexXsdType)
         # The field "address" should be an ArrayXsdType
         field_map = {f[0]: f[1] for f in ct.fields}
@@ -2876,7 +2869,6 @@ class TestSchemaDrivenWsdl:
 
 class TestWsdlBuilderComplexType:
     def test_build_wsdl_with_complex_types(self) -> None:
-        from soapbar.core.types import ComplexXsdType
         from soapbar.core.wsdl import WsdlDefinition
         defn = WsdlDefinition(name="Test", target_namespace="http://test.com/")
         st = xsd.resolve("string")
@@ -2894,7 +2886,9 @@ class TestWsdlBuilderComplexType:
 # ---------------------------------------------------------------------------
 
 class TestSoapHeaderBlock:
-    def _make_soap12_envelope_with_header(self, relay: str = "false", role: str | None = None) -> bytes:
+    def _make_soap12_envelope_with_header(
+        self, relay: str = "false", role: str | None = None
+    ) -> bytes:
         soap12_ns = NS.SOAP12_ENV
         role_attr = f' soap12:role="{role}"' if role else ""
         xml = f"""<?xml version="1.0"?>
@@ -2991,7 +2985,7 @@ class TestMtomDetectionAsgi:
 
         class Svc(SoapService):
             @soap_operation(soap_action="Hello")
-            def Hello(self, name: str) -> str:
+            def Hello(self, name: str) -> str:  # noqa: N802
                 return f"Hello {name}"
 
         app.register(Svc())
@@ -2999,7 +2993,7 @@ class TestMtomDetectionAsgi:
 
     def _build_mtom_request(self, name: str) -> bytes:
         """Build a minimal MTOM multipart request wrapping a plain SOAP envelope."""
-        from soapbar.core.mtom import MtomAttachment, build_mtom
+        from soapbar.core.mtom import build_mtom
 
         soap_xml = (
             b'<?xml version=\'1.0\' encoding=\'utf-8\'?>'
@@ -3085,7 +3079,7 @@ class TestMtomDetectionWsgi:
 
         class Svc(SoapService):
             @soap_operation(soap_action="Greet")
-            def Greet(self, name: str) -> str:
+            def Greet(self, name: str) -> str:  # noqa: N802
                 return f"Hi {name}"
 
         app.register(Svc())
@@ -3286,7 +3280,7 @@ class TestWsaResponseHeaders:
 
     def test_application_injects_wsa_headers_on_response(self) -> None:
         """SoapApplication injects WSA RelatesTo + MessageID when request has WSA headers."""
-        from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
+        from soapbar.core.binding import BindingStyle, OperationParameter
         from soapbar.core.types import xsd
         from soapbar.server.application import SoapApplication
         from soapbar.server.service import SoapService, soap_operation
@@ -3332,7 +3326,7 @@ class TestWsaResponseHeaders:
 
     def test_application_no_wsa_headers_when_request_has_none(self) -> None:
         """SoapApplication does not add WSA headers when request has none."""
-        from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
+        from soapbar.core.binding import BindingStyle, OperationParameter
         from soapbar.core.types import xsd
         from soapbar.server.application import SoapApplication
         from soapbar.server.service import SoapService, soap_operation
@@ -3447,7 +3441,10 @@ class TestSoapEnvelopeConstructorHeaderElements:
         """header_elements=None must not wipe pre-set header_blocks."""
         env = SoapEnvelope()
         elem = make_element("{http://example.com/}H")
-        env.header_blocks = [__import__("soapbar.core.envelope", fromlist=["SoapHeaderBlock"]).SoapHeaderBlock(element=elem)]
+        SoapHeaderBlock = __import__(  # noqa: N806
+            "soapbar.core.envelope", fromlist=["SoapHeaderBlock"]
+        ).SoapHeaderBlock
+        env.header_blocks = [SoapHeaderBlock(element=elem)]
         # Calling with no header_elements kwarg shouldn't clear header_blocks
         env2 = SoapEnvelope(header_elements=None)
         assert env2.header_blocks == []
@@ -3468,7 +3465,6 @@ class TestSoapEnvelopeConstructorHeaderElements:
 class TestWsdlComplexTypeRef:
     def test_wsdl_part_uses_tns_for_complex(self) -> None:
         """Auto-WSDL must emit tns:TypeName for ComplexXsdType params, not xsd:TypeName."""
-        from soapbar.core.types import ComplexXsdType
         from soapbar.server.application import SoapApplication
         from soapbar.server.service import SoapService, soap_operation
 
@@ -3577,7 +3573,6 @@ class TestAsyncTransportMtomCheck:
 class TestSoap12SubcodeNested:
     def test_single_subcode_unchanged(self) -> None:
         """Single subcode produces <Subcode><Value>...</Value></Subcode>."""
-        from lxml import etree
 
         from soapbar.core.fault import SoapFault
         from soapbar.core.namespaces import NS
@@ -3598,7 +3593,10 @@ class TestSoap12SubcodeNested:
         from soapbar.core.fault import SoapFault
         from soapbar.core.namespaces import NS
 
-        fault = SoapFault("Server", "err", subcodes=[("http://example.com/", "A"), ("http://example.com/", "B")])
+        fault = SoapFault(
+            "Server", "err",
+            subcodes=[("http://example.com/", "A"), ("http://example.com/", "B")],
+        )
         elem = fault.to_soap12_element()
         code_elem = elem.find(f"{{{NS.SOAP12_ENV}}}Code")
         assert code_elem is not None
@@ -3710,7 +3708,6 @@ class TestMultiReferenceEncoding:
 
     def test_first_occurrence_gets_id_attribute(self) -> None:
         """Shared complex value gets id= on first serialization."""
-        from soapbar.core.types import ComplexXsdType
         from lxml import etree
         ct = ComplexXsdType("Address", [("street", _xsd_string)])
         shared = {"street": "Main St"}
@@ -3736,7 +3733,6 @@ class TestMultiReferenceEncoding:
 
     def test_non_shared_objects_no_id(self) -> None:
         """Distinct objects with same content do not get shared encoding."""
-        from soapbar.core.types import ComplexXsdType
         from lxml import etree
         ct = ComplexXsdType("Item", [("name", _xsd_string)])
         sig = OperationSignature(
@@ -3758,7 +3754,6 @@ class TestMultiReferenceEncoding:
 
     def test_href_resolved_on_deserialization(self) -> None:
         """href references are resolved to id'd elements during deserialization."""
-        from soapbar.core.types import ComplexXsdType
         from lxml import etree
         ct = ComplexXsdType("Address", [("street", _xsd_string)])
         shared = {"street": "Broadway"}
@@ -3788,7 +3783,7 @@ class TestWsSecurityUsernameToken:
     def test_build_security_header_text(self) -> None:
         """build_security_header emits wsse:Security with wsse:UsernameToken/Password."""
         from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
-        cred = UsernameTokenCredential(username="alice", password="secret")
+        cred = UsernameTokenCredential(username="alice", password="secret")  # noqa: S106
         elem = build_security_header(cred)
         wsse_ns = NS.WSSE
         assert elem.tag == f"{{{wsse_ns}}}Security"
@@ -3801,11 +3796,12 @@ class TestWsSecurityUsernameToken:
 
     def test_build_security_header_digest(self) -> None:
         """Digest credential contains Nonce, Created, and hashed Password."""
-        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
         import base64
+
+        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
         cred = UsernameTokenCredential(
             username="bob",
-            password="pass",
+            password="pass",  # noqa: S106
             use_digest=True,
             nonce=b"\x00" * 16,
             created="2026-01-01T00:00:00Z",
@@ -3833,7 +3829,7 @@ class TestWsSecurityUsernameToken:
             def get_password(self, username: str) -> str | None:
                 return "secret" if username == "alice" else None
 
-        cred = UsernameTokenCredential(username="alice", password="secret")
+        cred = UsernameTokenCredential(username="alice", password="secret")  # noqa: S106
         security = build_security_header(cred)
         validated = SimpleValidator().validate(security)
         assert validated == "alice"
@@ -3851,7 +3847,7 @@ class TestWsSecurityUsernameToken:
             def get_password(self, username: str) -> str | None:
                 return "right"
 
-        cred = UsernameTokenCredential(username="alice", password="wrong")
+        cred = UsernameTokenCredential(username="alice", password="wrong")  # noqa: S106
         security = build_security_header(cred)
         with pytest.raises(SecurityValidationError, match="Password mismatch"):
             SimpleValidator().validate(security)
@@ -3870,7 +3866,7 @@ class TestWsSecurityUsernameToken:
 
         cred = UsernameTokenCredential(
             username="alice",
-            password="pass",
+            password="pass",  # noqa: S106
             use_digest=True,
             nonce=b"\xde\xad\xbe\xef",
             created="2026-01-01T00:00:00Z",
@@ -3882,6 +3878,7 @@ class TestWsSecurityUsernameToken:
     def test_application_rejects_missing_security(self) -> None:
         """SoapApplication with security_validator rejects requests without header."""
         import warnings
+
         from soapbar.core.wssecurity import UsernameTokenValidator
         from soapbar.server.application import SoapApplication
         from soapbar.server.service import SoapService, soap_operation
@@ -3894,7 +3891,7 @@ class TestWsSecurityUsernameToken:
             __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
 
             @soap_operation()
-            def Echo(self, msg: str) -> str:
+            def Echo(self, msg: str) -> str:  # noqa: N802
                 return msg
 
         with warnings.catch_warnings():
@@ -3928,7 +3925,7 @@ class TestWsSecurityUsernameToken:
                     b"<soapenv:Body/></soapenv:Envelope>",
                 )
 
-        cred = UsernameTokenCredential(username="bob", password="pw")
+        cred = UsernameTokenCredential(username="bob", password="pw")  # noqa: S106
         client = SoapClient.manual(
             "http://test",
             transport=FakeTransport(),
@@ -3983,7 +3980,7 @@ class TestRpcResultOptIn:
 
         class Svc(SoapService):
             @soap_operation(emit_rpc_result=True)
-            def Compute(self) -> int:
+            def Compute(self) -> int:  # noqa: N802
                 return 0
 
         svc = Svc()
@@ -3996,7 +3993,7 @@ class TestRpcResultOptIn:
 
         class Svc(SoapService):
             @soap_operation()
-            def Plain(self) -> int:
+            def Plain(self) -> int:  # noqa: N802
                 return 0
 
         svc = Svc()
@@ -4051,16 +4048,17 @@ class TestMtomCore:
         assert msg.attachments[0].data == attachment_data
 
     def test_parse_mtom_no_boundary_raises(self) -> None:
-        from soapbar.core.mtom import parse_mtom
         import pytest
+
+        from soapbar.core.mtom import parse_mtom
         with pytest.raises(ValueError, match="boundary"):
             parse_mtom(b"garbage", "text/xml")
 
     def test_xop_include_resolved_inline(self) -> None:
         """An <xop:Include> element is replaced with base64-encoded attachment data."""
         import base64
+
         from soapbar.core.mtom import MtomAttachment, build_mtom, parse_mtom
-        from soapbar.core.namespaces import NS
 
         binary_data = b"hello binary"
         cid = "data@test"
@@ -4073,7 +4071,9 @@ class TestMtomCore:
             b'<file><xop:Include href="cid:data@test"/></file>'
             b"</soapenv:Body></soapenv:Envelope>"
         )
-        att = MtomAttachment(content_id=cid, content_type="application/octet-stream", data=binary_data)
+        att = MtomAttachment(
+            content_id=cid, content_type="application/octet-stream", data=binary_data
+        )
         body, ct = build_mtom(soap_with_xop, [att])
         msg = parse_mtom(body, ct)
         # The resolved XML should contain the base64-encoded data, not xop:Include
@@ -4083,7 +4083,7 @@ class TestMtomCore:
 
     def test_add_attachment_and_use_mtom_client(self) -> None:
         """SoapClient.add_attachment() queues attachments; call() packages them via MTOM."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         from soapbar.client.client import SoapClient
         from soapbar.core.binding import BindingStyle, OperationSignature
@@ -4125,8 +4125,7 @@ class TestMtomCore:
         from unittest.mock import MagicMock
 
         from soapbar.client.client import SoapClient
-        from soapbar.core.binding import BindingStyle, OperationSignature
-        from soapbar.core.envelope import SoapVersion
+        from soapbar.core.binding import OperationSignature
 
         transport = MagicMock()
         resp_xml = (
@@ -4240,6 +4239,7 @@ class TestXmlSignature:
 
     def test_signed_envelope_contains_signature_element(self) -> None:
         from lxml import etree
+
         from soapbar.core.wssecurity import sign_envelope
         key, cert = _make_rsa_key_and_cert()
         signed = sign_envelope(_SIMPLE_ENVELOPE, key, cert)
@@ -4276,6 +4276,7 @@ class TestXmlSignature:
 
     def test_sign_preserves_soap_structure(self) -> None:
         from lxml import etree
+
         from soapbar.core.wssecurity import sign_envelope
         key, cert = _make_rsa_key_and_cert()
         signed = sign_envelope(_SIMPLE_ENVELOPE, key, cert)
@@ -4325,13 +4326,15 @@ class TestX509TokenProfile:
     def test_build_binary_security_token_wsu_id(self) -> None:
         from soapbar.core.wssecurity import build_binary_security_token
         _, cert = _make_rsa_key_and_cert()
-        bst = build_binary_security_token(cert, token_id="MyToken-1")
+        bst = build_binary_security_token(cert, token_id="MyToken-1")  # noqa: S106
         wsu_id_attr = f"{{{self._WSU_NS}}}Id"
         assert bst.get(wsu_id_attr) == "MyToken-1"
 
     def test_build_binary_security_token_content_is_valid_base64_der(self) -> None:
         import base64
+
         from cryptography import x509 as cx509
+
         from soapbar.core.wssecurity import build_binary_security_token
         _, cert = _make_rsa_key_and_cert()
         bst = build_binary_security_token(cert)
@@ -4342,6 +4345,7 @@ class TestX509TokenProfile:
 
     def test_extract_certificate_from_security_round_trips(self) -> None:
         from lxml import etree
+
         from soapbar.core.wssecurity import (
             build_binary_security_token,
             extract_certificate_from_security,
@@ -4355,16 +4359,18 @@ class TestX509TokenProfile:
 
     def test_extract_certificate_raises_when_no_bst(self) -> None:
         from lxml import etree
+
         from soapbar.core.wssecurity import XmlSecurityError, extract_certificate_from_security
         security = etree.Element(f"{{{self._WSSE_NS}}}Security")
         try:
             extract_certificate_from_security(security)
-            assert False, "expected XmlSecurityError"
+            raise AssertionError("expected XmlSecurityError")
         except XmlSecurityError as exc:
             assert "BinarySecurityToken" in str(exc)
 
     def test_sign_envelope_bsp_adds_binary_security_token(self) -> None:
         from lxml import etree
+
         from soapbar.core.wssecurity import sign_envelope_bsp
         key, cert = _make_rsa_key_and_cert()
         signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
@@ -4376,6 +4382,7 @@ class TestX509TokenProfile:
 
     def test_sign_envelope_bsp_keyinfo_uses_security_token_reference(self) -> None:
         from lxml import etree
+
         from soapbar.core.wssecurity import sign_envelope_bsp
         key, cert = _make_rsa_key_and_cert()
         signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
@@ -4392,9 +4399,10 @@ class TestX509TokenProfile:
 
     def test_sign_envelope_bsp_reference_uri_matches_token_id(self) -> None:
         from lxml import etree
+
         from soapbar.core.wssecurity import sign_envelope_bsp
         key, cert = _make_rsa_key_and_cert()
-        signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert, token_id="Tok-99")
+        signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert, token_id="Tok-99")  # noqa: S106
         root = etree.fromstring(signed)
         ds_ns = "http://www.w3.org/2000/09/xmldsig#"
         ref_tag = f"{{{self._WSSE_NS}}}Reference"
@@ -4416,11 +4424,8 @@ class TestX509TokenProfile:
         key, cert = _make_rsa_key_and_cert()
         signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
         tampered = signed.replace(b"secret", b"hacked")
-        try:
+        with pytest.raises(XmlSecurityError):
             verify_envelope_bsp(tampered)
-            assert False, "expected XmlSecurityError"
-        except XmlSecurityError:
-            pass
 
     def test_bsp_symbols_exported_from_top_level(self) -> None:
         import soapbar
@@ -4435,13 +4440,14 @@ class TestXmlEncryption:
 
     def test_encrypt_body_hides_content(self) -> None:
         from soapbar.core.wssecurity import encrypt_body
-        key, cert = _make_rsa_key_and_cert()
+        key, _cert = _make_rsa_key_and_cert()
         encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
         assert b"secret" not in encrypted
         assert b"EncryptedData" in encrypted
 
     def test_encrypt_body_structure(self) -> None:
         from lxml import etree
+
         from soapbar.core.wssecurity import encrypt_body
         key, _ = _make_rsa_key_and_cert()
         encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
@@ -4464,6 +4470,7 @@ class TestXmlEncryption:
     def test_encrypt_decrypt_round_trip(self) -> None:
         """Round-trip: encrypt then decrypt recovers original body children."""
         from lxml import etree
+
         from soapbar.core.wssecurity import decrypt_body, encrypt_body
         key, _ = _make_rsa_key_and_cert()
         encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
@@ -4512,6 +4519,7 @@ class TestXmlEncryption:
     def test_key_wrapping_algorithm_is_rsa_oaep(self) -> None:
         """Verify the EncryptedKey uses RSA-OAEP algorithm URI."""
         from lxml import etree
+
         from soapbar.core.wssecurity import encrypt_body
         key, _ = _make_rsa_key_and_cert()
         encrypted = encrypt_body(_SIMPLE_ENVELOPE, key.public_key())
@@ -4591,7 +4599,7 @@ def _make_schema_app(validate: bool = True):
         __binding_style__ = None  # will be set by decorator defaults
 
         @soap_operation(soap_action="Hello")
-        def Hello(self, name: str) -> str:
+        def Hello(self, name: str) -> str:  # noqa: N802
             return f"Hello {name}"
 
     app = SoapApplication(
@@ -4612,15 +4620,15 @@ class TestBodySchemaValidation:
 
     def test_valid_request_passes_when_flag_true(self) -> None:
         """A schema-conformant request is dispatched normally."""
+        from soapbar.core.wsdl.parser import parse_wsdl
         from soapbar.server.application import SoapApplication
         from soapbar.server.service import SoapService, soap_operation
-        from soapbar.core.wsdl.parser import parse_wsdl
 
-        wsdl_def = parse_wsdl(_WSDL_WITH_SCHEMA)
+        parse_wsdl(_WSDL_WITH_SCHEMA)
 
         class HelloSvc(SoapService):
             @soap_operation(soap_action="Hello")
-            def Hello(self, name: str) -> str:
+            def Hello(self, name: str) -> str:  # noqa: N802
                 return f"Hi {name}"
 
         app = SoapApplication(
@@ -4636,7 +4644,7 @@ class TestBodySchemaValidation:
             b"<soapenv:Body><Hello><name>World</name></Hello></soapenv:Body>"
             b"</soapenv:Envelope>"
         )
-        status, _, resp = app.handle_request(body, soap_action="Hello")
+        status, _, _resp = app.handle_request(body, soap_action="Hello")
         # schema_elements from custom_wsdl won't auto-populate via _build_wsdl_definition
         # because no services have __wsdl_definition__; schema is None → pass through
         assert status in (200, 500)  # 200 if schema absent; confirm no crash
@@ -4648,12 +4656,12 @@ class TestBodySchemaValidation:
 
     def test_get_compiled_schema_returns_none_when_no_schema_elements(self) -> None:
         """Without embedded schema in services, _get_compiled_schema returns None."""
-        from soapbar.server.service import SoapService, soap_operation
         from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
 
         class Svc(SoapService):
             @soap_operation()
-            def Op(self) -> int:
+            def Op(self) -> int:  # noqa: N802
                 return 0
 
         app = SoapApplication()
@@ -4665,12 +4673,12 @@ class TestBodySchemaValidation:
 
     def test_get_compiled_schema_cached(self) -> None:
         """_get_compiled_schema caches the result after first call."""
-        from soapbar.server.service import SoapService, soap_operation
         from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
 
         class Svc(SoapService):
             @soap_operation()
-            def Op(self) -> str:
+            def Op(self) -> str:  # noqa: N802
                 return "ok"
 
         app = SoapApplication()
@@ -4683,6 +4691,7 @@ class TestBodySchemaValidation:
     def test_schema_validation_with_parsed_wsdl(self) -> None:
         """When schema_elements are present (via parse_wsdl), compile_schema is called."""
         from lxml import etree
+
         from soapbar.core.wsdl.parser import parse_wsdl
         from soapbar.core.xml import compile_schema
 
@@ -4703,6 +4712,7 @@ class TestBodySchemaValidation:
     def test_schema_rejects_invalid_element(self) -> None:
         """Schema validation rejects an element missing a required child."""
         from lxml import etree
+
         from soapbar.core.wsdl.parser import parse_wsdl
         from soapbar.core.xml import compile_schema, validate_schema
 
@@ -4716,12 +4726,12 @@ class TestBodySchemaValidation:
 
     def test_validate_body_schema_no_crash_without_schema(self) -> None:
         """With validate_body_schema=True but no embedded schema, request passes."""
-        from soapbar.server.service import SoapService, soap_operation
         from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
 
         class Svc(SoapService):
             @soap_operation(soap_action="Ping")
-            def Ping(self) -> str:
+            def Ping(self) -> str:  # noqa: N802
                 return "pong"
 
         app = SoapApplication(validate_body_schema=True)
