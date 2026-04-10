@@ -27,7 +27,7 @@ jobs:
         run: uv sync --group lint --group type
 
       - name: Ruff lint
-        run: uv run ruff check src/
+        run: uv run ruff check src/ tests/
 
       - name: Mypy type check
         run: uv run mypy src/ --strict
