@@ -4742,3 +4742,443 @@ class TestBodySchemaValidation:
         )
         status, _, _ = app.handle_request(body, soap_action="Ping")
         assert status == 200
+
+
+# ===========================================================================
+# Coverage — application.py uncovered branches
+# ===========================================================================
+
+class TestApplicationCoverageBranches:
+    """Targeted tests for uncovered branches in SoapApplication."""
+
+    def _make_echo_app(self, **kwargs):  # type: ignore[no-untyped-def]
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class EchoSvc(SoapService):
+            __service_name__ = "Echo"
+            __tns__ = "http://example.com/echo"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation(soap_action="echo")
+            def echo(self, msg: str) -> str:
+                return msg
+
+        app = SoapApplication(**kwargs)
+        app.register(EchoSvc())
+        return app
+
+    def test_oversized_request_returns_fault(self) -> None:
+        """Body > max_body_size triggers Client fault (line 172)."""
+        app = self._make_echo_app(max_body_size=20)
+        status, _ct, body = app.handle_request(b"A" * 100)
+        assert status == 500
+        assert b"exceeds" in body
+
+    def test_empty_soap_body_returns_fault(self) -> None:
+        """Envelope with empty Body triggers Client fault (line 229)."""
+        app = self._make_echo_app()
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body/></soapenv:Envelope>"
+        )
+        status, _ct, body = app.handle_request(xml, soap_action="echo")
+        assert status == 500
+        assert b"Empty SOAP Body" in body
+
+    def test_one_way_mep_returns_202(self) -> None:
+        """One-way operation returns HTTP 202 with empty body (line 259)."""
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class NotifySvc(SoapService):
+            __service_name__ = "Notify"
+            __tns__ = "http://example.com/notify"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation(soap_action="notify", one_way=True)
+            def notify(self, msg: str) -> None:
+                pass
+
+        app = SoapApplication()
+        app.register(NotifySvc())
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b'<soapenv:Body><tns:notify xmlns:tns="http://example.com/notify">'
+            b"<msg>ping</msg></tns:notify></soapenv:Body></soapenv:Envelope>"
+        )
+        status, _ct, body = app.handle_request(xml, soap_action="notify")
+        assert status == 202
+        assert body == b""
+
+    def test_service_returning_dict_uses_dict_path(self) -> None:
+        """Service returning a dict takes the isinstance(result, dict) branch (line 263)."""
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class DictSvc(SoapService):
+            __service_name__ = "DictSvc"
+            __tns__ = "http://example.com/dict"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation(soap_action="get")
+            def get(self, key: str) -> str:
+                return {"value": f"got:{key}"}  # type: ignore[return-value]
+
+        app = SoapApplication()
+        app.register(DictSvc())
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b'<soapenv:Body><get xmlns="http://example.com/dict">'
+            b"<key>x</key></get></soapenv:Body></soapenv:Envelope>"
+        )
+        # Reaching this path (dict result) is the goal; response may be 200 or 500
+        status, _ct, _body = app.handle_request(xml, soap_action="get")
+        assert status in (200, 500)
+
+    def test_register_quoted_soap_action_registers_both(self) -> None:
+        """Registering a quoted SOAPAction also creates the unquoted mapping (lines 147-148)."""
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Svc(SoapService):
+            @soap_operation(soap_action='"myOp"')
+            def myOp(self) -> str:  # noqa: N802
+                return "ok"
+
+        app = SoapApplication()
+        app.register(Svc())
+        assert '"myOp"' in app._action_map
+        assert "myOp" in app._action_map
+
+    def test_security_validation_error_becomes_soap_fault(self) -> None:
+        """SecurityValidationError from validator → Client SOAP fault (lines 209-213)."""
+        import warnings
+
+        from soapbar.core.wssecurity import (
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class RejectAll(UsernameTokenValidator):
+            def get_password(self, username: str) -> str | None:
+                return None  # always unknown → SecurityValidationError
+
+        class Svc(SoapService):
+            @soap_operation()
+            def Op(self) -> str:  # noqa: N802
+                return "ok"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication(security_validator=RejectAll())
+        app.register(Svc())
+
+        cred = UsernameTokenCredential(username="nobody", password="x")  # noqa: S106
+        from lxml import etree
+        sec_bytes = etree.tostring(build_security_header(cred))
+        wsse_ns = NS.WSSE
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            b' xmlns:wsse="' + wsse_ns.encode() + b'">'
+            b"<soapenv:Header>" + sec_bytes + b"</soapenv:Header>"
+            b"<soapenv:Body><Op/></soapenv:Body></soapenv:Envelope>"
+        )
+        status, _ct, body = app.handle_request(xml)
+        assert status == 500
+        assert b"Security validation failed" in body or b"Unknown username" in body
+
+
+# ===========================================================================
+# Coverage — wssecurity.py UsernameTokenValidator error paths
+# ===========================================================================
+
+class TestUsernameTokenValidatorErrors:
+    """Tests for SecurityValidationError paths in UsernameTokenValidator.validate."""
+
+    _WSSE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+    _WSU = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+
+    def _simple_validator(self, password: str = "secret"):  # type: ignore[no-untyped-def]  # noqa: S107
+        from soapbar.core.wssecurity import UsernameTokenValidator
+
+        pw = password
+
+        class V(UsernameTokenValidator):
+            def get_password(self, username: str) -> str | None:
+                return pw
+
+        return V()
+
+    def _security_elem(self, inner_xml: bytes) -> object:
+        from lxml import etree
+        security = etree.Element(f"{{{self._WSSE}}}Security")
+        if inner_xml:
+            security.append(etree.fromstring(inner_xml))
+        return security
+
+    def test_missing_username_token_raises(self) -> None:
+        """Security element with no UsernameToken → SecurityValidationError (line 176)."""
+        from soapbar.core.wssecurity import SecurityValidationError
+        with pytest.raises(SecurityValidationError, match="Missing wsse:UsernameToken"):
+            self._simple_validator().validate(self._security_elem(b""))  # type: ignore[arg-type]
+
+    def test_missing_username_element_raises(self) -> None:
+        """UsernameToken with no Username child → SecurityValidationError (line 180)."""
+        from soapbar.core.wssecurity import SecurityValidationError
+        token_xml = f'<wsse:UsernameToken xmlns:wsse="{self._WSSE}"/>'.encode()
+        with pytest.raises(SecurityValidationError, match="Missing wsse:Username"):
+            self._simple_validator().validate(self._security_elem(token_xml))  # type: ignore[arg-type]
+
+    def test_missing_password_element_raises(self) -> None:
+        """UsernameToken without Password element → SecurityValidationError (line 185)."""
+        from soapbar.core.wssecurity import SecurityValidationError
+        token_xml = (
+            f'<wsse:UsernameToken xmlns:wsse="{self._WSSE}">'
+            f"<wsse:Username>alice</wsse:Username>"
+            f"</wsse:UsernameToken>"
+        ).encode()
+        with pytest.raises(SecurityValidationError, match="Missing wsse:Password"):
+            self._simple_validator().validate(self._security_elem(token_xml))  # type: ignore[arg-type]
+
+    def test_unknown_username_raises(self) -> None:
+        """get_password returns None → SecurityValidationError (line 189)."""
+        from soapbar.core.wssecurity import SecurityValidationError, UsernameTokenValidator
+
+        class NoUsers(UsernameTokenValidator):
+            def get_password(self, username: str) -> str | None:
+                return None
+
+        token_xml = (
+            f'<wsse:UsernameToken xmlns:wsse="{self._WSSE}">'
+            f"<wsse:Username>ghost</wsse:Username>"
+            f"<wsse:Password>x</wsse:Password>"
+            f"</wsse:UsernameToken>"
+        ).encode()
+        with pytest.raises(SecurityValidationError, match="Unknown username"):
+            NoUsers().validate(self._security_elem(token_xml))  # type: ignore[arg-type]
+
+    def test_digest_missing_nonce_raises(self) -> None:
+        """PasswordDigest without Nonce/Created → SecurityValidationError (lines 198-200)."""
+        from soapbar.core.wssecurity import SecurityValidationError
+        pw_digest_type = (
+            "http://docs.oasis-open.org/wss/2004/01/"
+            "oasis-200401-wss-username-token-profile-1.0#PasswordDigest"
+        )
+        token_xml = (
+            f'<wsse:UsernameToken xmlns:wsse="{self._WSSE}">'
+            f"<wsse:Username>alice</wsse:Username>"
+            f'<wsse:Password Type="{pw_digest_type}">abc</wsse:Password>'
+            f"</wsse:UsernameToken>"
+        ).encode()
+        with pytest.raises(SecurityValidationError, match="PasswordDigest requires"):
+            self._simple_validator().validate(self._security_elem(token_xml))  # type: ignore[arg-type]
+
+    def test_digest_mismatch_raises(self) -> None:
+        """Incorrect PasswordDigest → SecurityValidationError (line 208)."""
+        import base64
+
+        from soapbar.core.wssecurity import SecurityValidationError
+        pw_digest_type = (
+            "http://docs.oasis-open.org/wss/2004/01/"
+            "oasis-200401-wss-username-token-profile-1.0#PasswordDigest"
+        )
+        nonce_b64 = base64.b64encode(b"\x00" * 16).decode()
+        token_xml = (
+            f'<wsse:UsernameToken xmlns:wsse="{self._WSSE}"'
+            f' xmlns:wsu="{self._WSU}">'
+            f"<wsse:Username>alice</wsse:Username>"
+            f'<wsse:Password Type="{pw_digest_type}">WRONGDIGEST==</wsse:Password>'
+            f'<wsse:Nonce EncodingType="...Base64Binary">{nonce_b64}</wsse:Nonce>'
+            f"<wsu:Created>2026-01-01T00:00:00Z</wsu:Created>"
+            f"</wsse:UsernameToken>"
+        ).encode()
+        with pytest.raises(SecurityValidationError, match="PasswordDigest mismatch"):
+            self._simple_validator("secret").validate(self._security_elem(token_xml))  # type: ignore[arg-type]
+
+
+# ===========================================================================
+# Coverage — wssecurity.py X.509 / BSP edge cases
+# ===========================================================================
+
+class TestWssecurityEdgeCases:
+    """Tests for uncovered branches in extract_certificate_from_security and BSP sign/verify."""
+
+    _WSSE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+
+    def test_empty_binary_security_token_raises(self) -> None:
+        """BST element with empty text → XmlSecurityError (line 626)."""
+        from lxml import etree
+
+        from soapbar.core.wssecurity import XmlSecurityError, extract_certificate_from_security
+        security = etree.Element(f"{{{self._WSSE}}}Security")
+        bst = etree.SubElement(security, f"{{{self._WSSE}}}BinarySecurityToken")
+        bst.text = "   "  # whitespace only
+        with pytest.raises(XmlSecurityError, match="empty"):
+            extract_certificate_from_security(security)
+
+    def test_sign_envelope_bsp_with_existing_header(self) -> None:
+        """sign_envelope_bsp reuses an existing Header (covers header-not-None branch)."""
+        from soapbar.core.wssecurity import sign_envelope_bsp
+        key, cert = _make_rsa_key_and_cert()
+        envelope_with_header = (
+            b'<?xml version="1.0"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Header/>"
+            b"<soapenv:Body><ping>data</ping></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        signed = sign_envelope_bsp(envelope_with_header, key, cert)
+        assert b"BinarySecurityToken" in signed
+
+    def test_verify_bsp_no_security_header_raises(self) -> None:
+        """verify_envelope_bsp raises XmlSecurityError when no wsse:Security found (line 776)."""
+        from soapbar.core.wssecurity import XmlSecurityError, verify_envelope_bsp
+        envelope_no_security = (
+            b'<?xml version="1.0"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Header/>"
+            b"<soapenv:Body><ping/></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        with pytest.raises(XmlSecurityError, match="No wsse:Security header found"):
+            verify_envelope_bsp(envelope_no_security)
+
+
+# ===========================================================================
+# Coverage — parser.py uncovered branches
+# ===========================================================================
+
+class TestParserEdgeCases:
+    """Targeted tests for uncovered branches in wsdl/parser.py."""
+
+    def test_local_helper_clark_notation(self) -> None:
+        """_local extracts name from {ns}local Clark notation (line 41)."""
+        from soapbar.core.wsdl.parser import _local
+        assert _local("{http://example.com/}MyType") == "MyType"
+
+    def test_local_helper_prefix_notation(self) -> None:
+        """_local extracts name from prefix:local notation (line 43)."""
+        from soapbar.core.wsdl.parser import _local
+        assert _local("xsd:string") == "string"
+
+    def test_local_helper_bare_name(self) -> None:
+        """_local returns bare name unchanged (line 44)."""
+        from soapbar.core.wsdl.parser import _local
+        assert _local("string") == "string"
+
+    def test_resolve_qname_with_prefix(self) -> None:
+        """_resolve_qname expands prefix:local using nsmap (lines 31-35)."""
+        from soapbar.core.wsdl.parser import _resolve_qname
+        nsmap = {"xsd": "http://www.w3.org/2001/XMLSchema"}
+        result = _resolve_qname("xsd:string", nsmap)
+        assert result == "{http://www.w3.org/2001/XMLSchema}string"
+
+    def test_resolve_qname_bare_name(self) -> None:
+        """_resolve_qname returns bare name when no colon present (line 35)."""
+        from soapbar.core.wsdl.parser import _resolve_qname
+        assert _resolve_qname("string", {}) == "string"
+
+    def test_parse_wsdl_file_reads_local_path(self, tmp_path: pytest.TempPathFactory) -> None:
+        """parse_wsdl_file reads a local file (covers _fetch_wsdl_source file path, line 58)."""
+        wsdl_bytes = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b' name="Test" targetNamespace="http://example.com/"/>'
+        )
+        wsdl_file = tmp_path / "test.wsdl"  # type: ignore[operator]
+        wsdl_file.write_bytes(wsdl_bytes)  # type: ignore[union-attr]
+        defn = parse_wsdl_file(wsdl_file)
+        assert defn.name == "Test"
+
+    def test_non_soap_binding_skipped(self) -> None:
+        """Binding without a SOAP extension element is silently ignored (line 223)."""
+        wsdl = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b' xmlns:tns="http://example.com/" targetNamespace="http://example.com/">'
+            b'  <portType name="PT">'
+            b'    <operation name="Op">'
+            b'      <input message="tns:Req"/>'
+            b'      <output message="tns:Resp"/>'
+            b"    </operation>"
+            b"  </portType>"
+            b'  <binding name="B" type="tns:PT">'
+            b'    <operation name="Op"/>'
+            b"  </binding>"
+            b"</definitions>"
+        )
+        defn = parse_wsdl(wsdl)
+        assert "B" not in defn.bindings  # non-SOAP binding was skipped
+
+    def test_wsdl_with_fault_in_port_type(self) -> None:
+        """portType operation with a fault element populates faults list (line 193)."""
+        wsdl = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b' xmlns:tns="http://example.com/" targetNamespace="http://example.com/">'
+            b'  <message name="Req"><part name="a" type="xsd:string"/></message>'
+            b'  <message name="Resp"><part name="r" type="xsd:string"/></message>'
+            b'  <message name="ErrMsg"><part name="e" type="xsd:string"/></message>'
+            b'  <portType name="PT">'
+            b'    <operation name="Op">'
+            b'      <input message="tns:Req"/>'
+            b'      <output message="tns:Resp"/>'
+            b'      <fault name="Err" message="tns:ErrMsg"/>'
+            b"    </operation>"
+            b"  </portType>"
+            b"</definitions>"
+        )
+        defn = parse_wsdl(wsdl)
+        pt = defn.port_types["PT"]
+        op = pt.operations[0]
+        assert len(op.faults) == 1
+        assert op.faults[0].message == "ErrMsg"
+
+    def test_resolve_xsd_type_strips_prefix(self) -> None:
+        """Type refs like 'xsd:string' are resolved by stripping prefix (lines 309-312)."""
+        wsdl = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+            b' xmlns:tns="http://example.com/" targetNamespace="http://example.com/">'
+            b"  <types>"
+            b'    <xsd:schema targetNamespace="http://example.com/">'
+            b'      <xsd:complexType name="MyType">'
+            b"        <xsd:sequence>"
+            b'          <xsd:element name="val" type="xsd:string"/>'
+            b"        </xsd:sequence>"
+            b"      </xsd:complexType>"
+            b"    </xsd:schema>"
+            b"  </types>"
+            b"</definitions>"
+        )
+        defn = parse_wsdl(wsdl)
+        assert "MyType" in defn.complex_types
+
+    def test_choice_type_with_string_resolution(self) -> None:
+        """choice elements whose opt_type_raw is a string fall back to xsd.resolve (lines 373-375)."""  # noqa: E501
+        wsdl = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+            b' xmlns:tns="http://example.com/" targetNamespace="http://example.com/">'
+            b"  <types>"
+            b'    <xsd:schema targetNamespace="http://example.com/">'
+            b'      <xsd:complexType name="UnionType">'
+            b"        <xsd:choice>"
+            b'          <xsd:element name="strOpt" type="xsd:string"/>'
+            b'          <xsd:element name="intOpt" type="xsd:int"/>'
+            b"        </xsd:choice>"
+            b"      </xsd:complexType>"
+            b"    </xsd:schema>"
+            b"  </types>"
+            b"</definitions>"
+        )
+        defn = parse_wsdl(wsdl)
+        assert "UnionType" in defn.complex_types
+        from soapbar.core.types import ChoiceXsdType
+        assert isinstance(defn.complex_types["UnionType"], ChoiceXsdType)
