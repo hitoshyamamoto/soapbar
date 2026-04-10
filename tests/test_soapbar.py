@@ -1064,7 +1064,9 @@ class TestClient:
 
 class TestPackage:
     def test_version(self) -> None:
-        assert soapbar.__version__ == "0.1.0"
+        # __version__ is derived from package metadata; just verify it's a non-empty string
+        assert isinstance(soapbar.__version__, str)
+        assert soapbar.__version__ != ""
 
     def test_ns_accessible(self) -> None:
         assert soapbar.NS.SOAP_ENV == NS.SOAP_ENV

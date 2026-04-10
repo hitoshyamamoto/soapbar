@@ -1,7 +1,11 @@
 """soapbar — Python SOAP toolkit."""
 from __future__ import annotations
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _version
+    __version__: str = _version("soapbar")
+except Exception:
+    __version__ = "unknown"
 
 # Core
 from soapbar.client.client import SoapClient
