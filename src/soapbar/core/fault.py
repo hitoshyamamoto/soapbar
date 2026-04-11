@@ -108,11 +108,18 @@ class SoapFault(Exception):  # noqa: N818
                 detail_elem.append(self.detail)
         return fault
 
-    def to_soap11_envelope(self) -> _Element:
+    def to_soap11_envelope(
+        self,
+        header_blocks: list[_Element] | None = None,
+    ) -> _Element:
         env = make_element(
             f"{{{NS.SOAP_ENV}}}Envelope",
             nsmap={"soapenv": NS.SOAP_ENV},
         )
+        if header_blocks:
+            header = sub_element(env, f"{{{NS.SOAP_ENV}}}Header")
+            for block in header_blocks:
+                header.append(block)
         body = sub_element(env, f"{{{NS.SOAP_ENV}}}Body")
         body.append(self.to_soap11_element())
         return env
