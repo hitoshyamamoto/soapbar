@@ -3535,6 +3535,69 @@ class TestWsdlCircularImportGuard:
         assert defn.name == "CircularA"
 
 
+class TestWsdlStrictMode:
+    """Tests for parse_wsdl(strict=True/False) and parse_wsdl_file(strict=...)."""
+
+    _WSDL_WITH_BAD_IMPORT = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             targetNamespace="urn:test" name="Test">
+  <import location="/nonexistent/path.wsdl" namespace="urn:other"/>
+</definitions>"""
+
+    def test_strict_true_raises_on_bad_import(self) -> None:
+        """Default strict=True raises on unresolvable import."""
+        with pytest.raises(FileNotFoundError):
+            parse_wsdl(self._WSDL_WITH_BAD_IMPORT)
+
+    def test_strict_false_warns_and_continues(self) -> None:
+        """strict=False emits a UserWarning and returns a partial definition."""
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            defn = parse_wsdl(self._WSDL_WITH_BAD_IMPORT, strict=False)
+        assert any("WSDL import failed" in str(warning.message) for warning in w)
+        assert defn.name == "Test"
+
+    def test_strict_false_partial_definition_returned(self) -> None:
+        """Non-strict parse returns a WsdlDefinition even with broken imports."""
+        import warnings
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            defn = parse_wsdl(self._WSDL_WITH_BAD_IMPORT, strict=False)
+        assert defn.target_namespace == "urn:test"
+
+    def test_strict_true_is_default(self) -> None:
+        """Calling without strict= behaves as strict=True."""
+        with pytest.raises(FileNotFoundError):
+            parse_wsdl(self._WSDL_WITH_BAD_IMPORT)
+
+    def test_parse_wsdl_file_strict_false(self, tmp_path: pytest.TempPathFactory) -> None:  # type: ignore[override]
+        """parse_wsdl_file(strict=False) passes strict flag through."""
+        import warnings
+        wsdl_file = tmp_path / "bad_import.wsdl"  # type: ignore[operator]
+        wsdl_file.write_bytes(self._WSDL_WITH_BAD_IMPORT)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            defn = parse_wsdl_file(wsdl_file, strict=False)
+        assert any("WSDL import failed" in str(warning.message) for warning in w)
+        assert defn.name == "Test"
+
+    def test_ssrf_guard_always_enforced(self) -> None:
+        """SSRF ValueError is always raised even with strict=False."""
+        wsdl = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             targetNamespace="urn:test" name="Test">
+  <import location="https://evil.example.com/evil.wsdl" namespace="urn:evil"/>
+</definitions>"""
+        import warnings
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            # SSRF guard (ValueError) is not a fetch failure — it raises before
+            # any network call, so strict=False must NOT suppress it.
+            with pytest.raises(ValueError, match="SSRF"):
+                parse_wsdl(wsdl, strict=False)
+
+
 class TestAsyncTransportMtomCheck:
     def test_send_async_decodes_mtom_response(self) -> None:
         """send_async() now decodes MTOM responses instead of raising."""
@@ -6404,3 +6467,164 @@ class TestEnvelopeStructureValidation:
         )
         with pytest.raises(SoapFault, match="Header must appear before Body"):
             SoapEnvelope.from_xml(xml)
+
+
+# ===========================================================================
+# N03 — SOAP 1.1 mustUnderstand="true" is NOT valid (only "1")
+# ===========================================================================
+
+class TestMustUnderstandVersionAwareness:
+    """N03: SOAP 1.1 §4.2.3 — only '1' is valid for mustUnderstand.
+    'true' is only valid in SOAP 1.2 (xs:boolean lexical space)."""
+
+    def test_soap11_mu_true_not_treated_as_must_understand(self) -> None:
+        """SOAP 1.1 with mustUnderstand='true' should NOT be treated as mandatory."""
+        from soapbar.core.envelope import SoapEnvelope
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Header>"
+            b'<ns:X xmlns:ns="http://example.com/" soapenv:mustUnderstand="true">v</ns:X>'
+            b"</soapenv:Header>"
+            b"<soapenv:Body><op/></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert not env.header_blocks[0].must_understand, (
+            "SOAP 1.1 mustUnderstand='true' should NOT be treated as mandatory"
+        )
+
+    def test_soap11_mu_1_treated_as_must_understand(self) -> None:
+        from soapbar.core.envelope import SoapEnvelope
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Header>"
+            b'<ns:X xmlns:ns="http://example.com/" soapenv:mustUnderstand="1">v</ns:X>'
+            b"</soapenv:Header>"
+            b"<soapenv:Body><op/></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert env.header_blocks[0].must_understand
+
+    def test_soap12_mu_true_treated_as_must_understand(self) -> None:
+        """SOAP 1.2 §5.2.3 — 'true' IS valid for mustUnderstand."""
+        from soapbar.core.envelope import SoapEnvelope
+        xml = (
+            b'<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">'
+            b"<soap12:Header>"
+            b'<ns:X xmlns:ns="http://example.com/" soap12:mustUnderstand="true">v</ns:X>'
+            b"</soap12:Header>"
+            b"<soap12:Body><op/></soap12:Body>"
+            b"</soap12:Envelope>"
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert env.header_blocks[0].must_understand
+
+
+# ===========================================================================
+# N10 — call_async() includes WS-Security header
+# ===========================================================================
+
+class TestCallAsyncWsSecurity:
+    """N10: call_async() must inject WS-Security header when wss_credential is set."""
+
+    def test_call_async_includes_security_header(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from soapbar.client.client import SoapClient
+        from soapbar.core.envelope import SoapEnvelope, SoapVersion
+        from soapbar.core.wssecurity import UsernameTokenCredential
+
+        cred = UsernameTokenCredential(username="alice", password="pw")  # noqa: S106
+        client = SoapClient.manual(
+            address="http://test:8000/soap",
+            wss_credential=cred,
+            soap_version=SoapVersion.SOAP_11,
+        )
+
+        # Capture the bytes sent by call_async
+        captured: dict[str, bytes] = {}
+
+        async def _mock_send(_url: str, body: bytes, _hdrs: dict) -> tuple:
+            captured["body"] = body
+            # Return a minimal fault so _parse_response doesn't crash on empty
+            resp = (
+                b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+                b"<soapenv:Body>"
+                b"<soapenv:Fault>"
+                b"<faultcode>soapenv:Server</faultcode>"
+                b"<faultstring>test</faultstring>"
+                b"</soapenv:Fault>"
+                b"</soapenv:Body>"
+                b"</soapenv:Envelope>"
+            )
+            return 500, "text/xml", resp
+
+        client._transport.send_async = AsyncMock(side_effect=_mock_send)
+
+        import asyncio
+
+        from soapbar.core.fault import SoapFault
+        with pytest.raises(SoapFault):
+            asyncio.run(client.call_async("SomeOp"))
+
+        assert "body" in captured
+        env = SoapEnvelope.from_xml(captured["body"])
+        assert env.ws_security_element is not None, (
+            "call_async() must inject wsse:Security header"
+        )
+
+
+# ===========================================================================
+# N12 — WSGI 202 status text
+# ===========================================================================
+
+class TestWsgi202StatusText:
+    """N12: WSGI adapter must return '202 Accepted' for one-way MEP, not '202 Error'."""
+
+    def test_one_way_wsgi_returns_202_accepted(self) -> None:
+        import warnings
+
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        class _Svc(SoapService):
+            __tns__ = "http://example.com/test"
+
+            @soap_operation(one_way=True)
+            def fire(self, msg: str) -> None:
+                pass
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication()
+        app.register(_Svc())
+        wsgi = WsgiSoapApp(app)
+
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body>"
+            b'<tns:fire xmlns:tns="http://example.com/test"><msg>hello</msg></tns:fire>'
+            b"</soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+
+        captured_status: list[str] = []
+
+        def start_response(status: str, headers: list) -> None:
+            captured_status.append(status)
+
+        from io import BytesIO
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "QUERY_STRING": "",
+            "CONTENT_TYPE": "text/xml",
+            "CONTENT_LENGTH": str(len(xml)),
+            "wsgi.input": BytesIO(xml),
+            "HTTP_SOAPACTION": "",
+        }
+        wsgi(environ, start_response)
+        assert captured_status[0] == "202 Accepted", (
+            f"Expected '202 Accepted', got {captured_status[0]!r}"
+        )

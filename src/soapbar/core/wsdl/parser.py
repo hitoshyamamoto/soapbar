@@ -71,6 +71,7 @@ def parse_wsdl(
     base_url: str | None = None,
     _visited: set[str] | None = None,
     allow_remote_imports: bool = False,
+    strict: bool = True,
 ) -> WsdlDefinition:
     """Parse a WSDL document from *source*.
 
@@ -79,6 +80,14 @@ def parse_wsdl(
     It defaults to ``False`` to prevent Server-Side Request Forgery (SSRF)
     when parsing WSDLs from untrusted sources.  Set it to ``True`` only when
     the WSDL originates from a trusted location and remote imports are expected.
+
+    *strict* (default ``True``) controls error handling for import resolution
+    failures.  When ``False``, a failed ``wsdl:import`` emits a
+    ``UserWarning`` and is skipped rather than raising an exception.  This is
+    useful for parsing real-world WSDLs from SAP, Oracle, or government
+    services that reference unavailable or locally absent import targets.
+    Note: the SSRF guard (blocking remote imports) is always enforced
+    regardless of this flag.
     """
     if _visited is None:
         _visited = set()
@@ -104,13 +113,24 @@ def parse_wsdl(
                     )
                 if resolved not in _visited:
                     _visited.add(resolved)
-                    imported = parse_wsdl(
-                        _fetch_wsdl_source(resolved),
-                        base_url=resolved,
-                        _visited=_visited,
-                        allow_remote_imports=allow_remote_imports,
-                    )
-                    _merge_definition(defn, imported)
+                    try:
+                        imported = parse_wsdl(
+                            _fetch_wsdl_source(resolved),
+                            base_url=resolved,
+                            _visited=_visited,
+                            allow_remote_imports=allow_remote_imports,
+                            strict=strict,
+                        )
+                        _merge_definition(defn, imported)
+                    except Exception as exc:
+                        if strict:
+                            raise
+                        import warnings
+                        warnings.warn(
+                            f"WSDL import failed (strict=False, skipping): "
+                            f"{resolved!r} — {exc}",
+                            stacklevel=2,
+                        )
             # namespace-only import (no location=) is silently skipped
 
         elif lname == "types":
@@ -142,9 +162,9 @@ def parse_wsdl(
     return defn
 
 
-def parse_wsdl_file(path: str | Path) -> WsdlDefinition:
+def parse_wsdl_file(path: str | Path, strict: bool = True) -> WsdlDefinition:
     p = Path(path)
-    return parse_wsdl(p, base_url=p.resolve().parent.as_uri() + "/")
+    return parse_wsdl(p, base_url=p.resolve().parent.as_uri() + "/", strict=strict)
 
 
 # ---------------------------------------------------------------------------
