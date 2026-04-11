@@ -5564,3 +5564,427 @@ class TestParserCoverageRound2:
         defn = parse_wsdl(wsdl)
         # No arrayType found → _parse_complex_type_element returns None → not in complex_types
         assert "NoArray" not in defn.complex_types
+
+
+# ===========================================================================
+# Client module — SoapClient and HttpTransport
+# ===========================================================================
+
+# Minimal SOAP 1.1 WSDL with one operation (reuses address from SIMPLE_WSDL)
+_CLIENT_WSDL = SIMPLE_WSDL  # rpc/encoded Calculator service
+
+# Minimal WSDL with a SOAP 1.2 binding
+_SOAP12_WSDL = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/"
+             xmlns:tns="http://example.com/s12"
+             targetNamespace="http://example.com/s12"
+             name="S12Svc">
+  <message name="PingReq"><part name="x" type="xsd:string"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"/></message>
+  <message name="PingResp"><part name="r" type="xsd:string"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"/></message>
+  <portType name="S12PT">
+    <operation name="Ping">
+      <input message="tns:PingReq"/>
+      <output message="tns:PingResp"/>
+    </operation>
+  </portType>
+  <binding name="S12Binding" type="tns:S12PT">
+    <soap12:binding style="document"
+        transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Ping">
+      <soap12:operation soapAction="Ping"/>
+      <input><soap12:body use="literal"/></input>
+      <output><soap12:body use="literal"/></output>
+    </operation>
+  </binding>
+  <service name="S12Svc">
+    <port name="S12Port" binding="tns:S12Binding">
+      <soap12:address location="http://example.com/s12"/>
+    </port>
+  </service>
+</definitions>"""
+
+
+def _build_soap11_response(op_name: str, result_tag: str, result_value: str) -> bytes:
+    """Construct a minimal SOAP 1.1 response envelope."""
+    return (
+        b'<?xml version="1.0" encoding="utf-8"?>'
+        b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+        b"<soapenv:Body>"
+        b"<" + op_name.encode() + b"Response>"
+        b"<" + result_tag.encode() + b">"
+        + result_value.encode()
+        + b"</" + result_tag.encode() + b">"
+        b"</" + op_name.encode() + b"Response>"
+        b"</soapenv:Body></soapenv:Envelope>"
+    )
+
+
+def _build_soap11_fault(code: str, message: str) -> bytes:
+    return (
+        b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+        b"<soapenv:Body><soapenv:Fault>"
+        b"<faultcode>" + code.encode() + b"</faultcode>"
+        b"<faultstring>" + message.encode() + b"</faultstring>"
+        b"</soapenv:Fault></soapenv:Body></soapenv:Envelope>"
+    )
+
+
+class TestSoapClientConstruction:
+    """SoapClient construction and WSDL initialisation."""
+
+    def test_from_wsdl_string_sets_address_and_wsdl(self) -> None:
+        """from_wsdl_string parses WSDL and sets _address."""
+        from soapbar.client.client import SoapClient
+
+        client = SoapClient.from_wsdl_string(_CLIENT_WSDL)
+        assert client._wsdl is not None
+        assert client._address == "http://example.com/calc"
+
+    def test_from_wsdl_string_soap12_sets_version(self) -> None:
+        """from_wsdl_string with SOAP 1.2 WSDL sets _soap_version to SOAP_12."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.envelope import SoapVersion
+
+        client = SoapClient.from_wsdl_string(_SOAP12_WSDL)
+        assert client._soap_version == SoapVersion.SOAP_12
+
+    def test_from_file_reads_wsdl_from_disk(self, tmp_path: pytest.TempPathFactory) -> None:
+        """from_file initialises client from a WSDL file on disk (lines 66-80)."""
+        from soapbar.client.client import SoapClient
+
+        p = tmp_path / "calc.wsdl"  # type: ignore[operator]
+        p.write_bytes(_CLIENT_WSDL)  # type: ignore[union-attr]
+        client = SoapClient.from_file(p)
+        assert client._wsdl is not None
+        assert client._address == "http://example.com/calc"
+
+    def test_manual_sets_address_and_defaults(self) -> None:
+        """SoapClient.manual() sets address and binding style without parsing WSDL."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import BindingStyle
+
+        client = SoapClient.manual("http://example.com/soap")
+        assert client._address == "http://example.com/soap"
+        assert client._wsdl is None
+        assert client._binding_style == BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+    def test_init_with_wsdl_url_fetches_via_transport(self) -> None:
+        """SoapClient(wsdl_url=...) calls transport.fetch and parses (lines 36-51)."""
+        from unittest.mock import MagicMock
+
+        from soapbar.client.client import SoapClient
+
+        transport = MagicMock()
+        transport.fetch.return_value = _CLIENT_WSDL
+        client = SoapClient(wsdl_url="http://example.com/service?wsdl", transport=transport)
+        transport.fetch.assert_called_once_with("http://example.com/service?wsdl")
+        assert client._address == "http://example.com/calc"
+
+    def test_init_from_wsdl_no_binding_keeps_defaults(self) -> None:
+        """_init_from_wsdl with no bindings leaves _binding_style at its default (57->exit)."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import BindingStyle
+
+        no_binding_wsdl = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b' targetNamespace="http://example.com/"/>'
+        )
+        client = SoapClient.from_wsdl_string(no_binding_wsdl)
+        assert client._binding_style == BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+    def test_register_operation_adds_to_signatures(self) -> None:
+        """register_operation stores the sig so _get_sig finds it."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import OperationSignature
+
+        client = SoapClient.manual("http://example.com/")
+        sig = OperationSignature(name="MyOp")
+        client.register_operation(sig)
+        assert client._get_sig("MyOp") is sig
+
+    def test_get_sig_unknown_op_returns_minimal_sig(self) -> None:
+        """_get_sig for an unknown operation returns a minimal OperationSignature."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import OperationSignature
+
+        client = SoapClient.manual("http://example.com/")
+        sig = client._get_sig("Unknown")
+        assert isinstance(sig, OperationSignature)
+        assert sig.name == "Unknown"
+
+    def test_add_attachment_returns_content_id(self) -> None:
+        """add_attachment queues an attachment and returns its content-ID."""
+        from soapbar.client.client import SoapClient
+
+        client = SoapClient.manual("http://example.com/", use_mtom=True)
+        cid = client.add_attachment(b"\x89PNG", "image/png", "my-img")
+        assert cid == "my-img"
+        assert client._mtom_attachments
+
+    def test_add_attachment_generates_cid_if_none(self) -> None:
+        """add_attachment auto-generates a content-ID when none is provided."""
+        from soapbar.client.client import SoapClient
+
+        client = SoapClient.manual("http://example.com/")
+        cid = client.add_attachment(b"data", "application/octet-stream")
+        assert "@soapbar" in cid
+
+
+class TestSoapClientCallCoverage:
+    """SoapClient.call() and _parse_response() — coverage-targeted tests."""
+
+    def _make_client_with_mock_transport(
+        self, response_bytes: bytes
+    ) -> tuple[object, object]:
+        """Return (client, mock_transport) wired to return *response_bytes*."""
+        from unittest.mock import MagicMock
+
+        from soapbar.client.client import SoapClient
+
+        transport = MagicMock()
+        transport.send.return_value = (200, "text/xml", response_bytes)
+        client = SoapClient.manual("http://example.com/soap", transport=transport)
+        return client, transport
+
+    def test_service_proxy_delegates_to_call(self) -> None:
+        """_ServiceProxy.__getattr__ builds a caller that invokes client.call (line 23)."""
+        from unittest.mock import MagicMock
+
+        from soapbar.client.client import SoapClient
+
+        client = SoapClient.manual("http://example.com/")
+        client.call = MagicMock(return_value="pong")  # type: ignore[method-assign]
+        result = client.service.ping(msg="hello")
+        client.call.assert_called_once_with("ping", msg="hello")
+        assert result == "pong"
+
+    def test_call_sends_request_and_returns_single_value(self) -> None:
+        """call() serialises, sends, and deserialises a single-value response."""
+        from soapbar.core.binding import OperationParameter, OperationSignature
+        from soapbar.core.types import xsd
+
+        resp_xml = _build_soap11_response("echo", "return", "hello")
+        client, transport = self._make_client_with_mock_transport(resp_xml)
+
+        sig = OperationSignature(
+            name="echo",
+            soap_action="echo",
+            output_params=[OperationParameter(name="return", xsd_type=xsd.resolve("string"))],
+        )
+        client.register_operation(sig)  # type: ignore[union-attr]
+        result = client.call("echo")  # type: ignore[union-attr]
+        assert result == "hello"
+        transport.send.assert_called_once()  # type: ignore[union-attr]
+
+    def test_call_with_wss_credential_adds_security_header(self) -> None:
+        """call() with wss_credential injects a wsse:Security header."""
+        import warnings
+
+        from soapbar.client.client import SoapClient
+        from soapbar.core.wssecurity import UsernameTokenCredential
+
+        resp_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body/></soapenv:Envelope>"
+        )
+        transport_mock = __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()
+        transport_mock.send.return_value = (200, "text/xml", resp_xml)
+
+        cred = UsernameTokenCredential(username="alice", password="secret")  # noqa: S106
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            client = SoapClient.manual(
+                "http://example.com/soap",
+                transport=transport_mock,
+                wss_credential=cred,
+            )
+        client.call("op")
+        _url, req_bytes, _headers = transport_mock.send.call_args[0]
+        assert b"wsse:Security" in req_bytes or b"Security" in req_bytes
+
+    def test_call_with_use_wsa_adds_wsa_headers(self) -> None:
+        """call() with use_wsa=True adds MessageID and Action headers."""
+        from soapbar.client.client import SoapClient
+
+        resp_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body/></soapenv:Envelope>"
+        )
+        from unittest.mock import MagicMock
+
+        transport = MagicMock()
+        transport.send.return_value = (200, "text/xml", resp_xml)
+        client = SoapClient.manual("http://example.com/", transport=transport, use_wsa=True)
+        client.call("op")
+        _url, req_bytes, _headers = transport.send.call_args[0]
+        assert b"MessageID" in req_bytes
+        assert b"Action" in req_bytes
+
+    def test_parse_response_fault_raises_soap_fault(self) -> None:
+        """_parse_response on a SOAP Fault re-raises SoapFault."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import OperationSignature
+        from soapbar.core.fault import SoapFault
+
+        client = SoapClient.manual("http://example.com/")
+        sig = OperationSignature(name="op")
+        fault_xml = _build_soap11_fault("Server", "Oops")
+        with pytest.raises(SoapFault):
+            client._parse_response(sig, fault_xml, 500)
+
+    def test_parse_response_empty_body_returns_none(self) -> None:
+        """_parse_response with empty Body returns None."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import OperationSignature
+
+        client = SoapClient.manual("http://example.com/")
+        sig = OperationSignature(name="op")
+        empty = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body/></soapenv:Envelope>"
+        )
+        assert client._parse_response(sig, empty, 200) is None
+
+    def test_parse_response_multi_value_returns_dict(self) -> None:
+        """_parse_response with >1 output values returns a dict."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import OperationParameter, OperationSignature
+        from soapbar.core.types import xsd
+
+        str_type = xsd.resolve("string")
+        sig = OperationSignature(
+            name="op",
+            output_params=[
+                OperationParameter(name="a", xsd_type=str_type),
+                OperationParameter(name="b", xsd_type=str_type),
+            ],
+        )
+        client = SoapClient.manual("http://example.com/")
+        resp_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><opResponse><a>x</a><b>y</b></opResponse></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        result = client._parse_response(sig, resp_xml, 200)
+        assert isinstance(result, dict)
+        assert result.get("a") == "x"
+
+    async def test_call_async_sends_and_parses(self) -> None:
+        """call_async() serialises request and parses async response."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from soapbar.client.client import SoapClient
+
+        resp_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body/></soapenv:Envelope>"
+        )
+        transport_mock = MagicMock()
+        transport_mock.send_async = AsyncMock(return_value=(200, "text/xml", resp_xml))
+        client = SoapClient.manual("http://example.com/soap", transport=transport_mock)
+        result = await client.call_async("op")
+        assert result is None  # empty body → None
+        transport_mock.send_async.assert_called_once()
+
+
+class TestHttpTransportCoverage:
+    """HttpTransport.send(), fetch(), and send_async() — coverage-targeted tests."""
+
+    def test_send_uses_httpx_when_available(self) -> None:
+        """send() routes to _send_httpx and returns (status, ct, body) (lines 20-24, 49-55)."""
+        from unittest.mock import MagicMock, patch
+
+        from soapbar.client.transport import HttpTransport
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = MagicMock()
+        mock_resp.headers.get.return_value = "text/xml; charset=utf-8"
+        mock_resp.content = b"<response/>"
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_ctx = mock_client_cls.return_value.__enter__.return_value
+            mock_ctx.post.return_value = mock_resp
+            transport = HttpTransport()
+            status, _ct, body = transport.send(
+                "http://example.com/soap", b"<req/>", {"Content-Type": "text/xml"}
+            )
+
+        assert status == 200
+        assert body == b"<response/>"
+
+    def test_send_urllib_fallback_on_http_error(self) -> None:
+        """_send_urllib catches HTTPError and returns error status (lines 70-72)."""
+        import urllib.error
+        import urllib.request
+        from unittest.mock import patch
+
+        from soapbar.client.transport import HttpTransport
+
+        # Simulate HTTPError from server (e.g. 500 with SOAP fault body)
+        error_body = b"<fault/>"
+        http_error = urllib.error.HTTPError(
+            url="http://x/",
+            code=500,
+            msg="Internal Server Error",
+            hdrs={"Content-Type": "text/xml"},  # type: ignore[arg-type]
+            fp=__import__("io").BytesIO(error_body),
+        )
+        http_error.read = lambda: error_body  # type: ignore[method-assign]
+        http_error.headers = {"Content-Type": "text/xml"}  # type: ignore[assignment]
+
+        transport = HttpTransport()
+        with (
+            patch.object(transport, "_send_httpx", side_effect=ImportError),
+            patch("urllib.request.urlopen", side_effect=http_error),
+        ):
+            status, _ct, body = transport.send("http://x/", b"<r/>", {})
+        assert status == 500
+        assert body == error_body
+
+    def test_fetch_uses_httpx_when_available(self) -> None:
+        """fetch() retrieves WSDL bytes via httpx.Client.get (lines 98-101)."""
+        from unittest.mock import MagicMock, patch
+
+        from soapbar.client.transport import HttpTransport
+
+        mock_resp = MagicMock()
+        mock_resp.content = b"<wsdl/>"
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_ctx = mock_client_cls.return_value.__enter__.return_value
+            mock_ctx.get.return_value = mock_resp
+            transport = HttpTransport()
+            result = transport.fetch("http://example.com/service?wsdl")
+
+        assert result == b"<wsdl/>"
+
+    async def test_send_async_uses_httpx_async_client(self) -> None:
+        """send_async() posts via httpx.AsyncClient and returns (status, ct, body)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from soapbar.client.transport import HttpTransport
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = MagicMock()
+        mock_resp.headers.get.return_value = "text/xml"
+        mock_resp.content = b"<resp/>"
+
+        with patch("httpx.AsyncClient") as mock_async_cls:
+            mock_ctx = MagicMock()
+            mock_async_cls.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
+            mock_async_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_ctx.post = AsyncMock(return_value=mock_resp)
+
+            transport = HttpTransport()
+            status, _ct, body = await transport.send_async(
+                "http://example.com/soap", b"<req/>", {}
+            )
+
+        assert status == 200
+        assert body == b"<resp/>"
