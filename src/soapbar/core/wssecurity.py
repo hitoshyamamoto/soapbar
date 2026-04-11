@@ -17,14 +17,14 @@ import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
 from typing import Any
 
 from lxml.etree import _Element
 
 from soapbar.core.namespaces import NS
 from soapbar.core.xml import make_element, sub_element
+
+UTC = timezone.utc
 
 # ---------------------------------------------------------------------------
 # Constants

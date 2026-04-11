@@ -69,6 +69,7 @@ warn_unreachable = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=soapbar --cov-report=term-missing -q"
+markers = ["integration: real-world WSDL parsing tests"]
 
 [tool.coverage.run]
 source  = ["soapbar"]

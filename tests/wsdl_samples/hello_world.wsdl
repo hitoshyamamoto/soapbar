@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Minimal hand-crafted WSDL covering edge cases:
+     - Mixed SOAP 1.1 and SOAP 1.2 bindings
+     - Optional message part (no element or type attribute on one part)
+     - RPC/Literal binding style
+     - Multiple port types
+-->
+<wsdl:definitions
+    xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+    xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/"
+    xmlns:tns="urn:hello"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    targetNamespace="urn:hello"
+    name="HelloWorld">
+
+  <wsdl:types>
+    <xsd:schema targetNamespace="urn:hello">
+      <xsd:element name="SayHelloRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="name" type="xsd:string"/>
+            <xsd:element name="language" type="xsd:string" minOccurs="0"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="SayHelloResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="greeting" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:schema>
+  </wsdl:types>
+
+  <!-- Document/Literal messages -->
+  <wsdl:message name="SayHelloIn">
+    <wsdl:part name="parameters" element="tns:SayHelloRequest"/>
+  </wsdl:message>
+  <wsdl:message name="SayHelloOut">
+    <wsdl:part name="parameters" element="tns:SayHelloResponse"/>
+  </wsdl:message>
+
+  <!-- RPC/Literal messages (typed parts) -->
+  <wsdl:message name="EchoIn">
+    <wsdl:part name="text" type="xsd:string"/>
+    <wsdl:part name="repeat" type="xsd:int"/>
+  </wsdl:message>
+  <wsdl:message name="EchoOut">
+    <wsdl:part name="result" type="xsd:string"/>
+  </wsdl:message>
+
+  <!-- Port type 1: Document/Literal -->
+  <wsdl:portType name="HelloPortType">
+    <wsdl:operation name="SayHello">
+      <wsdl:input message="tns:SayHelloIn"/>
+      <wsdl:output message="tns:SayHelloOut"/>
+    </wsdl:operation>
+  </wsdl:portType>
+
+  <!-- Port type 2: RPC/Literal -->
+  <wsdl:portType name="EchoPortType">
+    <wsdl:operation name="Echo">
+      <wsdl:input message="tns:EchoIn"/>
+      <wsdl:output message="tns:EchoOut"/>
+    </wsdl:operation>
+  </wsdl:portType>
+
+  <!-- SOAP 1.1 binding — Document/Literal -->
+  <wsdl:binding name="HelloSoap11" type="tns:HelloPortType">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="SayHello">
+      <soap:operation soapAction="urn:hello/SayHello"/>
+      <wsdl:input><soap:body use="literal"/></wsdl:input>
+      <wsdl:output><soap:body use="literal"/></wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+
+  <!-- SOAP 1.2 binding — Document/Literal -->
+  <wsdl:binding name="HelloSoap12" type="tns:HelloPortType">
+    <soap12:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="SayHello">
+      <soap12:operation soapAction="urn:hello/SayHello"/>
+      <wsdl:input><soap12:body use="literal"/></wsdl:input>
+      <wsdl:output><soap12:body use="literal"/></wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+
+  <!-- SOAP 1.1 binding — RPC/Literal -->
+  <wsdl:binding name="EchoSoap11" type="tns:EchoPortType">
+    <soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="Echo">
+      <soap:operation soapAction="urn:hello/Echo"/>
+      <wsdl:input><soap:body use="literal" namespace="urn:hello"/></wsdl:input>
+      <wsdl:output><soap:body use="literal" namespace="urn:hello"/></wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+
+  <wsdl:service name="HelloWorldService">
+    <wsdl:port name="HelloSoap11Port" binding="tns:HelloSoap11">
+      <soap:address location="http://localhost:8080/hello"/>
+    </wsdl:port>
+    <wsdl:port name="HelloSoap12Port" binding="tns:HelloSoap12">
+      <soap12:address location="http://localhost:8080/hello"/>
+    </wsdl:port>
+    <wsdl:port name="EchoSoap11Port" binding="tns:EchoSoap11">
+      <soap:address location="http://localhost:8080/echo"/>
+    </wsdl:port>
+  </wsdl:service>
+
+</wsdl:definitions>
