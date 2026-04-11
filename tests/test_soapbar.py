@@ -6007,3 +6007,400 @@ class TestHttpTransportCoverage:
 
         assert status == 200
         assert body == b"<resp/>"
+
+
+# ===========================================================================
+# N05 — wsu:Timestamp support
+# ===========================================================================
+
+class TestWsuTimestamp:
+    """Tests for wsu:Timestamp in build_security_header (N05) and expiry check in validate."""
+
+    _WSSE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+    _WSU  = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+
+    def test_timestamp_elements_present_when_ttl_set(self) -> None:
+        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
+        cred = UsernameTokenCredential(username="u", password="p")  # noqa: S106
+        sec = build_security_header(cred, timestamp_ttl=300)
+        ts = sec.find(f"{{{self._WSU}}}Timestamp")
+        assert ts is not None
+        assert ts.find(f"{{{self._WSU}}}Created") is not None
+        assert ts.find(f"{{{self._WSU}}}Expires") is not None
+
+    def test_no_timestamp_when_ttl_none(self) -> None:
+        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
+        cred = UsernameTokenCredential(username="u", password="p")  # noqa: S106
+        sec = build_security_header(cred)
+        assert sec.find(f"{{{self._WSU}}}Timestamp") is None
+
+    def test_expires_is_in_future(self) -> None:
+        from datetime import UTC, datetime
+
+        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
+        cred = UsernameTokenCredential(username="u", password="p")  # noqa: S106
+        sec = build_security_header(cred, timestamp_ttl=60)
+        ts = sec.find(f"{{{self._WSU}}}Timestamp")
+        assert ts is not None
+        exp = ts.find(f"{{{self._WSU}}}Expires")
+        assert exp is not None and exp.text is not None
+        expires = datetime.fromisoformat(exp.text.rstrip("Z")).replace(tzinfo=UTC)
+        assert expires > datetime.now(UTC)
+
+    def test_validate_rejects_expired_timestamp(self) -> None:
+        from soapbar.core.wssecurity import (
+            SecurityValidationError,
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+        cred = UsernameTokenCredential(username="alice", password="s3cr3t")  # noqa: S106
+        sec = build_security_header(cred)
+        # Manually inject an already-expired Timestamp
+        _wsu = self._WSU
+        from lxml import etree
+        ts = etree.SubElement(sec, f"{{{_wsu}}}Timestamp")
+        etree.SubElement(ts, f"{{{_wsu}}}Created").text = "2000-01-01T00:00:00Z"
+        etree.SubElement(ts, f"{{{_wsu}}}Expires").text = "2000-01-01T00:05:00Z"
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "s3cr3t" if u == "alice" else None
+
+        with pytest.raises(SecurityValidationError, match="expired"):
+            _V().validate(sec)
+
+    def test_validate_accepts_valid_timestamp(self) -> None:
+        from soapbar.core.wssecurity import (
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+        cred = UsernameTokenCredential(username="alice", password="s3cr3t")  # noqa: S106
+        sec = build_security_header(cred, timestamp_ttl=300)
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "s3cr3t" if u == "alice" else None
+
+        username = _V().validate(sec)
+        assert username == "alice"
+
+    def test_validate_rejects_invalid_expires_format(self) -> None:
+        from soapbar.core.wssecurity import (
+            SecurityValidationError,
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+        cred = UsernameTokenCredential(username="alice", password="s3cr3t")  # noqa: S106
+        sec = build_security_header(cred)
+        _wsu = self._WSU
+        from lxml import etree
+        ts = etree.SubElement(sec, f"{{{_wsu}}}Timestamp")
+        etree.SubElement(ts, f"{{{_wsu}}}Expires").text = "not-a-date"
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "s3cr3t" if u == "alice" else None
+
+        with pytest.raises(SecurityValidationError, match="Invalid wsu:Expires"):
+            _V().validate(sec)
+
+
+# ===========================================================================
+# N06 — PasswordText-over-HTTP warning
+# ===========================================================================
+
+class TestPasswordTextHttpWarning:
+    """N06: SoapApplication warns when security_validator is set over plain HTTP."""
+
+    def test_security_validator_http_emits_extra_warning(self) -> None:
+        import warnings
+
+        from soapbar.core.wssecurity import UsernameTokenValidator
+        from soapbar.server.application import SoapApplication
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return None
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            SoapApplication(
+                service_url="http://example.com/soap",
+                security_validator=_V(),
+            )
+        messages = [str(x.message) for x in w if issubclass(x.category, UserWarning)]
+        # Should have the general HTTP warning AND the PasswordText-specific warning
+        assert any("plain HTTP" in m for m in messages)
+        assert any("PasswordText" in m for m in messages)
+
+    def test_security_validator_https_no_passwordtext_warning(self) -> None:
+        import warnings
+
+        from soapbar.core.wssecurity import UsernameTokenValidator
+        from soapbar.server.application import SoapApplication
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return None
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            SoapApplication(
+                service_url="https://example.com/soap",
+                security_validator=_V(),
+            )
+        messages = [str(x.message) for x in w if issubclass(x.category, UserWarning)]
+        assert not any("PasswordText" in m for m in messages)
+
+
+# ===========================================================================
+# N07 — Nonce replay cache
+# ===========================================================================
+
+class TestNonceReplayCache:
+    """N07: UsernameTokenValidator rejects replayed nonces in PasswordDigest tokens."""
+
+    _WSSE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+    _WSU  = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+
+    def _make_digest_security(self, username: str = "alice", password: str = "pw") -> object:  # noqa: S107
+        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
+        cred = UsernameTokenCredential(
+            username=username,
+            password=password,
+            use_digest=True,
+            nonce=b"fixed-nonce-bytes",
+            created="2026-04-11T10:00:00Z",
+        )
+        return build_security_header(cred)
+
+    def test_first_use_of_nonce_succeeds(self) -> None:
+        from soapbar.core.wssecurity import UsernameTokenValidator
+        sec = self._make_digest_security()
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "pw" if u == "alice" else None
+
+        assert _V().validate(sec) == "alice"  # type: ignore[arg-type]
+
+    def test_replay_of_same_nonce_is_rejected(self) -> None:
+        from soapbar.core.wssecurity import SecurityValidationError, UsernameTokenValidator
+        sec = self._make_digest_security()
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "pw" if u == "alice" else None
+
+        v = _V()
+        v.validate(sec)  # type: ignore[arg-type]  # first use succeeds
+        with pytest.raises(SecurityValidationError, match="replay"):
+            v.validate(sec)  # type: ignore[arg-type]  # second use must fail
+
+    def test_different_nonces_both_accepted(self) -> None:
+        from soapbar.core.wssecurity import (
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "pw" if u == "alice" else None
+
+        v = _V()
+        for i in range(3):
+            nonce = f"nonce-{i}".encode()
+            cred = UsernameTokenCredential(
+                username="alice", password="pw", use_digest=True,  # noqa: S106
+                nonce=nonce, created="2026-04-11T10:00:00Z",
+            )
+            sec = build_security_header(cred)
+            assert v.validate(sec) == "alice"  # type: ignore[arg-type]
+
+
+# ===========================================================================
+# N09 — wsa:FaultTo EPR in fault responses
+# ===========================================================================
+
+_SIMPLE_SOAP11_WITH_WSA_FAULTTO = b"""
+<soapenv:Envelope
+    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:wsa="http://www.w3.org/2005/08/addressing">
+  <soapenv:Header>
+    <wsa:MessageID>urn:uuid:test-msg-id-001</wsa:MessageID>
+    <wsa:FaultTo>
+      <wsa:Address>http://client.example.com/faults</wsa:Address>
+    </wsa:FaultTo>
+    <wsa:Action>http://example.com/calc/add</wsa:Action>
+  </soapenv:Header>
+  <soapenv:Body>
+    <tns:unknownOp xmlns:tns="http://example.com/calc"/>
+  </soapenv:Body>
+</soapenv:Envelope>
+"""
+
+class TestFaultToEPR:
+    """N09: Fault responses include wsa:To (FaultTo) and wsa:RelatesTo headers."""
+
+    def _make_app(self) -> object:
+        import warnings
+
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class _Svc(SoapService):
+            __tns__ = "http://example.com/calc"
+            @soap_operation()
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication()
+        app.register(_Svc())
+        return app
+
+    def test_fault_response_contains_wsa_relatesto(self) -> None:
+        from lxml import etree
+        ns11 = "http://schemas.xmlsoap.org/soap/envelope/"
+        wsa  = "http://www.w3.org/2005/08/addressing"
+        app = self._make_app()
+        status, _ct, body = app.handle_request(  # type: ignore[union-attr]
+            _SIMPLE_SOAP11_WITH_WSA_FAULTTO
+        )
+        assert status == 500
+        root = etree.fromstring(body)
+        # Header should be present with wsa:RelatesTo pointing to the request MessageID
+        header = root.find(f"{{{ns11}}}Header")
+        assert header is not None
+        relates = header.find(f"{{{wsa}}}RelatesTo")
+        assert relates is not None
+        assert relates.text == "urn:uuid:test-msg-id-001"
+
+    def test_fault_response_wsa_to_is_fault_to_address(self) -> None:
+        from lxml import etree
+        ns11 = "http://schemas.xmlsoap.org/soap/envelope/"
+        wsa  = "http://www.w3.org/2005/08/addressing"
+        app = self._make_app()
+        _status, _ct, body = app.handle_request(  # type: ignore[union-attr]
+            _SIMPLE_SOAP11_WITH_WSA_FAULTTO
+        )
+        root = etree.fromstring(body)
+        header = root.find(f"{{{ns11}}}Header")
+        assert header is not None
+        to_elem = header.find(f"{{{wsa}}}To")
+        assert to_elem is not None
+        assert to_elem.text == "http://client.example.com/faults"
+
+    def test_fault_response_no_wsa_headers_without_wsa_request(self) -> None:
+        from lxml import etree
+        ns11 = "http://schemas.xmlsoap.org/soap/envelope/"
+        app = self._make_app()
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><unknownOp/></soapenv:Body></soapenv:Envelope>"
+        )
+        _status, _ct, body = app.handle_request(xml)  # type: ignore[union-attr]
+        root = etree.fromstring(body)
+        header = root.find(f"{{{ns11}}}Header")
+        assert header is None
+
+    def test_soap11_fault_envelope_with_header_blocks(self) -> None:
+        """to_soap11_envelope() with header_blocks emits a Header element (N09)."""
+        from lxml import etree
+
+        from soapbar.core.fault import SoapFault
+        from soapbar.core.namespaces import NS
+        wsa = NS.WSA
+        ns11 = NS.SOAP_ENV
+        rel = etree.Element(f"{{{wsa}}}RelatesTo")
+        rel.text = "urn:uuid:abc"
+        fault = SoapFault("Client", "bad")
+        env = fault.to_soap11_envelope(header_blocks=[rel])
+        header = env.find(f"{{{ns11}}}Header")
+        assert header is not None
+        assert header.find(f"{{{wsa}}}RelatesTo") is not None
+
+
+# ===========================================================================
+# N11 — Inbound SOAP envelope structure validation
+# ===========================================================================
+
+class TestEnvelopeStructureValidation:
+    """N11: from_xml() rejects envelopes violating SOAP 1.1 §4.1.1 / SOAP 1.2 §5.1."""
+
+    def test_header_after_body_raises_fault(self) -> None:
+        from soapbar.core.envelope import SoapEnvelope
+        from soapbar.core.fault import SoapFault
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><x/></soapenv:Body>"
+            b"<soapenv:Header/>"
+            b"</soapenv:Envelope>"
+        )
+        with pytest.raises(SoapFault, match="Header must appear before Body"):
+            SoapEnvelope.from_xml(xml)
+
+    def test_multiple_headers_raises_fault(self) -> None:
+        from soapbar.core.envelope import SoapEnvelope
+        from soapbar.core.fault import SoapFault
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Header/>"
+            b"<soapenv:Header/>"
+            b"<soapenv:Body><x/></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        with pytest.raises(SoapFault, match="more than one Header"):
+            SoapEnvelope.from_xml(xml)
+
+    def test_multiple_bodies_raises_fault(self) -> None:
+        from soapbar.core.envelope import SoapEnvelope
+        from soapbar.core.fault import SoapFault
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><x/></soapenv:Body>"
+            b"<soapenv:Body><y/></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        with pytest.raises(SoapFault, match="more than one Body"):
+            SoapEnvelope.from_xml(xml)
+
+    def test_unknown_child_of_envelope_raises_fault(self) -> None:
+        from soapbar.core.envelope import SoapEnvelope
+        from soapbar.core.fault import SoapFault
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b'<soapenv:Body><x/></soapenv:Body>'
+            b'<soapenv:Unknown/>'
+            b"</soapenv:Envelope>"
+        )
+        with pytest.raises(SoapFault, match="Unexpected element"):
+            SoapEnvelope.from_xml(xml)
+
+    def test_valid_envelope_with_header_and_body_parses_ok(self) -> None:
+        from soapbar.core.envelope import SoapEnvelope
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Header/>"
+            b"<soapenv:Body><x/></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        env = SoapEnvelope.from_xml(xml)
+        assert env.body_elements[0].tag == "x"
+
+    def test_soap12_header_after_body_raises_fault(self) -> None:
+        from soapbar.core.envelope import SoapEnvelope
+        from soapbar.core.fault import SoapFault
+        xml = (
+            b'<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">'
+            b"<soap12:Body><x/></soap12:Body>"
+            b"<soap12:Header/>"
+            b"</soap12:Envelope>"
+        )
+        with pytest.raises(SoapFault, match="Header must appear before Body"):
+            SoapEnvelope.from_xml(xml)
