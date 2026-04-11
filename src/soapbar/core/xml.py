@@ -69,7 +69,8 @@ def check_xml_depth(data: bytes, max_depth: int = 100) -> None:
     from io import BytesIO
     depth = 0
     for event, _ in etree.iterparse(BytesIO(data), events=("start", "end"),
-                                    recover=False, resolve_entities=False):
+                                    recover=False, resolve_entities=False,
+                                    load_dtd=False, no_network=True):
         if event == "start":
             depth += 1
             if depth > max_depth:
