@@ -226,7 +226,7 @@ class TestFault:
         assert local_name(elem) == "Fault"
         fc = elem.find("faultcode")
         fs = elem.find("faultstring")
-        assert fc is not None and fc.text == "Client"
+        assert fc is not None and fc.text == "soapenv:Client"
         assert fs is not None and fs.text == "Bad request"
         det = elem.find("detail")
         assert det is not None and det.text == "invalid input"
@@ -5330,6 +5330,25 @@ class TestApplicationCoverageRound2:
         # body element "echo" should be found → operation dispatched (may return 200 or 500)
         # The key assertion: NOT "Operation not found" fault
         assert b"Operation not found" not in _body
+
+    def test_action_map_op_not_in_dispatch_returns_client_fault(self) -> None:
+        """action_map points to op name not in dispatch → Client fault (line 229)."""
+        import warnings
+
+        from soapbar.server.application import SoapApplication
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication()
+        # Inject an action that resolves to a name absent from _dispatch
+        app._action_map["ghost"] = "ghost_op"
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><ghost/></soapenv:Body></soapenv:Envelope>"
+        )
+        status, _ct, body = app.handle_request(xml, soap_action="ghost")
+        assert status == 500
+        assert b"Unknown operation" in body
 
 
 # ===========================================================================

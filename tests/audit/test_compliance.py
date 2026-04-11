@@ -129,12 +129,13 @@ class TestSoap11EnvelopeCompliance:
         assert local_name(children[-1]) == "Body", "Body must be last child of Envelope"
 
     def test_faultcode_qname_format(self):
-        """§4.4 — faultcode MUST be a QName (namespace-qualified or unprefixed)."""
+        """§4.4 — faultcode MUST be a QName (namespace-qualified)."""
         fault = SoapFault("Client", "bad input")
         elem = fault.to_soap11_element()
         fc = elem.find("faultcode")
         assert fc is not None
-        assert fc.text in ("Client", "Server", "VersionMismatch", "MustUnderstand")
+        # N02 fix: faultcode MUST carry the soapenv: prefix so it is a proper QName
+        assert fc.text is not None and ":" in fc.text, f"Expected QName, got {fc.text!r}"
 
     def test_faultstring_present(self):
         """§4.4 — faultstring MUST be present in a SOAP 1.1 Fault."""
@@ -151,7 +152,8 @@ class TestSoap11EnvelopeCompliance:
             f = SoapFault(code, "test")
             elem = f.to_soap11_element()
             fc = elem.find("faultcode")
-            assert fc is not None and fc.text == code
+            # N02 fix: emitted as "soapenv:<code>" QName per SOAP 1.1 §4.4
+            assert fc is not None and fc.text == f"soapenv:{code}"
 
     def test_fault_detail_only_when_body_caused_fault(self):
         """§4.4 — Detail element SHOULD be present only when fault relates to Body processing."""
@@ -1179,7 +1181,8 @@ class TestMustUnderstandEnforcement:
         fault_elem = root.find(f".//{{{SOAP11_ENV}}}Fault")
         assert fault_elem is not None
         fc = fault_elem.find("faultcode")
-        assert fc is not None and fc.text == "MustUnderstand"
+        # N02 fix: faultcode is emitted as QName "soapenv:MustUnderstand"
+        assert fc is not None and fc.text == "soapenv:MustUnderstand"
 
     def test_must_understand_true_unknown_header_12(self):
         """SOAP 1.2 §5.2.3 — mustUnderstand=true on unknown header MUST generate
@@ -1292,6 +1295,57 @@ class TestMustUnderstandEnforcement:
         app, _ = _make_app()
         status, _, _ = app.handle_request(xml)
         assert status == 200, "mustUnderstand=0 must not generate a fault"
+
+    def test_must_understand_wsa_header_whitelisted(self):
+        """N01 fix — WSA mustUnderstand=1 headers MUST NOT generate a MustUnderstand fault."""
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            b' xmlns:wsa="http://www.w3.org/2005/08/addressing">'
+            b"  <soapenv:Header>"
+            b'    <wsa:Action soapenv:mustUnderstand="1">http://example.com/calc/add</wsa:Action>'
+            b"  </soapenv:Header>"
+            b"  <soapenv:Body>"
+            b'    <tns:add xmlns:tns="http://example.com/calc"><a>3</a><b>5</b></tns:add>'
+            b"  </soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        app, _ = _make_app()
+        status, _, _ = app.handle_request(xml)
+        assert status == 200, f"WSA mustUnderstand header must be whitelisted, got {status}"
+
+    def test_must_understand_wsse_header_whitelisted_with_validator(self):
+        """N01 fix — WSSE mustUnderstand=1 MUST be whitelisted when security_validator is set."""
+        from lxml import etree
+
+        from soapbar.core.envelope import SoapEnvelope, SoapHeaderBlock, SoapVersion
+        from soapbar.core.namespaces import NS as _NS
+        from soapbar.core.wssecurity import (
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+        from soapbar.core.xml import to_bytes
+
+        _pw = "s3cr3t"
+        cred = UsernameTokenCredential(username="alice", password=_pw)
+        sec_elem = build_security_header(cred, soap_ns=_NS.SOAP_ENV)
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return _pw if u == "alice" else None
+
+        app, _ = _make_app()
+        app2 = SoapApplication(service_url="http://example.com/calc", security_validator=_V())
+        app2.register(app._services[0])
+
+        env = SoapEnvelope(version=SoapVersion.SOAP_11)
+        env.add_header(SoapHeaderBlock(element=sec_elem, must_understand=True))
+        body_elem = etree.fromstring(
+            b'<tns:add xmlns:tns="http://example.com/calc"><a>1</a><b>2</b></tns:add>'
+        )
+        env.add_body_content(body_elem)
+        status, _, _ = app2.handle_request(to_bytes(env.build()))
+        assert status == 200, f"WSSE mustUnderstand whitelisted with validator, got {status}"
 
 
 # ---------------------------------------------------------------------------
