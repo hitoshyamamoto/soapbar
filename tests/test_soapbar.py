@@ -4276,8 +4276,8 @@ def _make_rsa_key_and_cert():
         .issuer_name(issuer)
         .public_key(private_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.now(datetime.UTC))
-        .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1))
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1))
         .sign(private_key, hashes.SHA256())
     )
     return private_key, cert
@@ -6098,7 +6098,7 @@ class TestWsuTimestamp:
         assert sec.find(f"{{{self._WSU}}}Timestamp") is None
 
     def test_expires_is_in_future(self) -> None:
-        from datetime import UTC, datetime
+        from datetime import datetime, timezone
 
         from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
         cred = UsernameTokenCredential(username="u", password="p")  # noqa: S106
@@ -6107,8 +6107,8 @@ class TestWsuTimestamp:
         assert ts is not None
         exp = ts.find(f"{{{self._WSU}}}Expires")
         assert exp is not None and exp.text is not None
-        expires = datetime.fromisoformat(exp.text.rstrip("Z")).replace(tzinfo=UTC)
-        assert expires > datetime.now(UTC)
+        expires = datetime.fromisoformat(exp.text.rstrip("Z")).replace(tzinfo=timezone.utc)
+        assert expires > datetime.now(timezone.utc)
 
     def test_validate_rejects_expired_timestamp(self) -> None:
         from soapbar.core.wssecurity import (
@@ -6763,3 +6763,36 @@ class TestJsonDualMode:
         assert "application/json" in header_dict["Content-Type"]
         data = json.loads(body)
         assert data["return"] == 7
+
+    def test_json_fault_when_accept_json(self) -> None:
+        """Faults must return JSON body when Accept: application/json."""
+        import json
+        app = self._make_app()
+        bad_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><unknownOp/></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        status, ct, body = app.handle_request(
+            bad_xml, accept_header="application/json"
+        )
+        assert status == 500
+        assert "application/json" in ct
+        data = json.loads(body)
+        assert "fault" in data
+        assert "code" in data["fault"]
+        assert "message" in data["fault"]
+
+    def test_json_fault_contains_faultcode(self) -> None:
+        import json
+        app = self._make_app()
+        bad_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><unknownOp/></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        _, _, body = app.handle_request(
+            bad_xml, accept_header="application/json"
+        )
+        data = json.loads(body)
+        assert data["fault"]["code"] == "Client"

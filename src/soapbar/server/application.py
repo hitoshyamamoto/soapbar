@@ -35,6 +35,21 @@ from soapbar.server.service import SoapService, _SoapMethod
 _log = logging.getLogger(__name__)
 
 
+def _json_default(obj: Any) -> Any:
+    """Fallback serializer for ``json.dumps`` in JSON dual-mode responses.
+
+    Handles ``bytes``, date/time objects, ``Decimal``, and any other type
+    by falling back to ``str()``.
+    """
+    import base64
+
+    if isinstance(obj, (bytes, bytearray)):
+        return base64.b64encode(obj).decode("ascii")
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+    return str(obj)
+
+
 def _validate_input_params(sig: OperationSignature, kwargs: dict[str, Any]) -> None:
     """Validate deserialized request parameters against the operation signature.
 
@@ -292,7 +307,9 @@ class SoapApplication:
             # JSON dual-mode: if the client prefers JSON, skip SOAP serialization
             if "application/json" in accept_header:
                 import json as _json
-                return 200, "application/json; charset=utf-8", _json.dumps(values).encode()
+                return 200, "application/json; charset=utf-8", _json.dumps(
+                    values, default=_json_default,
+                ).encode()
 
             from lxml import etree as _etree
             resp_envelope = SoapEnvelope(version=version)
@@ -324,6 +341,27 @@ class SoapApplication:
             _log.exception("Unhandled exception during SOAP request processing: %s", exc)
             caught_fault = SoapFault("Server", "An internal error occurred.")
             http_status = 500
+
+        # JSON dual-mode: return JSON fault body when client prefers JSON
+        if "application/json" in accept_header:
+            import json as _json
+            _fault_body = {
+                "fault": {
+                    "code": caught_fault.faultcode,
+                    "message": caught_fault.faultstring,
+                },
+            }
+            if caught_fault.detail is not None:
+                _fault_body["fault"]["detail"] = (
+                    caught_fault.detail
+                    if isinstance(caught_fault.detail, str)
+                    else str(caught_fault.detail)
+                )
+            return (
+                http_status,
+                "application/json; charset=utf-8",
+                _json.dumps(_fault_body, default=_json_default).encode(),
+            )
 
         # N09 — WS-Addressing fault headers: route to FaultTo EPR when present
         _fault_wsa_headers: list[Any] = []
