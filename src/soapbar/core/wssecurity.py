@@ -16,7 +16,7 @@ import hashlib
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from lxml.etree import _Element
@@ -93,6 +93,7 @@ def _digest_password(nonce_bytes: bytes, created: str, password: str) -> str:
 def build_security_header(
     credential: UsernameTokenCredential,
     soap_ns: str | None = None,
+    timestamp_ttl: int | None = None,
 ) -> _Element:
     """Build a ``wsse:Security`` header element for *credential*.
 
@@ -100,6 +101,13 @@ def build_security_header(
     Per WS-Security 1.0 §6.1, the Security header MUST carry
     ``{soap_ns}mustUnderstand="1"`` so intermediaries know to process it.
     Pass *soap_ns* as the SOAP envelope namespace URI to enable this attribute.
+
+    Args:
+        credential: The UsernameToken credential to embed.
+        soap_ns: SOAP envelope namespace URI; when set, adds mustUnderstand="1".
+        timestamp_ttl: If given, prepend a ``wsu:Timestamp`` with ``wsu:Created``
+            and ``wsu:Expires`` (set to *now* + *timestamp_ttl* seconds).
+            Enables replay-window enforcement on the receiver side (N05).
     """
     wsse_ns = NS.WSSE
     wsu_ns = NS.WSU
@@ -108,6 +116,19 @@ def build_security_header(
     security = make_element(f"{{{wsse_ns}}}Security", nsmap=nsmap)
     if soap_ns is not None:
         security.set(f"{{{soap_ns}}}mustUnderstand", "1")
+
+    # N05 — wsu:Timestamp: allows receiver to enforce a replay window
+    if timestamp_ttl is not None:
+        now = datetime.now(UTC)
+        expires = now + timedelta(seconds=timestamp_ttl)
+        _fmt = "%Y-%m-%dT%H:%M:%SZ"
+        ts = sub_element(
+            security,
+            f"{{{wsu_ns}}}Timestamp",
+            attrib={f"{{{wsu_ns}}}Id": "TS-1"},
+        )
+        sub_element(ts, f"{{{wsu_ns}}}Created", text=now.strftime(_fmt))
+        sub_element(ts, f"{{{wsu_ns}}}Expires", text=expires.strftime(_fmt))
 
     token = sub_element(security, f"{{{wsse_ns}}}UsernameToken")
     sub_element(token, f"{{{wsse_ns}}}Username", text=credential.username)
@@ -160,9 +181,34 @@ class UsernameTokenValidator(ABC):
     """Abstract base class for server-side UsernameToken validation.
 
     Subclass and implement :meth:`get_password` to look up the expected
-    password for a given username.  The base class handles digest verification
-    and raises :class:`SecurityValidationError` on failure.
+    password for a given username.  The base class handles digest verification,
+    ``wsu:Timestamp`` expiry checking (N05), and nonce replay prevention (N07).
+
+    Subclasses that define their own ``__init__`` MUST call ``super().__init__()``
+    to initialise the nonce replay cache.
     """
+
+    #: Replay window in seconds.  Nonces seen within this window are rejected.
+    #: Per WSS UsernameToken Profile 1.0 §3.2.1, five minutes is the RECOMMENDED minimum.
+    nonce_ttl: int = 300
+
+    def __init__(self) -> None:
+        # N07 — nonce replay cache: maps base64-encoded nonce → expiry datetime
+        self._seen_nonces: dict[str, datetime] = {}
+
+    def _check_and_record_nonce(self, nonce_b64: str) -> None:
+        """Reject a replayed nonce; record it for *nonce_ttl* seconds (N07).
+
+        Raises:
+            SecurityValidationError: if *nonce_b64* has been seen within the
+                replay window.
+        """
+        now = datetime.now(UTC)
+        # Purge expired entries to keep the cache bounded
+        self._seen_nonces = {k: v for k, v in self._seen_nonces.items() if v > now}
+        if nonce_b64 in self._seen_nonces:
+            raise SecurityValidationError("Nonce already used — possible replay attack")
+        self._seen_nonces[nonce_b64] = now + timedelta(seconds=self.nonce_ttl)
 
     @abstractmethod
     def get_password(self, username: str) -> str | None:
@@ -171,11 +217,31 @@ class UsernameTokenValidator(ABC):
     def validate(self, security_element: _Element) -> str:
         """Validate a ``wsse:Security`` element and return the authenticated username.
 
+        Performs, in order:
+        1. ``wsu:Timestamp`` expiry check when present (N05).
+        2. ``wsse:UsernameToken`` credential verification.
+        3. Nonce replay check for PasswordDigest tokens (N07).
+
         Raises:
-            SecurityValidationError: if authentication fails.
+            SecurityValidationError: if any check fails.
         """
         wsse_ns = NS.WSSE
         wsu_ns = NS.WSU
+
+        # N05 — Timestamp expiry check
+        ts_elem = security_element.find(f"{{{wsu_ns}}}Timestamp")
+        if ts_elem is not None:
+            exp_elem = ts_elem.find(f"{{{wsu_ns}}}Expires")
+            if exp_elem is not None and exp_elem.text:
+                try:
+                    exp_text = exp_elem.text.rstrip("Z")
+                    expires = datetime.fromisoformat(exp_text).replace(tzinfo=UTC)
+                except ValueError as exc:
+                    raise SecurityValidationError(
+                        f"Invalid wsu:Expires value: {exp_elem.text!r}"
+                    ) from exc
+                if datetime.now(UTC) > expires:
+                    raise SecurityValidationError("wsu:Timestamp has expired")
 
         token = security_element.find(f"{{{wsse_ns}}}UsernameToken")
         if token is None:
@@ -212,6 +278,9 @@ class UsernameTokenValidator(ABC):
             expected_digest = _digest_password(nonce_bytes, created, expected)
             if not secrets.compare_digest(provided, expected_digest):
                 raise SecurityValidationError("PasswordDigest mismatch")
+            # N07 — record nonce after successful auth to prevent replay
+            nonce_b64_str = nonce_elem.text or ""
+            self._check_and_record_nonce(nonce_b64_str)
         else:
             # PasswordText or any other type: compare plaintext
             if not secrets.compare_digest(provided, expected):
