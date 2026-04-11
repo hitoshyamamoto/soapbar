@@ -164,7 +164,7 @@ class SoapApplication:
         version = SoapVersion.SOAP_12 if "soap+xml" in content_type else SoapVersion.SOAP_11
         caught_fault: SoapFault = SoapFault("Server", "Unknown internal error")
         http_status = 500
-        _mu_tag: str | None = None  # Clark-notation tag of unrecognised mandatory header
+        _mu_tags: list[str] = []  # Clark-notation tags of unrecognised mandatory headers
 
         try:
             # G01 — reject oversized requests before any XML parsing
@@ -194,13 +194,20 @@ class SoapApplication:
                         )
 
             # mustUnderstand enforcement (SOAP 1.1 §4.2.3, SOAP 1.2 §5.2.3)
+            # Headers whose namespaces are understood by this endpoint are whitelisted.
+            _understood_ns = {NS.WSA}
+            if self._security_validator is not None:
+                _understood_ns.add(NS.WSSE)
             for block in envelope.header_blocks:
                 if block.must_understand:
-                    _mu_tag = str(block.element.tag)
-                    raise SoapFault(
-                        "MustUnderstand",
-                        f"Header not understood: {block.element.tag!s}",
-                    )
+                    from soapbar.core.xml import namespace_uri as _ns_uri
+                    if _ns_uri(block.element) not in _understood_ns:
+                        _mu_tags.append(str(block.element.tag))
+            if _mu_tags:
+                raise SoapFault(
+                    "MustUnderstand",
+                    f"Header(s) not understood: {', '.join(_mu_tags)}",
+                )
 
             # G09: WS-Security validation
             if self._security_validator is not None:
@@ -308,9 +315,10 @@ class SoapApplication:
             if caught_fault.faultcode == "VersionMismatch":
                 # [SOAP12-P1] §5.4.7 MUST include Upgrade header
                 _fault_headers.append(build_upgrade_header_block())
-            elif caught_fault.faultcode == "MustUnderstand" and _mu_tag is not None:
-                # [SOAP12-P1] §5.4.8 SHOULD include NotUnderstood header
-                _fault_headers.append(build_not_understood_header_block(_mu_tag))
+            elif caught_fault.faultcode == "MustUnderstand" and _mu_tags:
+                # [SOAP12-P1] §5.4.8 SHOULD include one NotUnderstood block per header
+                for _mu_tag in _mu_tags:
+                    _fault_headers.append(build_not_understood_header_block(_mu_tag))
             fault_elem = caught_fault.to_soap12_envelope(
                 header_blocks=_fault_headers or None,
             )
