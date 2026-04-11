@@ -55,7 +55,8 @@ class WsgiSoapApp:
             status, resp_ct, resp_body = self.soap_app.handle_request(
                 body_bytes, soap_action=soap_action, content_type=content_type
             )
-            status_str = f"{status} {'OK' if status == 200 else 'Error'}"
+            _status_texts = {200: "OK", 202: "Accepted", 500: "Internal Server Error"}
+            status_str = f"{status} {_status_texts.get(status, 'Error')}"
             start_response(status_str, [
                 ("Content-Type", resp_ct),
                 ("Content-Length", str(len(resp_body))),

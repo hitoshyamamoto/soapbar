@@ -162,7 +162,10 @@ class SoapClient:
         # G09: inject WS-Security header before other headers
         if self._wss_credential is not None:
             from soapbar.core.wssecurity import build_security_header
-            envelope.add_header(build_security_header(self._wss_credential))
+            envelope.add_header(build_security_header(
+                self._wss_credential,
+                soap_ns=self._soap_version.envelope_ns,
+            ))
 
         if self._use_wsa:
             for hdr in self._build_wsa_headers(sig):
@@ -197,6 +200,14 @@ class SoapClient:
         serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
+
+        # G09: inject WS-Security header before other headers (mirrors call())
+        if self._wss_credential is not None:
+            from soapbar.core.wssecurity import build_security_header
+            envelope.add_header(build_security_header(
+                self._wss_credential,
+                soap_ns=self._soap_version.envelope_ns,
+            ))
 
         if self._use_wsa:
             for hdr in self._build_wsa_headers(sig):
