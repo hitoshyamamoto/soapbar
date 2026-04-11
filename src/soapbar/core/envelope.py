@@ -214,7 +214,8 @@ class SoapEnvelope:
         if header_elem is not None:
             for hdr in list(header_elem):
                 mu_val = hdr.get(f"{{{env_ns}}}mustUnderstand") or hdr.get("mustUnderstand", "0")
-                mu = mu_val in ("1", "true")
+                # SOAP 1.1 §4.2.1: only "1" is valid; SOAP 1.2 §5.2.1 also accepts "true"
+                mu = mu_val == "1" if version == SoapVersion.SOAP_11 else mu_val in ("1", "true")
                 relay_val = hdr.get(f"{{{env_ns}}}relay", "false")
                 relay = relay_val in ("1", "true")
                 role = hdr.get(f"{{{env_ns}}}role") or hdr.get(f"{{{env_ns}}}actor")
