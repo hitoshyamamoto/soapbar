@@ -95,7 +95,8 @@ class SoapFault(Exception):  # noqa: N818
             f"{{{NS.SOAP_ENV}}}Fault",
             nsmap={"soapenv": NS.SOAP_ENV},
         )
-        sub_element(fault, "faultcode", text=self.faultcode)
+        fc_text = self.faultcode if ":" in self.faultcode else f"soapenv:{self.faultcode}"
+        sub_element(fault, "faultcode", text=fc_text)
         sub_element(fault, "faultstring", text=self.faultstring)
         if self.faultactor:
             sub_element(fault, "faultactor", text=self.faultactor)
@@ -220,7 +221,8 @@ class SoapFault(Exception):  # noqa: N818
         fa_elem = fault_elem.find("faultactor")
         det_elem = fault_elem.find("detail")
 
-        faultcode = fc_elem.text or "" if fc_elem is not None else "Server"
+        raw_code = fc_elem.text or "" if fc_elem is not None else "Server"
+        faultcode = raw_code.split(":")[-1] if ":" in raw_code else raw_code
         faultstring = fs_elem.text or "" if fs_elem is not None else ""
         faultactor = fa_elem.text if fa_elem is not None else None
 
