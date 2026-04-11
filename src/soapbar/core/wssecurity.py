@@ -16,7 +16,9 @@ import hashlib
 import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
 from typing import Any
 
 from lxml.etree import _Element

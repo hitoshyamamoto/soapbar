@@ -1,4 +1,6 @@
 """Core SOAP toolkit re-exports."""
+from __future__ import annotations
+
 from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
 from soapbar.core.envelope import (
     SoapEnvelope,
