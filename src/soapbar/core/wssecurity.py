@@ -90,18 +90,24 @@ def _digest_password(nonce_bytes: bytes, created: str, password: str) -> str:
 # Security header builder
 # ---------------------------------------------------------------------------
 
-def build_security_header(credential: UsernameTokenCredential) -> _Element:
+def build_security_header(
+    credential: UsernameTokenCredential,
+    soap_ns: str | None = None,
+) -> _Element:
     """Build a ``wsse:Security`` header element for *credential*.
 
     Returns a ``wsse:Security`` element ready to be added as a SOAP header.
-    The element is *not* marked ``mustUnderstand`` by default; callers may
-    set that attribute if required.
+    Per WS-Security 1.0 §6.1, the Security header MUST carry
+    ``{soap_ns}mustUnderstand="1"`` so intermediaries know to process it.
+    Pass *soap_ns* as the SOAP envelope namespace URI to enable this attribute.
     """
     wsse_ns = NS.WSSE
     wsu_ns = NS.WSU
     nsmap: dict[str | None, str] = {"wsse": wsse_ns, "wsu": wsu_ns}
 
     security = make_element(f"{{{wsse_ns}}}Security", nsmap=nsmap)
+    if soap_ns is not None:
+        security.set(f"{{{soap_ns}}}mustUnderstand", "1")
 
     token = sub_element(security, f"{{{wsse_ns}}}UsernameToken")
     sub_element(token, f"{{{wsse_ns}}}Username", text=credential.username)
@@ -627,11 +633,17 @@ def extract_certificate_from_security(security_element: _Element) -> Any:
 
     try:
         der_bytes = base64.b64decode(b64_text)
-        return _x509.load_der_x509_certificate(der_bytes)
+        cert = _x509.load_der_x509_certificate(der_bytes)
     except Exception as exc:
         raise XmlSecurityError(
             f"Failed to decode BinarySecurityToken certificate: {exc}"
         ) from exc
+
+    now = datetime.now(UTC)
+    if now < cert.not_valid_before_utc or now > cert.not_valid_after_utc:
+        raise XmlSecurityError("X.509 certificate is expired or not yet valid")
+
+    return cert
 
 
 def sign_envelope_bsp(
