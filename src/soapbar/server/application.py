@@ -85,6 +85,16 @@ class SoapApplication:
                 UserWarning,
                 stacklevel=2,
             )
+            # N06 — additional warning when a security validator is configured over HTTP:
+            # PasswordText credentials will be transmitted in cleartext.
+            if security_validator is not None:
+                warnings.warn(
+                    "security_validator is set but service_url uses plain HTTP. "
+                    "PasswordText credentials will be exposed in transit. "
+                    "Use HTTPS or PasswordDigest to protect credentials.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
     def _get_compiled_schema(self) -> Any:
         """Return a compiled lxml XMLSchema from registered services' WSDL types.
@@ -165,6 +175,7 @@ class SoapApplication:
         caught_fault: SoapFault = SoapFault("Server", "Unknown internal error")
         http_status = 500
         _mu_tags: list[str] = []  # Clark-notation tags of unrecognised mandatory headers
+        _request_wsa: Any = None  # WsaHeaders | None — captured for fault response (N09)
 
         try:
             # G01 — reject oversized requests before any XML parsing
@@ -180,6 +191,7 @@ class SoapApplication:
 
             envelope = SoapEnvelope.from_xml(body)
             version = envelope.version
+            _request_wsa = envelope.ws_addressing  # N09: used in fault response if needed
 
             # DataEncodingUnknown enforcement (SOAP 1.2 §5.4.9 MUST)
             # Only SOAP 1.2 defines this fault code; SOAP 1.1 has no equivalent.
@@ -307,11 +319,37 @@ class SoapApplication:
             caught_fault = SoapFault("Server", "An internal error occurred.")
             http_status = 500
 
+        # N09 — WS-Addressing fault headers: route to FaultTo EPR when present
+        _fault_wsa_headers: list[Any] = []
+        if _request_wsa is not None:
+            from soapbar.core.xml import make_element as _make_elem
+            _wsa_ns = NS.WSA
+            _wsa_nsmap: dict[str | None, str] = {"wsa": _wsa_ns}
+            # wsa:To → FaultTo address (or ReplyTo if FaultTo absent)
+            _fault_epr = _request_wsa.fault_to or _request_wsa.reply_to
+            if _fault_epr and _fault_epr.address not in (
+                "", "http://www.w3.org/2005/08/addressing/none"
+            ):
+                _to = _make_elem(f"{{{_wsa_ns}}}To", nsmap=_wsa_nsmap)
+                _to.text = _fault_epr.address
+                _fault_wsa_headers.append(_to)
+            # wsa:RelatesTo → request MessageID
+            if _request_wsa.message_id:
+                _rel = _make_elem(f"{{{_wsa_ns}}}RelatesTo", nsmap=_wsa_nsmap)
+                _rel.text = _request_wsa.message_id
+                _fault_wsa_headers.append(_rel)
+            # wsa:Action → standard fault action URI
+            _act = _make_elem(f"{{{_wsa_ns}}}Action", nsmap=_wsa_nsmap)
+            _act.text = "http://www.w3.org/2005/08/addressing/fault"
+            _fault_wsa_headers.append(_act)
+
         if version == SoapVersion.SOAP_11:
-            fault_elem = caught_fault.to_soap11_envelope()
+            fault_elem = caught_fault.to_soap11_envelope(
+                header_blocks=_fault_wsa_headers or None,
+            )
         else:
             # SOAP 1.2: attach required/recommended header blocks per spec
-            _fault_headers = []
+            _fault_headers: list[Any] = list(_fault_wsa_headers)
             if caught_fault.faultcode == "VersionMismatch":
                 # [SOAP12-P1] §5.4.7 MUST include Upgrade header
                 _fault_headers.append(build_upgrade_header_block())
