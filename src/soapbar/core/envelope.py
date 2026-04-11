@@ -198,15 +198,48 @@ class SoapEnvelope:
         root = parse_xml_document(source)
         ns = namespace_uri(root)
 
+        from soapbar.core.fault import SoapFault
         if ns == NS.SOAP_ENV:
             version = SoapVersion.SOAP_11
         elif ns == NS.SOAP12_ENV:
             version = SoapVersion.SOAP_12
         else:
-            from soapbar.core.fault import SoapFault
             raise SoapFault("VersionMismatch", f"Unknown SOAP envelope namespace: {ns!r}")
 
         env_ns = version.envelope_ns
+
+        # N11 — validate Envelope child structure (SOAP 1.1 §4.1.1, SOAP 1.2 §5.1)
+        _header_tag = f"{{{env_ns}}}Header"
+        _body_tag = f"{{{env_ns}}}Body"
+        _seen_header = False
+        _seen_body = False
+        for _child in list(root):
+            _tag = _child.tag
+            if _tag == _header_tag:
+                if _seen_body:
+                    raise SoapFault(
+                        "Client",
+                        "SOAP Header must appear before Body in Envelope",
+                    )
+                if _seen_header:
+                    raise SoapFault(
+                        "Client",
+                        "SOAP Envelope must not contain more than one Header element",
+                    )
+                _seen_header = True
+            elif _tag == _body_tag:
+                if _seen_body:
+                    raise SoapFault(
+                        "Client",
+                        "SOAP Envelope must not contain more than one Body element",
+                    )
+                _seen_body = True
+            else:
+                raise SoapFault(
+                    "Client",
+                    f"Unexpected element {_tag!r} as direct child of SOAP Envelope",
+                )
+
         header_blocks: list[SoapHeaderBlock] = []
         body_elements: list[_Element] = []
 
