@@ -6,6 +6,41 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.4.2] — 2026-04-11
+
+### Fixed
+
+- **N01** `wssecurity.py` — `build_security_header()` now accepts a `soap_ns` parameter and
+  sets `{soap_ns}mustUnderstand="1"` on the `wsse:Security` element when provided, as required
+  by WS-Security 1.0 §6.1. Both `SoapClient.call()` and `call_async()` pass the envelope
+  namespace so every outbound Security header is correctly marked.
+- **N02** `fault.py` — SOAP 1.1 `faultcode` is now serialised as a namespace-qualified QName
+  (`soapenv:Client`, `soapenv:Server`, etc.) per SOAP 1.1 §4.4. The parser strips the prefix
+  on read-back so `SoapFault.faultcode` remains the unqualified canonical name internally.
+- **N03** `envelope.py` — `mustUnderstand` parsing is now version-aware: SOAP 1.1 §4.2.1
+  accepts only `"1"`; SOAP 1.2 §5.2.1 additionally accepts `"true"`.
+- **N04** `application.py` — SOAP 1.2 MustUnderstand fault responses now include one
+  `soap12:NotUnderstood` header block per unrecognised mandatory header (previously at most
+  one block was emitted).
+- **N08** `wssecurity.py` — `extract_certificate_from_security()` validates the decoded X.509
+  certificate's validity window (`not_valid_before_utc` / `not_valid_after_utc`) and raises
+  `XmlSecurityError` if the certificate is expired or not yet valid.
+- **N10** `client.py` — `call_async()` now injects the WS-Security credential header, matching
+  the behaviour of `call()` (credential was silently dropped in the async path).
+- **N12** `wsgi.py` — One-way MEP responses now return `"202 Accepted"` instead of the
+  incorrect `"202 Error"` HTTP status line.
+- **N13** `xml.py` — `check_xml_depth()` iterparse now passes `load_dtd=False` and
+  `no_network=True`, closing a gap between the depth-check path and the main hardened parser.
+
+### Changed
+
+- **N01** `application.py` — `mustUnderstand` enforcement now whitelists understood namespaces
+  before raising a fault: WS-Addressing (`NS.WSA`) is always whitelisted; WS-Security
+  (`NS.WSSE`) is whitelisted when a `security_validator` is configured. Unknown mandatory
+  headers are collected before the fault is raised, enabling full multi-header reporting.
+
+---
+
 ## [0.4.1] — 2026-04-08
 
 ### Added
