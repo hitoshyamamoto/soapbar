@@ -38,6 +38,7 @@ class AsgiSoapApp:
         content_type = headers.get(b"content-type", b"text/xml").decode()
         soap_action_raw = headers.get(b"soapaction", b"")
         soap_action = soap_action_raw.decode().strip('"') if soap_action_raw else ""
+        accept = headers.get(b"accept", b"").decode()
 
         if method == "GET" and "wsdl" in query_string.lower():
             wsdl = self.soap_app.get_wsdl()
@@ -69,7 +70,10 @@ class AsgiSoapApp:
                 )
 
             status, resp_ct, resp_body = self.soap_app.handle_request(
-                body_bytes, soap_action=soap_action, content_type=content_type
+                body_bytes,
+                soap_action=soap_action,
+                content_type=content_type,
+                accept_header=accept,
             )
             await self._send_response(send, status, resp_ct, resp_body)
             return

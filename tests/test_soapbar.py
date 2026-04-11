@@ -6628,3 +6628,138 @@ class TestWsgi202StatusText:
         assert captured_status[0] == "202 Accepted", (
             f"Expected '202 Accepted', got {captured_status[0]!r}"
         )
+
+
+class TestJsonDualMode:
+    """JSON dual-mode: Accept: application/json returns JSON instead of SOAP XML."""
+
+    def _make_app(self) -> SoapApplication:
+        class _Svc(SoapService):
+            __service_name__ = "Calc"
+            __tns__ = "http://example.com/calc"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation(
+                name="add",
+                input_params=[
+                    OperationParameter("a", xsd.resolve("int")),  # type: ignore[arg-type]
+                    OperationParameter("b", xsd.resolve("int")),  # type: ignore[arg-type]
+                ],
+                output_params=[
+                    OperationParameter("return", xsd.resolve("int")),  # type: ignore[arg-type]
+                ],
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(_Svc())
+        return app
+
+    _SOAP_ADD = (
+        b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+        b"<soapenv:Body>"
+        b'<tns:add xmlns:tns="http://example.com/calc">'
+        b"<a>3</a><b>4</b>"
+        b"</tns:add>"
+        b"</soapenv:Body>"
+        b"</soapenv:Envelope>"
+    )
+
+    def test_soap_response_when_no_accept(self) -> None:
+        app = self._make_app()
+        _, ct, body = app.handle_request(self._SOAP_ADD)
+        assert "xml" in ct
+        assert b"<" in body  # XML envelope
+
+    def test_json_response_when_accept_json(self) -> None:
+        import json
+        app = self._make_app()
+        status, ct, body = app.handle_request(
+            self._SOAP_ADD, accept_header="application/json"
+        )
+        assert status == 200
+        assert ct == "application/json; charset=utf-8"
+        data = json.loads(body)
+        assert data == {"return": 7}
+
+    def test_json_response_content_type_header(self) -> None:
+        app = self._make_app()
+        _, ct, _ = app.handle_request(
+            self._SOAP_ADD, accept_header="application/json"
+        )
+        assert ct.startswith("application/json")
+
+    def test_json_accept_with_quality_factor(self) -> None:
+        import json
+        app = self._make_app()
+        _, ct, body = app.handle_request(
+            self._SOAP_ADD,
+            accept_header="text/html, application/json;q=0.9, */*;q=0.8",
+        )
+        assert "application/json" in ct
+        data = json.loads(body)
+        assert data["return"] == 7
+
+    async def test_asgi_json_response(self) -> None:
+        import json
+
+        from soapbar.server.asgi import AsgiSoapApp
+
+        app = AsgiSoapApp(self._make_app())
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"text/xml"),
+                (b"accept", b"application/json"),
+            ],
+        }
+        responses: list = []
+
+        async def receive():
+            return {"body": self._SOAP_ADD, "more_body": False}
+
+        async def send(message):
+            responses.append(message)
+
+        await app(scope, receive, send)
+        start = responses[0]
+        assert start["status"] == 200
+        ct_header = dict(start["headers"])[b"content-type"].decode()
+        assert "application/json" in ct_header
+        data = json.loads(responses[1]["body"])
+        assert data["return"] == 7
+
+    def test_wsgi_json_response(self) -> None:
+        import json
+        from io import BytesIO
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        wsgi = WsgiSoapApp(self._make_app())
+        captured_status: list[str] = []
+        captured_headers: list = []
+
+        def start_response(status: str, headers: list) -> None:
+            captured_status.append(status)
+            captured_headers.extend(headers)
+
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "QUERY_STRING": "",
+            "CONTENT_TYPE": "text/xml",
+            "CONTENT_LENGTH": str(len(self._SOAP_ADD)),
+            "wsgi.input": BytesIO(self._SOAP_ADD),
+            "HTTP_SOAPACTION": "",
+            "HTTP_ACCEPT": "application/json",
+        }
+        body_chunks = wsgi(environ, start_response)
+        body = b"".join(body_chunks)
+        assert captured_status[0].startswith("200")
+        header_dict = dict(captured_headers)
+        assert "application/json" in header_dict["Content-Type"]
+        data = json.loads(body)
+        assert data["return"] == 7

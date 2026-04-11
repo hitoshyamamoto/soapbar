@@ -168,6 +168,7 @@ class SoapApplication:
         body: bytes,
         soap_action: str = "",
         content_type: str = "text/xml",
+        accept_header: str = "",
     ) -> tuple[int, str, bytes]:
         """Returns (http_status, content_type, response_body)."""
         # Detect SOAP version from content-type
@@ -287,6 +288,11 @@ class SoapApplication:
                 values = (
                     {sig.output_params[0].name: result} if sig.output_params else {}
                 )
+
+            # JSON dual-mode: if the client prefers JSON, skip SOAP serialization
+            if "application/json" in accept_header:
+                import json as _json
+                return 200, "application/json; charset=utf-8", _json.dumps(values).encode()
 
             from lxml import etree as _etree
             resp_envelope = SoapEnvelope(version=version)

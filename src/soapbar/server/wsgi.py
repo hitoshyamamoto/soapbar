@@ -24,6 +24,7 @@ class WsgiSoapApp:
         query_string = environ.get("QUERY_STRING", "")
         content_type = environ.get("CONTENT_TYPE", "text/xml")
         soap_action = environ.get("HTTP_SOAPACTION", "").strip('"')
+        accept = environ.get("HTTP_ACCEPT", "")
 
         if method == "GET" and "wsdl" in query_string.lower():
             wsdl = self.soap_app.get_wsdl()
@@ -53,7 +54,10 @@ class WsgiSoapApp:
                 )
 
             status, resp_ct, resp_body = self.soap_app.handle_request(
-                body_bytes, soap_action=soap_action, content_type=content_type
+                body_bytes,
+                soap_action=soap_action,
+                content_type=content_type,
+                accept_header=accept,
             )
             _status_texts = {200: "OK", 202: "Accepted", 500: "Internal Server Error"}
             status_str = f"{status} {_status_texts.get(status, 'Error')}"
