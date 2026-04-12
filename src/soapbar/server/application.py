@@ -35,6 +35,17 @@ from soapbar.server.service import SoapService, _SoapMethod
 _log = logging.getLogger(__name__)
 
 
+def _accepts_json(accept: str) -> bool:
+    """Return True if ``accept`` contains ``application/json`` as a discrete media type.
+
+    A negative lookahead excludes suffixed types such as
+    ``application/json-patch+json`` or ``application/json+ld``
+    (RFC 7231 §5.3.2).
+    """
+    import re
+    return bool(re.search(r"(?:^|[\s,])application/json(?![-+\w])", accept))
+
+
 def _json_default(obj: Any) -> Any:
     """Fallback serializer for ``json.dumps`` in JSON dual-mode responses.
 
@@ -305,7 +316,7 @@ class SoapApplication:
                 )
 
             # JSON dual-mode: if the client prefers JSON, skip SOAP serialization
-            if "application/json" in accept_header:
+            if _accepts_json(accept_header):
                 import json as _json
                 return 200, "application/json; charset=utf-8", _json.dumps(
                     values, default=_json_default,
@@ -343,7 +354,7 @@ class SoapApplication:
             http_status = 500
 
         # JSON dual-mode: return JSON fault body when client prefers JSON
-        if "application/json" in accept_header:
+        if _accepts_json(accept_header):
             import json as _json
             _fault_body = {
                 "fault": {

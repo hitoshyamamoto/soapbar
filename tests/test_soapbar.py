@@ -6796,3 +6796,14 @@ class TestJsonDualMode:
         )
         data = json.loads(body)
         assert data["fault"]["code"] == "Client"
+
+    def test_json_patch_accept_does_not_trigger_json_mode(self) -> None:
+        """application/json-patch+json must NOT trigger JSON dual-mode."""
+        app = self._make_app()
+        _, ct, body = app.handle_request(
+            self._SOAP_ADD,
+            accept_header="application/json-patch+json",
+        )
+        assert ct != "application/json; charset=utf-8"
+        # Response should be SOAP XML, not JSON
+        assert body.startswith(b"<") or b"Envelope" in body
