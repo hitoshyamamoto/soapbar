@@ -6,7 +6,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — v0.5.0
+## [0.5.0] — 2026-04-12
 
 ### Added
 
@@ -22,7 +22,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
   of `strict`
 - **JSON dual-mode response** — any `@soap_operation` endpoint returns JSON when the HTTP
   client sends `Accept: application/json`; no separate route needed; SOAP faults are also
-  serialised as `{"fault": {"code": ..., "message": ..., "detail": ...}}`
+  serialised as `{"fault": {"code": ..., "message": ..., "detail": ...}}`; Accept header
+  matching uses a proper media-type token check so `application/json-patch+json` and similar
+  suffixed types do not incorrectly trigger JSON mode (RFC 7231 §5.3.2)
 
 ---
 
