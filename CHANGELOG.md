@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.1] — 2026-04-12
+
+### Added
+
+- **Apache 2.0 license** — `LICENSE`, `NOTICE`, SPDX headers on all source files,
+  `SECURITY.md` private-advisory policy, Dependabot config for pip + github-actions
+- **`CODEOWNERS`** — auto-assigns review on PRs to `@hitoshyamamoto`
+
+### Changed
+
+- **Workflow actions pinned to immutable commit SHAs** across `push.yml`, `pr.yml`,
+  `release.yml`; github-actions group bumped (checkout v6, upload-artifact v7,
+  download-artifact v8)
+
+### Fixed
+
+- **Coverage comment on Dependabot PRs** — switched from `secrets.GH_TOKEN` to
+  `secrets.GITHUB_TOKEN` so the step runs for PRs from Dependabot as well
+
+---
+
 ## [0.5.0] — 2026-04-12
 
 ### Added
