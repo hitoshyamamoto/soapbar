@@ -1025,4 +1025,4 @@ The following features are intentionally out-of-scope for the current release.  
 
 ## License
 
-MIT with Attribution
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
