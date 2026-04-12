@@ -1,3 +1,5 @@
+# Copyright 2026 Hitoshi Yamamoto
+# SPDX-License-Identifier: Apache-2.0
 """XSD type system with registry."""
 from __future__ import annotations
 

@@ -1,3 +1,5 @@
+# Copyright 2026 Hitoshi Yamamoto
+# SPDX-License-Identifier: Apache-2.0
 """WSDL parser — supports SOAP 1.1 and SOAP 1.2 binding extensions."""
 from __future__ import annotations
 

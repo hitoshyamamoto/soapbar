@@ -1,0 +1,26 @@
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      dev-tools:
+        patterns: ["pytest*", "coverage*", "ruff", "mypy", "types-*"]
+      security-libs:
+        patterns: ["cryptography", "signxml"]
+    labels: ["dependencies", "python"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["actions/*"]
+    labels: ["dependencies", "github-actions"]

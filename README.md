@@ -1,7 +1,7 @@
 # soapbar
 
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
-![License](https://img.shields.io/badge/license-MIT%20with%20Attribution-green)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Conformance](https://img.shields.io/badge/SOAP%20conformance-100%25-brightgreen)
 
 A SOAP framework for Python — client, server, and WSDL handling.

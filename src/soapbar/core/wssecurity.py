@@ -1,3 +1,5 @@
+# Copyright 2026 Hitoshi Yamamoto
+# SPDX-License-Identifier: Apache-2.0
 """WS-Security 1.0 support (OASIS WSS 2004).
 
 Implements:

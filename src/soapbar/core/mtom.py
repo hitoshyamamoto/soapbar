@@ -1,3 +1,5 @@
+# Copyright 2026 Hitoshi Yamamoto
+# SPDX-License-Identifier: Apache-2.0
 """MTOM/XOP multipart SOAP message parsing and building.
 
 Implements W3C MTOM (Message Transmission Optimization Mechanism) and

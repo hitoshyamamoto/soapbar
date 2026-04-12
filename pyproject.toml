@@ -9,13 +9,13 @@ description = "A SOAP framework for Python — client, server, and WSDL handling
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["lxml>=5.0"]
-license     = {text = "MIT"}
-authors     = [{name = "Hitoshi Yamamoto"}]
+license     = {text = "Apache-2.0"}
+authors     = [{name = "Hitoshi Yamamoto", email = "60470969+hitoshyamamoto@users.noreply.github.com"}]
 keywords    = ["soap", "wsdl", "web-services", "xml", "rpc"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

@@ -1,3 +1,5 @@
+# Copyright 2026 Hitoshi Yamamoto
+# SPDX-License-Identifier: Apache-2.0
 """WSGI adapter for SoapApplication."""
 from __future__ import annotations
 

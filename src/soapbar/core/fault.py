@@ -1,3 +1,5 @@
+# Copyright 2026 Hitoshi Yamamoto
+# SPDX-License-Identifier: Apache-2.0
 """SOAP Fault exception and XML builders.
 
 NOTE: This module must NOT import envelope.py to avoid circular imports.

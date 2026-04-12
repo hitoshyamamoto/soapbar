@@ -1,3 +1,5 @@
+# Copyright 2026 Hitoshi Yamamoto
+# SPDX-License-Identifier: Apache-2.0
 """soapbar — Python SOAP toolkit."""
 from __future__ import annotations
 
