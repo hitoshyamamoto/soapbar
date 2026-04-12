@@ -6,6 +6,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — v0.5.0
+
+### Added
+
+- **Python 3.10+ support** — `requires-python` lowered from `>=3.12` to `>=3.10`; CI matrix
+  extended to include 3.10 and 3.11; `datetime.UTC` (3.11+) replaced with `timezone.utc`
+- **Real-world WSDL integration tests** — `tests/wsdl_samples/` contains `global_weather.wsdl`
+  (classic SOAP interop WSDL with SOAP 1.1 and 1.2 bindings) and `hello_world.wsdl`
+  (hand-crafted edge-case WSDL covering document/literal, rpc/literal, optional parts,
+  multiple port types); 16 new `@pytest.mark.integration` tests in `tests/test_real_wsdls.py`
+- **Non-strict WSDL parsing** — `parse_wsdl(..., strict=False)` and
+  `parse_wsdl_file(..., strict=False)` silently skip unresolvable `wsdl:import` entries
+  (emitting a `warnings.warn`) instead of raising; SSRF guard is always enforced regardless
+  of `strict`
+- **JSON dual-mode response** — any `@soap_operation` endpoint returns JSON when the HTTP
+  client sends `Accept: application/json`; no separate route needed; SOAP faults are also
+  serialised as `{"fault": {"code": ..., "message": ..., "detail": ...}}`
+
+---
+
 ## [0.4.2] — 2026-04-11
 
 ### Fixed
@@ -29,6 +49,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
   the behaviour of `call()` (credential was silently dropped in the async path).
 - **N12** `wsgi.py` — One-way MEP responses now return `"202 Accepted"` instead of the
   incorrect `"202 Error"` HTTP status line.
+- **N05** `wssecurity.py` — `build_security_header()` now emits a `wsu:Timestamp` block with
+  `wsu:Created` (now) and `wsu:Expires` (now + 5 min) per WS-Security 1.0 §10; controlled via
+  `include_timestamp=True` (default `True`)
+- **N06** `wssecurity.py` — sending a `PasswordText` credential now emits a warning
+  (`UserWarning`) advising that PasswordText should only be used over TLS; can be suppressed
+  with `warnings.filterwarnings`
+- **N07** `wssecurity.py` / `application.py` — a nonce replay cache (`_NONCE_CACHE`) rejects
+  repeated `wsse:Nonce` values within the `wsu:Timestamp` validity window, preventing replay
+  attacks per WS-Security 1.0 §8
+- **N09** `application.py` — WS-Addressing `FaultTo` EPR is now respected: when a fault occurs
+  and a `wsa:FaultTo` address is present in the request, the fault response is routed to that
+  address (non-anonymous EPRs are logged and the response is still returned inline)
+- **N11** `envelope.py` — `build_envelope()` now validates the resulting envelope structure
+  (exactly one Body, Header before Body if present, no unknown direct children of Envelope)
+  and raises `ValueError` on violation before the element is returned
 - **N13** `xml.py` — `check_xml_depth()` iterparse now passes `load_dtd=False` and
   `no_network=True`, closing a gap between the depth-check path and the main hardened parser.
 
@@ -52,7 +87,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - Redundant loop in `SoapApplication._get_compiled_schema()` (B007)
 
 ### Changed
-- Minimum Python version documented as >=3.12 (3.10/3.11 dropped since 0.3.0)
+- Minimum Python version set to `>=3.12` (subsequently lowered back to `>=3.10` in v0.5.0)
 
 ---
 
