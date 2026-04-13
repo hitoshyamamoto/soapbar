@@ -262,8 +262,12 @@ def _make_spyne_wsgi(soap_version: SoapVersion) -> Any:
     from spyne.server.wsgi import WsgiApplication
 
     class CalcSpyneService(ServiceBase):
+        # spyne RPC API constraints: the Python method name IS the SOAP
+        # operation name on the wire / in the WSDL (so it must be `Add`,
+        # not `add`), and the first argument is the spyne request context
+        # (conventionally `ctx`), not a `self` — spyne injects it.
         @rpc(Integer, Integer, _returns=Integer)
-        def Add(ctx: Any, a: int, b: int) -> int:
+        def Add(ctx: Any, a: int, b: int) -> int:  # noqa: N802, N805
             return a + b
 
     if soap_version == SoapVersion.SOAP_11:
