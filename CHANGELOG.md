@@ -13,8 +13,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **`TestSpyneInterop`** in `tests/test_interop.py` — soapbar client ↔ spyne
   server interoperability, the symmetric counterpart to `TestZeepInterop`.
   Covers SOAP 1.1, SOAP 1.2, and spyne-generated WSDL parsing by soapbar.
-  Skipped automatically when `spyne` is not installed
+  Skipped automatically when `spyne` is not installed (spyne 2.14.0 is
+  incompatible with Python 3.12+, so the tests only execute on 3.10/3.11)
 - **`spyne>=2.14`** added to the `dev` dependency group for the new interop tests
+
+### Fixed
+
+- **Document/Literal/Wrapped child element namespace** —
+  `DocumentLiteralWrappedSerializer` now emits child elements inside the
+  operation wrapper qualified with `sig.input_namespace` /
+  `sig.output_namespace` (cascading through `param.namespace`), matching the
+  `elementFormDefault="qualified"` convention used by Apache CXF, .NET WCF,
+  and spyne. Previously, children were always unqualified, which caused
+  schema validation failures when calling Java/.NET/spyne services. The
+  matching deserializer accepts both qualified and unqualified forms for
+  tolerant parsing
 
 ### Changed
 

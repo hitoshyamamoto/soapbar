@@ -470,7 +470,8 @@ class DocumentLiteralWrappedSerializer(BindingSerializer):
         wrapper = sub_element(body_elem, tag)
         for param in sig.input_params:
             value = kwargs.get(param.name)
-            self._serialize_param_value(wrapper, param.name, "", param, value)
+            child_ns = param.namespace or sig.input_namespace or ""
+            self._serialize_param_value(wrapper, param.name, child_ns, param, value)
 
     def serialize_response(
         self,
@@ -484,7 +485,8 @@ class DocumentLiteralWrappedSerializer(BindingSerializer):
         wrapper = sub_element(body_elem, tag)
         for param in sig.output_params:
             value = values.get(param.name)
-            self._serialize_param_value(wrapper, param.name, "", param, value)
+            child_ns = param.namespace or sig.output_namespace or ""
+            self._serialize_param_value(wrapper, param.name, child_ns, param, value)
 
     def deserialize_request(
         self,
@@ -492,7 +494,7 @@ class DocumentLiteralWrappedSerializer(BindingSerializer):
         body_elem: _Element,
     ) -> dict[str, Any]:
         wrapper = body_elem[0] if len(body_elem) else body_elem
-        return self._extract_params(sig.input_params, wrapper)
+        return self._extract_params(sig.input_params, wrapper, sig.input_namespace or "")
 
     def deserialize_response(
         self,
@@ -500,16 +502,22 @@ class DocumentLiteralWrappedSerializer(BindingSerializer):
         body_elem: _Element,
     ) -> dict[str, Any]:
         wrapper = body_elem[0] if len(body_elem) else body_elem
-        return self._extract_params(sig.output_params, wrapper)
+        return self._extract_params(sig.output_params, wrapper, sig.output_namespace or "")
 
     def _extract_params(
         self,
         params: list[OperationParameter],
         wrapper: _Element,
+        op_namespace: str = "",
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for param in params:
-            child = wrapper.find(param.name)
+            ns = param.namespace or op_namespace
+            # Accept qualified (elementFormDefault=qualified) children first,
+            # falling back to unqualified for tolerance.
+            child = wrapper.find(f"{{{ns}}}{param.name}") if ns else None
+            if child is None:
+                child = wrapper.find(param.name)
             if child is not None:
                 result[param.name] = self._deserialize_param_value(child, param)
         return result
