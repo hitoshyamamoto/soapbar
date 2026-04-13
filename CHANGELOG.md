@@ -6,6 +6,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.2] — 2026-04-13
+
+### Added
+
+- **`TestSpyneInterop`** in `tests/test_interop.py` — soapbar client ↔ spyne
+  server interoperability, the symmetric counterpart to `TestZeepInterop`.
+  Covers SOAP 1.1, SOAP 1.2, and spyne-generated WSDL parsing by soapbar.
+  Skipped automatically when `spyne` is not installed
+- **`spyne>=2.14`** added to the `dev` dependency group for the new interop tests
+
+### Changed
+
+- **README conformance framing** — "100% SOAP Protocol Audit" phrasing reworded
+  to "internal conformance suite of 135 tests across 10 spec-mapped classes"
+  with an explicit note that the suite is self-administered, not a third-party
+  audit. Comparison table cells (`—`, `?`) rephrased as `not claimed` and
+  `undocumented` to stop implying competitors failed a test they never took
+- **PyPI metadata re-published** — the long description shipped with v0.5.1
+  ended with a stale "MIT with Attribution" string that contradicted the
+  Apache-2.0 license declared in `pyproject.toml`, `LICENSE`, classifiers, and
+  the on-disk README; re-uploading 0.5.2 publishes the corrected description
+
+---
+
 ## [0.5.1] — 2026-04-12
 
 ### Added

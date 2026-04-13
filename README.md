@@ -8,7 +8,7 @@ A SOAP framework for Python — client, server, and WSDL handling.
 
 soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates WSDL from Python service classes, parses existing WSDL to drive a typed client, and integrates with any ASGI or WSGI framework via thin adapter classes. The XML parser is hardened against XXE attacks using lxml with `resolve_entities=False`.
 
-> **Conformance** — soapbar v0.4.2 passes a full SOAP Protocol Conformance Audit at **100% (46/46 checkpoints)**. All F01–F09 original findings, G01–G11 gap findings, I01–I04 informational observations, and S10 (WS-I BSP X.509 token profile) are resolved.
+> **Conformance** — soapbar ships with an internal conformance suite of **135 tests across 10 spec-mapped classes** (`tests/audit/test_compliance.py`) covering SOAP 1.1/1.2, WSDL 1.1, and WS-I Basic Profile 1.1. The suite encodes 46 checkpoints derived from F01–F09 original findings, G01–G11 gap findings, I01–I04 informational observations, and S10 (WS-I BSP X.509 token profile); all 46 pass. This is a self-administered test suite, not an independent third-party audit.
 
 ---
 
@@ -936,7 +936,7 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | WSGI frameworks | ✓ | ✗ | ✓ | ✗ |
 | Auto WSDL generation | ✓ | ✗ | ✓ | ✓ |
 | WSDL-driven client | ✓ | ✓ | ✗ | ✗ |
-| XXE hardened by default | ✓ | ? | ? | ? |
+| XXE hardened by default | ✓ | undocumented | undocumented | undocumented |
 | Message size + depth limits | ✓ | ✗ | ✗ | ✗ |
 | WS-Security UsernameToken | ✓ | ✓ (client) | ✓ | ✗ |
 | XML Signature / Encryption | ✓ ([security]) | ✗ | Partial | ✗ |
@@ -944,12 +944,12 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | WS-Addressing 1.0 | ✓ | ✓ | Partial | ✗ |
 | One-way MEP (HTTP 202) | ✓ | ✓ | ✓ | ✗ |
 | SOAP array attributes | ✓ | ✓ | ✓ | ✗ |
-| 100% SOAP protocol audit | ✓ | — | — | — |
+| Internal conformance suite (135 tests) | ✓ | not claimed | not claimed | not claimed |
 | Core dependency | lxml | lxml, requests | lxml | fastapi, lxml |
 | Async HTTP client | httpx (optional) | httpx (optional) | — | — |
 | Python versions | 3.10–3.14 | 3.8+ | 3.8+ | 3.8+ |
 
-soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, is hardened against XXE/DoS attacks out of the box, and has passed a full SOAP Protocol Conformance Audit at 100% (46/46 checkpoints).
+soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, is hardened against XXE/DoS attacks out of the box, and ships with an internal conformance suite of 135 tests covering 46 spec-derived checkpoints (see `tests/audit/test_compliance.py`).
 
 ---
 

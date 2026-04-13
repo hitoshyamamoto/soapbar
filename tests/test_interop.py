@@ -1,7 +1,8 @@
-"""Interoperability tests: soapbar ↔ zeep.
+"""Interoperability tests: soapbar ↔ zeep, soapbar ↔ spyne.
 
-Requires zeep >= 4.0 (``uv sync --group dev``). Tests are skipped automatically
-when zeep is not installed so that CI without zeep still passes.
+Requires zeep >= 4.0 and spyne >= 2.14 (``uv sync --group dev``). Tests are
+skipped automatically when the peer library is not installed so that CI
+without it still passes.
 """
 from __future__ import annotations
 
@@ -242,3 +243,154 @@ class TestSoapbarSelfInterop:
     def test_soapbar_client_calls_soapbar_server_soap12(self) -> None:
         client = self._make_client(BindingStyle.RPC_LITERAL, SoapVersion.SOAP_12)
         assert client.call("Add", a=100, b=200) == 300
+
+
+# ---------------------------------------------------------------------------
+# Spyne interop (soapbar client ↔ spyne server)
+# ---------------------------------------------------------------------------
+
+try:
+    import spyne as _spyne  # noqa: F401
+    _HAS_SPYNE = True
+except ImportError:
+    _HAS_SPYNE = False
+
+
+def _make_spyne_wsgi(soap_version: SoapVersion) -> Any:
+    from spyne import Application, Integer, ServiceBase, rpc
+    from spyne.protocol.soap import Soap11, Soap12
+    from spyne.server.wsgi import WsgiApplication
+
+    class CalcSpyneService(ServiceBase):
+        @rpc(Integer, Integer, _returns=Integer)
+        def Add(ctx: Any, a: int, b: int) -> int:
+            return a + b
+
+    if soap_version == SoapVersion.SOAP_11:
+        in_proto: Any = Soap11(validator="lxml")
+        out_proto: Any = Soap11()
+    else:
+        in_proto = Soap12(validator="lxml")
+        out_proto = Soap12()
+
+    spyne_app = Application(
+        [CalcSpyneService],
+        tns="http://example.com/calc",
+        name="Calculator",
+        in_protocol=in_proto,
+        out_protocol=out_proto,
+    )
+    return WsgiApplication(spyne_app)
+
+
+class _SpyneWsgiTransport(HttpTransport):
+    """Routes soapbar SoapClient requests directly into a spyne WsgiApplication."""
+
+    def __init__(self, wsgi_app: Any) -> None:
+        super().__init__()
+        self._wsgi = wsgi_app
+
+    def _call_wsgi(
+        self,
+        method: str,
+        body: bytes,
+        headers: dict[str, str],
+        query_string: str = "",
+    ) -> tuple[int, str, bytes]:
+        environ: dict[str, Any] = {
+            "REQUEST_METHOD": method,
+            "CONTENT_TYPE": headers.get("Content-Type", "text/xml; charset=utf-8"),
+            "CONTENT_LENGTH": str(len(body)),
+            "HTTP_SOAPACTION": headers.get("SOAPAction", ""),
+            "wsgi.input": io.BytesIO(body),
+            "wsgi.errors": io.BytesIO(),
+            "SERVER_NAME": "localhost",
+            "SERVER_PORT": "8000",
+            "PATH_INFO": "/",
+            "QUERY_STRING": query_string,
+            "wsgi.url_scheme": "http",
+            "wsgi.multithread": False,
+            "wsgi.multiprocess": False,
+            "wsgi.run_once": False,
+        }
+        captured: dict[str, Any] = {"status": 500, "headers": {}}
+
+        def start_response(
+            status: str,
+            response_headers: list[tuple[str, str]],
+            *args: Any,
+        ) -> Any:
+            captured["status"] = int(status.split(" ", 1)[0])
+            captured["headers"] = dict(response_headers)
+
+        chunks = self._wsgi(environ, start_response)
+        body_out = b"".join(chunks)
+        ct = captured["headers"].get("Content-Type", "text/xml")
+        return int(captured["status"]), ct, body_out
+
+    def send(  # type: ignore[override]
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str],
+    ) -> tuple[int, str, bytes]:
+        return self._call_wsgi("POST", body, headers)
+
+    def fetch_wsdl(self) -> bytes:
+        _status, _ct, data = self._call_wsgi(
+            "GET", b"", {"Content-Type": "text/xml"}, query_string="wsdl"
+        )
+        return data
+
+
+@pytest.mark.skipif(not _HAS_SPYNE, reason="spyne not installed")
+class TestSpyneInterop:
+    """soapbar client ↔ spyne server interoperability.
+
+    Symmetric counterpart to :class:`TestZeepInterop`: zeep-client ↔ soapbar-server
+    is tested above; here soapbar acts as the client and spyne hosts the service.
+    """
+
+    TNS = "http://example.com/calc"
+
+    def _make_client(self, soap_version: SoapVersion) -> SoapClient:
+        int_type = _int()
+        wsgi = _make_spyne_wsgi(soap_version)
+        # Spyne wraps the return value as <AddResponse><AddResult>…</AddResult></AddResponse>
+        sig = OperationSignature(
+            name="Add",
+            input_params=[
+                OperationParameter("a", int_type),
+                OperationParameter("b", int_type),
+            ],
+            output_params=[OperationParameter("AddResult", int_type)],
+            soap_action="",
+            input_namespace=self.TNS,
+            output_namespace=self.TNS,
+        )
+        client = SoapClient.manual(
+            "http://localhost:8000/",
+            binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+            soap_version=soap_version,
+            transport=_SpyneWsgiTransport(wsgi),
+        )
+        client.register_operation(sig)
+        return client
+
+    def test_soapbar_client_calls_spyne_server_soap11(self) -> None:
+        client = self._make_client(SoapVersion.SOAP_11)
+        assert client.call("Add", a=3, b=4) == 7
+
+    def test_soapbar_client_calls_spyne_server_soap12(self) -> None:
+        client = self._make_client(SoapVersion.SOAP_12)
+        assert client.call("Add", a=10, b=32) == 42
+
+    def test_spyne_wsdl_parseable_by_soapbar(self) -> None:
+        from soapbar.core.wsdl.parser import parse_wsdl
+
+        wsgi = _make_spyne_wsgi(SoapVersion.SOAP_11)
+        transport = _SpyneWsgiTransport(wsgi)
+        wsdl_bytes = transport.fetch_wsdl()
+        assert wsdl_bytes.startswith(b"<?xml") or b"definitions" in wsdl_bytes
+        defn = parse_wsdl(wsdl_bytes)
+        assert defn is not None
