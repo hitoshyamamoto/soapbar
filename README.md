@@ -1,7 +1,9 @@
 # soapbar
 
-![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)
-![License](https://img.shields.io/badge/license-Apache%202.0-blue)
+[![CI](https://github.com/hitoshyamamoto/soapbar/actions/workflows/push.yml/badge.svg?branch=main)](https://github.com/hitoshyamamoto/soapbar/actions/workflows/push.yml)
+[![PyPI](https://img.shields.io/pypi/v/soapbar.svg?logo=pypi&logoColor=white)](https://pypi.org/project/soapbar/)
+[![Python versions](https://img.shields.io/pypi/pyversions/soapbar.svg?logo=python&logoColor=white)](https://pypi.org/project/soapbar/)
+[![License](https://img.shields.io/pypi/l/soapbar.svg)](https://github.com/hitoshyamamoto/soapbar/blob/main/LICENSE)
 ![Conformance](https://img.shields.io/badge/SOAP%20conformance-100%25-brightgreen)
 
 A SOAP framework for Python — client, server, and WSDL handling.
