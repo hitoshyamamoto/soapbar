@@ -3649,6 +3649,18 @@ class TestXsdImportResolution:
 
     _FIXTURE_ROOT = Path(__file__).parent / "wsdl_samples"
 
+    def setup_method(self) -> None:
+        # parse_wsdl registers harvested complex types into the global
+        # xsd registry as a side effect. Snapshot the registry before
+        # each test and restore it after, so the 27-types invariant
+        # asserted elsewhere in the suite survives our fixture leaks.
+        from soapbar.core.types import xsd as _xsd_registry
+        self._xsd_snapshot = dict(_xsd_registry._by_name)
+
+    def teardown_method(self) -> None:
+        from soapbar.core.types import xsd as _xsd_registry
+        _xsd_registry._by_name = self._xsd_snapshot
+
     def test_multi_file_schema_chain_is_fully_resolved(self) -> None:
         """crm.wsdl imports types.xsd which imports common.xsd. Both
         complex types (Customer from types.xsd, Address from common.xsd)

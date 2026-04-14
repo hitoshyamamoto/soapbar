@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from soapbar import parse_wsdl
+from soapbar.core.wsdl.parser import parse_wsdl_file
 
 SAMPLES = Path(__file__).parent / "wsdl_samples"
 
@@ -85,3 +86,49 @@ class TestHelloWorldWsdl:
     def test_service_ports(self) -> None:
         svc = self.wsdl.services["HelloWorldService"]
         assert len(svc.ports) == 3
+
+
+@pytest.mark.integration
+class TestMultiSchemaWsdl:
+    """CRM — a two-hop xsd:import chain modelled on the shape of real
+    enterprise SOAP contracts (SAP, Salesforce partner WSDL, NF-e). The
+    top-level WSDL imports types.xsd which imports common.xsd; a
+    conformant parser must register complex types from both."""
+
+    def setup_method(self) -> None:
+        # parse_wsdl registers harvested complex types into the global
+        # xsd registry as a side effect; snapshot before each test and
+        # restore in teardown so the 27-types invariant in test_soapbar
+        # does not regress under test-order pollution.
+        from soapbar.core.types import xsd as _xsd_registry
+        self._xsd_snapshot = dict(_xsd_registry._by_name)
+        # parse_wsdl_file sets base_url to the fixture's parent directory
+        # so relative xsd:import schemaLocation="types.xsd" resolves.
+        self.wsdl = parse_wsdl_file(SAMPLES / "multi_schema" / "crm.wsdl")
+
+    def teardown_method(self) -> None:
+        from soapbar.core.types import xsd as _xsd_registry
+        _xsd_registry._by_name = self._xsd_snapshot
+
+    def test_target_namespace(self) -> None:
+        assert self.wsdl.target_namespace == "http://example.com/crm"
+
+    def test_binding_and_operation_present(self) -> None:
+        assert "CrmBinding" in self.wsdl.bindings
+        names = {op.name for op in self.wsdl.bindings["CrmBinding"].operations}
+        assert "GetCustomer" in names
+
+    def test_direct_xsd_import_resolved(self) -> None:
+        """Customer is declared in types.xsd (one-hop import)."""
+        assert "Customer" in self.wsdl.complex_types
+
+    def test_transitive_xsd_import_resolved(self) -> None:
+        """Address is declared in common.xsd, reachable only via
+        types.xsd → common.xsd (two-hop transitive import). This is the
+        assertion that actually pins the recursion in
+        _resolve_schema_imports."""
+        assert "Address" in self.wsdl.complex_types
+
+    def test_service_endpoint_address(self) -> None:
+        svc = self.wsdl.services["CrmService"]
+        assert svc.ports[0].address == "http://example.com/crm"
