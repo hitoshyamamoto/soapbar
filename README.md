@@ -1020,6 +1020,7 @@ The following features are intentionally out-of-scope for the current release.  
 | **SOAP 1.2 `relay` attribute** | Parsed and exposed on `SoapHeaderBlock` | The `relay` boolean is available on each `SoapHeaderBlock` instance. Full SOAP intermediary forwarding (actually relaying the message) is not implemented. |
 | **`xsd:complexType` / `xsd:array` / `xsd:choice`** | Fully supported for round-trip serialization | Recursive (`self-referencing`) complex types are resolved lazily. `xsd:complexContent/restriction` for SOAP-encoded arrays is also parsed from WSDL. |
 | **External schema `xsd:import`** | Not followed | `wsdl:import` (document-level) is resolved with an SSRF guard (`allow_remote_imports=False` by default). `xsd:import` elements *inside* a `<types>` schema are silently ignored; type resolution falls back to built-in primitives. |
+| **WS-Addressing reply / fault routing (A04, A05)** | EPRs validated, not routed | `wsa:ReplyTo` and `wsa:FaultTo` Endpoint References are parsed and validated as absolute URIs. Responses and faults are always returned on the request's HTTP back-channel — soapbar does not dispatch outbound HTTP from the server, and the client does not consume EPRs from a peer's response. The well-known constants `WSA_ANONYMOUS` and `WSA_NONE` are exposed in `soapbar.core.envelope` for callers building EPR-aware logic on top of `handle_request()`. See `SECURITY.md` for the full scope note. |
 
 ---
 
