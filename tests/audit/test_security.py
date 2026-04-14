@@ -7,6 +7,7 @@ All tests are self-contained with no outbound HTTP.
 from __future__ import annotations
 
 import contextlib
+import datetime
 
 import pytest
 from lxml import etree
@@ -17,6 +18,12 @@ from soapbar.core.fault import SoapFault
 from soapbar.core.xml import parse_xml
 from soapbar.server.application import SoapApplication
 from soapbar.server.service import SoapService, soap_operation
+
+try:
+    import xmlsec as _xmlsec  # noqa: F401
+    _HAS_XMLSEC = True
+except ImportError:
+    _HAS_XMLSEC = False
 
 
 def _make_app() -> SoapApplication:
@@ -310,3 +317,287 @@ class TestNamespaceConfusion:
         no_ns = b"<Envelope><Body/></Envelope>"
         with pytest.raises(SoapFault):
             SoapEnvelope.from_xml(no_ns)
+
+
+# ---------------------------------------------------------------------------
+# S05 — Exclusive C14N in signed envelopes (WS-I BSP 1.1 R5404)
+# ---------------------------------------------------------------------------
+
+_SIMPLE_ENV = (
+    b"<?xml version='1.0' encoding='utf-8'?>"
+    b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+    b"<soapenv:Body><ping/></soapenv:Body>"
+    b"</soapenv:Envelope>"
+)
+
+_DS_NS = "http://www.w3.org/2000/09/xmldsig#"
+_EXCL_C14N = "http://www.w3.org/2001/10/xml-exc-c14n#"
+_WSU_NS = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+
+
+def _make_key_and_cert():
+    from cryptography import x509
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "audit-test")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(
+            datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+        )
+        .sign(key, hashes.SHA256())
+    )
+    return key, cert
+
+
+@pytest.mark.skipif(
+    pytest.importorskip("signxml", reason="signxml not installed") is None,
+    reason="signxml not installed",
+)
+class TestExclusiveC14N:
+    """S05: Signed envelopes must use Exclusive C14N (WS-I BSP 1.1 R5404)."""
+
+    def test_signed_info_uses_exclusive_c14n(self):
+        """CanonicalizationMethod/@Algorithm must be the Exclusive C14N URI."""
+        from lxml import etree
+
+        from soapbar.core.wssecurity import sign_envelope
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)
+        root = etree.fromstring(signed)
+        c14n_elems = root.findall(
+            f".//{{{_DS_NS}}}CanonicalizationMethod"
+        )
+        assert c14n_elems, "No ds:CanonicalizationMethod found in signed envelope"
+        for elem in c14n_elems:
+            assert elem.get("Algorithm") == _EXCL_C14N, (
+                f"Expected Exclusive C14N ({_EXCL_C14N!r}), "
+                f"got {elem.get('Algorithm')!r}"
+            )
+
+    def test_reference_transforms_use_exclusive_c14n(self):
+        """Every ds:Transform inside a ds:Reference must use Exclusive C14N."""
+        from lxml import etree
+
+        from soapbar.core.wssecurity import sign_envelope
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)
+        root = etree.fromstring(signed)
+        transforms = root.findall(
+            f".//{{{_DS_NS}}}Reference/{{{_DS_NS}}}Transforms/{{{_DS_NS}}}Transform"
+        )
+        c14n_transforms = [
+            t for t in transforms if t.get("Algorithm") == _EXCL_C14N
+        ]
+        # At least one Exclusive C14N transform must exist
+        assert c14n_transforms, "No Exclusive C14N Transform found in ds:Reference/Transforms"
+
+
+# ---------------------------------------------------------------------------
+# S04 — Explicit ds:Reference for Body (WS-I BSP 1.1 R5416, R5441)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(
+    pytest.importorskip("signxml", reason="signxml not installed") is None,
+    reason="signxml not installed",
+)
+class TestExplicitBodyReference:
+    """S04: Signed envelopes must contain a discrete ds:Reference for the Body element."""
+
+    def test_body_has_wsu_id_after_signing(self):
+        """sign_envelope() assigns wsu:Id='Body-1' to the Body element."""
+        from lxml import etree
+
+        from soapbar.core.wssecurity import sign_envelope
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)
+        root = etree.fromstring(signed)
+        soap_ns = "http://schemas.xmlsoap.org/soap/envelope/"
+        body = root.find(f"{{{soap_ns}}}Body")
+        assert body is not None
+        wsu_id = body.get(f"{{{_WSU_NS}}}Id")
+        assert wsu_id is not None, "Body element missing wsu:Id after signing"
+
+    def test_signature_contains_body_reference(self):
+        """ds:Signature must contain a ds:Reference with URI='#Body-1'."""
+        from lxml import etree
+
+        from soapbar.core.wssecurity import sign_envelope
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)
+        root = etree.fromstring(signed)
+        refs = root.findall(f".//{{{_DS_NS}}}Reference")
+        uris = [r.get("URI") or "" for r in refs]
+        assert any(uri.startswith("#") for uri in uris), (
+            f"No fragment URI in ds:Reference elements; found: {uris}"
+        )
+
+    def test_bsp_body_has_wsu_id_after_signing(self):
+        """sign_envelope_bsp() also assigns wsu:Id='Body-1' to the Body element."""
+        from lxml import etree
+
+        from soapbar.core.wssecurity import sign_envelope_bsp
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope_bsp(_SIMPLE_ENV, key, cert)
+        root = etree.fromstring(signed)
+        soap_ns = "http://schemas.xmlsoap.org/soap/envelope/"
+        body = root.find(f"{{{soap_ns}}}Body")
+        assert body is not None
+        wsu_id = body.get(f"{{{_WSU_NS}}}Id")
+        assert wsu_id is not None, "Body element missing wsu:Id after BSP signing"
+
+    def test_timestamp_reference_included_when_present(self):
+        """When the envelope has a wsse:Security/wsu:Timestamp, sign_envelope() must
+        include a ds:Reference for the Timestamp element (S04 Timestamp coverage)."""
+        from lxml import etree
+
+        from soapbar.core.wssecurity import sign_envelope
+
+        _WSSE_NS = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"  # noqa: N806 — spec URI constant
+        _SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"  # noqa: N806 — spec URI constant
+
+        # Build an envelope that already includes a wsse:Security + wsu:Timestamp
+        envelope_with_ts = (
+            f'<?xml version="1.0" encoding="utf-8"?>'
+            f'<soapenv:Envelope xmlns:soapenv="{_SOAP_NS}"'
+            f'  xmlns:wsse="{_WSSE_NS}"'
+            f'  xmlns:wsu="{_WSU_NS}">'
+            f"  <soapenv:Header>"
+            f'    <wsse:Security soapenv:mustUnderstand="1">'
+            f'      <wsu:Timestamp wsu:Id="TS-1">'
+            f"        <wsu:Created>2026-01-01T00:00:00Z</wsu:Created>"
+            f"        <wsu:Expires>2026-01-01T00:05:00Z</wsu:Expires>"
+            f"      </wsu:Timestamp>"
+            f"    </wsse:Security>"
+            f"  </soapenv:Header>"
+            f"  <soapenv:Body><ping/></soapenv:Body>"
+            f"</soapenv:Envelope>"
+        ).encode()
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(envelope_with_ts, key, cert)
+        root = etree.fromstring(signed)
+        refs = root.findall(f".//{{{_DS_NS}}}Reference")
+        uris = [r.get("URI") or "" for r in refs]
+        # Must have a Reference for both Body and Timestamp
+        assert any("#Body" in u for u in uris), f"No Body reference found; refs={uris}"
+        assert any("#TS-1" in u for u in uris), f"No Timestamp reference found; refs={uris}"
+
+
+
+# ---------------------------------------------------------------------------
+# S04 + S05 — libxmlsec1 round-trip verification (cross-stack interop proof)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(
+    not _HAS_XMLSEC,
+    reason="python-xmlsec not installed (needs libxmlsec1-dev; always runs in CI)",
+)
+class TestXmlsecRoundTrip:
+    """Cross-implementation verification of S04+S05 using python-xmlsec / libxmlsec1.
+
+    libxmlsec1 is the same C canonicalization library linked by Apache Santuario
+    (WSS4J), many CXF builds, and the .NET XmlDsig stack.  A successful
+    round-trip here is stronger evidence of interoperability than the structural
+    assertions in TestExclusiveC14N / TestExplicitBodyReference, because those
+    only verify what soapbar *emits*, not whether an independent verifier
+    *accepts* it.
+
+    These tests run automatically in CI (ubuntu-latest has libxmlsec1).
+    Locally: ``sudo apt-get install libxmlsec1-dev libxmlsec1-openssl`` then
+    ``uv sync --group crypto-interop``.
+    """
+
+    def _verify(self, signed_bytes: bytes, cert: object) -> None:
+        """Verify *signed_bytes* with libxmlsec1, raises xmlsec.Error on failure."""
+        import xmlsec
+        from cryptography.hazmat.primitives import serialization
+
+        cert_pem: bytes = cert.public_bytes(serialization.Encoding.PEM)  # type: ignore[union-attr]
+        root = etree.fromstring(signed_bytes)
+
+        # Register wsu:Id (local name "Id") as an XML ID attribute so that
+        # libxmlsec1 can resolve ds:Reference URI="#Body-1" / "#TS-1".
+        # xmlsec.tree.add_ids() walks the subtree and calls xmlAddID() in
+        # libxml2 for every element whose attribute local-name matches.
+        xmlsec.tree.add_ids(root, ["Id"])
+
+        sig_node = xmlsec.tree.find_node(root, xmlsec.Node.SIGNATURE)
+        assert sig_node is not None, "No ds:Signature found in signed envelope"
+
+        ctx = xmlsec.SignatureContext()
+        ctx.key = xmlsec.Key.from_memory(cert_pem, xmlsec.KeyFormat.CERT_PEM)
+        ctx.verify(sig_node)  # raises xmlsec.Error if invalid
+
+    # --- sign_envelope (simple, no Timestamp) --------------------------------
+
+    def test_simple_envelope_verifies(self) -> None:
+        """sign_envelope() — simple Body-only reference verifies under libxmlsec1."""
+        from soapbar.core.wssecurity import sign_envelope
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)
+        self._verify(signed, cert)
+
+    # --- sign_envelope with Timestamp ----------------------------------------
+
+    def test_envelope_with_timestamp_verifies(self) -> None:
+        """sign_envelope() — Body+Timestamp references verify under libxmlsec1."""
+        from soapbar.core.wssecurity import sign_envelope
+
+        _WSSE_NS = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"  # noqa: N806 — spec URI constant
+        _SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"  # noqa: N806 — spec URI constant
+
+        env_with_ts = (
+            f'<?xml version="1.0" encoding="utf-8"?>'
+            f'<soapenv:Envelope xmlns:soapenv="{_SOAP_NS}"'
+            f'  xmlns:wsse="{_WSSE_NS}"'
+            f'  xmlns:wsu="{_WSU_NS}">'
+            f"  <soapenv:Header>"
+            f'    <wsse:Security soapenv:mustUnderstand="1">'
+            f'      <wsu:Timestamp wsu:Id="TS-1">'
+            f"        <wsu:Created>2026-01-01T00:00:00Z</wsu:Created>"
+            f"        <wsu:Expires>2026-01-01T00:05:00Z</wsu:Expires>"
+            f"      </wsu:Timestamp>"
+            f"    </wsse:Security>"
+            f"  </soapenv:Header>"
+            f"  <soapenv:Body><ping/></soapenv:Body>"
+            f"</soapenv:Envelope>"
+        ).encode()
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(env_with_ts, key, cert)
+        self._verify(signed, cert)
+
+    # --- sign_envelope_bsp ---------------------------------------------------
+
+    def test_bsp_envelope_verifies(self) -> None:
+        """sign_envelope_bsp() output verifies under libxmlsec1."""
+        from soapbar.core.wssecurity import sign_envelope_bsp
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope_bsp(_SIMPLE_ENV, key, cert)
+        self._verify(signed, cert)
+
+    # --- tamper guard --------------------------------------------------------
+
+    def test_tampered_body_is_rejected(self) -> None:
+        """libxmlsec1 must reject an envelope whose Body content was modified post-signing."""
+        import xmlsec
+
+        from soapbar.core.wssecurity import sign_envelope
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)
+        tampered = signed.replace(b"<ping/>", b"<ping>injected</ping>")
+        with pytest.raises(xmlsec.Error):
+            self._verify(tampered, cert)

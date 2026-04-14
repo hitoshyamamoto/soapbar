@@ -339,9 +339,42 @@ def sign_envelope(
     from soapbar.core.xml import parse_xml
 
     try:
+        from signxml.algorithms import CanonicalizationMethod
+
+        from soapbar.core.namespaces import NS as _NS
+
         root = parse_xml(envelope_bytes)
-        signer = XMLSigner(method=SignatureConstructionMethod.enveloped)
-        signed: Any = signer.sign(root, key=private_key, cert=[certificate])
+
+        # S04 — assign wsu:Id to Body and build explicit reference list so that
+        # Body and Timestamp are independently covered (BSP R5416, R5441).
+        _env_ns = root.tag.split("}")[0].lstrip("{") if "}" in root.tag else ""
+        _wsu_ns = _NS.WSU
+        _body_elem = root.find(f"{{{_env_ns}}}Body")
+        _ref_uris: list[str] = []
+        if _body_elem is not None:
+            _body_id = _body_elem.get(f"{{{_wsu_ns}}}Id") or "Body-1"
+            if not _body_elem.get(f"{{{_wsu_ns}}}Id"):
+                _body_elem.set(f"{{{_wsu_ns}}}Id", _body_id)
+            _ref_uris.append(f"#{_body_id}")
+        _hdr = root.find(f"{{{_env_ns}}}Header")
+        if _hdr is not None:
+            _sec = _hdr.find(f"{{{_NS.WSSE}}}Security")
+            if _sec is not None:
+                _ts = _sec.find(f"{{{_wsu_ns}}}Timestamp")
+                if _ts is not None:
+                    _ts_id = _ts.get(f"{{{_wsu_ns}}}Id") or "TS-1"
+                    _ref_uris.append(f"#{_ts_id}")
+
+        # S05 — use Exclusive C14N (BSP R5404); signxml defaults to C14N 1.1
+        # which is rejected by WSS4J / CXF / WCF verifiers.
+        signer = XMLSigner(
+            method=SignatureConstructionMethod.enveloped,
+            c14n_algorithm=CanonicalizationMethod.EXCLUSIVE_XML_CANONICALIZATION_1_0,
+        )
+        signed: Any = signer.sign(
+            root, key=private_key, cert=[certificate],
+            reference_uri=_ref_uris if _ref_uris else None,
+        )
         result_bytes: bytes = etree.tostring(signed, xml_declaration=True, encoding="utf-8")
         return result_bytes
     except Exception as exc:
@@ -788,9 +821,30 @@ def sign_envelope_bsp(
         bst = build_binary_security_token(certificate, token_id=token_id)
         security.insert(0, bst)
 
-        # Sign envelope with signxml (produces ds:X509Data KeyInfo)
-        signer = XMLSigner(method=SignatureConstructionMethod.enveloped)
-        signed: Any = signer.sign(root, key=private_key, cert=[certificate])
+        # S04 — assign wsu:Id to Body and build explicit reference list
+        # (BSP R5416, R5441: discrete references for Body and Timestamp).
+        _body_for_bsp = root.find(f"{{{env_ns}}}Body")
+        _ref_uris_bsp: list[str] = []
+        if _body_for_bsp is not None:
+            _body_id_bsp = _body_for_bsp.get(f"{{{wsu_ns}}}Id") or "Body-1"
+            if not _body_for_bsp.get(f"{{{wsu_ns}}}Id"):
+                _body_for_bsp.set(f"{{{wsu_ns}}}Id", _body_id_bsp)
+            _ref_uris_bsp.append(f"#{_body_id_bsp}")
+        _ts_bsp = security.find(f"{{{wsu_ns}}}Timestamp")
+        if _ts_bsp is not None:
+            _ts_id_bsp = _ts_bsp.get(f"{{{wsu_ns}}}Id") or "TS-1"
+            _ref_uris_bsp.append(f"#{_ts_id_bsp}")
+
+        # S05 — use Exclusive C14N (BSP R5404)
+        from signxml.algorithms import CanonicalizationMethod
+        signer = XMLSigner(
+            method=SignatureConstructionMethod.enveloped,
+            c14n_algorithm=CanonicalizationMethod.EXCLUSIVE_XML_CANONICALIZATION_1_0,
+        )
+        signed: Any = signer.sign(
+            root, key=private_key, cert=[certificate],
+            reference_uri=_ref_uris_bsp if _ref_uris_bsp else None,
+        )
 
         # Replace ds:X509Data in ds:KeyInfo with wsse:SecurityTokenReference
         # (BSP R3057: KeyInfo MUST contain SecurityTokenReference, not X509Data)

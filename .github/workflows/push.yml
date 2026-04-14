@@ -53,8 +53,11 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
+      - name: Install xmlsec system libraries
+        run: sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl pkg-config
+
       - name: Install dev dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --group crypto-interop
 
       - name: Run tests with coverage
         run: uv run pytest tests/ -q --cov=soapbar --cov-report=xml --cov-report=term-missing
