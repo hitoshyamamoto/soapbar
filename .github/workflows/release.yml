@@ -56,3 +56,41 @@ jobs:
 
       - name: Publish to PyPI (OIDC trusted publishing)
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to create a GitHub Release
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          set -euo pipefail
+          # Strip the leading "v" from refs/tags/v0.6.1 → 0.6.1
+          VERSION="${GITHUB_REF_NAME#v}"
+          # CHANGELOG sections start with `## [X.Y.Z] — DATE`. Grab the
+          # lines from the matching header up to (but not including) the
+          # next `## [` header.
+          awk -v ver="## [${VERSION}]" '
+            $0 ~ "^" ver { grab=1; print; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for ${VERSION}"
+            exit 1
+          fi
+          # Surface for diagnostics; not used by downstream steps.
+          echo "Extracted $(wc -l < release-notes.md) lines for ${VERSION}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          body_path: release-notes.md
+          # tag_name defaults to github.ref_name (already the v0.6.1 tag).
+          # Do not mark prerelease — soapbar uses semver-style tags and
+          # the Development Status classifier conveys alpha/beta state.
