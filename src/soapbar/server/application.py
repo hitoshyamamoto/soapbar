@@ -93,12 +93,14 @@ class SoapApplication:
         max_body_size: int = 10 * 1024 * 1024,  # 10 MB — G01
         security_validator: Any = None,
         validate_body_schema: bool = False,
+        allow_plaintext_credentials: bool = False,
     ) -> None:
         self._custom_wsdl = custom_wsdl
         self.service_url = service_url
         self._max_body_size = max_body_size
         self._security_validator = security_validator  # G09: UsernameTokenValidator or None
         self._validate_body_schema = validate_body_schema  # X07
+        self._allow_plaintext_credentials = allow_plaintext_credentials  # S08
         self._compiled_schema: Any = None  # etree.XMLSchema | None; lazy-built
         self._services: list[SoapService] = []
         # operation_name → (service, method)
@@ -254,6 +256,27 @@ class SoapApplication:
             if self._security_validator is not None:
                 if envelope.ws_security_element is None:
                     raise SoapFault("Client", "Missing wsse:Security header")
+
+                # S08 — reject PasswordText over plain HTTP unless explicitly opted in
+                # (WSS 1.0 §6.2; WS-I BSP R4202).
+                if (
+                    not self._allow_plaintext_credentials
+                    and self.service_url.startswith("http://")
+                ):
+                    _wsse_ns = NS.WSSE
+                    for _ut in envelope.ws_security_element.findall(
+                        f"{{{_wsse_ns}}}UsernameToken"
+                    ):
+                        _pw = _ut.find(f"{{{_wsse_ns}}}Password")
+                        if _pw is not None and (_pw.get("Type") or "").endswith("#PasswordText"):
+                            raise SoapFault(
+                                "Client",
+                                "PasswordText credentials are not permitted over a non-TLS "
+                                "transport (WSS 1.0 §6.2). Use HTTPS or PasswordDigest. "
+                                "Set allow_plaintext_credentials=True to override in "
+                                "development.",
+                            )
+
                 from soapbar.core.wssecurity import SecurityValidationError
                 try:
                     self._security_validator.validate(envelope.ws_security_element)

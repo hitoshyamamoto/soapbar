@@ -1335,7 +1335,9 @@ class TestMustUnderstandEnforcement:
                 return _pw if u == "alice" else None
 
         app, _ = _make_app()
-        app2 = SoapApplication(service_url="http://example.com/calc", security_validator=_V())
+        # Use https:// so S08 does not gate PasswordText (this test exercises mustUnderstand,
+        # not transport security).
+        app2 = SoapApplication(service_url="https://example.com/calc", security_validator=_V())
         app2.register(app._services[0])
 
         env = SoapEnvelope(version=SoapVersion.SOAP_11)

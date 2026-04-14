@@ -4938,7 +4938,9 @@ class TestApplicationCoverageBranches:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            app = SoapApplication(security_validator=RejectAll())
+            # allow_plaintext_credentials=True because this test exercises the validator
+            # error path, not the S08 transport-security gate.
+            app = SoapApplication(security_validator=RejectAll(), allow_plaintext_credentials=True)
         app.register(Svc())
 
         cred = UsernameTokenCredential(username="nobody", password="x")  # noqa: S106
@@ -6877,3 +6879,128 @@ class TestSoap12FaultBodySiblings:
         assert len(env.body_elements) == 2
 
 
+
+
+# ===========================================================================
+# S08 — PasswordText hard-gate over non-TLS
+# ===========================================================================
+
+class TestPasswordTextHardGate:
+    """S08: SoapApplication rejects PasswordText credentials over plain HTTP
+    (WSS 1.0 §6.2; WS-I BSP R4202) unless allow_plaintext_credentials=True."""
+
+    _WSSE = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+    _PW_TEXT = f"{_WSSE}#PasswordText"
+
+    def _make_validator(self):
+        from soapbar.core.wssecurity import UsernameTokenValidator
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "secret" if u == "alice" else None
+
+        return _V()
+
+    def _make_app(self, allow_plaintext: bool = False) -> SoapApplication:
+        import warnings
+
+        from soapbar.server.application import SoapApplication
+
+        class _Svc(SoapService):
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation()
+            def ping(self) -> str:
+                return "pong"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication(
+                service_url="http://example.com/soap",
+                security_validator=self._make_validator(),
+                allow_plaintext_credentials=allow_plaintext,
+            )
+        app.register(_Svc())
+        return app
+
+    def _passwordtext_envelope(self) -> bytes:
+        """Build a minimal SOAP 1.1 envelope with a PasswordText UsernameToken."""
+        return (
+            f'<?xml version="1.0"?>'
+            f'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            f'  xmlns:wsse="{self._WSSE}">'
+            f"  <soapenv:Header>"
+            f'    <wsse:Security soapenv:mustUnderstand="1">'
+            f"      <wsse:UsernameToken>"
+            f"        <wsse:Username>alice</wsse:Username>"
+            f'        <wsse:Password Type="{self._PW_TEXT}">secret</wsse:Password>'
+            f"      </wsse:UsernameToken>"
+            f"    </wsse:Security>"
+            f"  </soapenv:Header>"
+            f"  <soapenv:Body><ping/></soapenv:Body>"
+            f"</soapenv:Envelope>"
+        ).encode()
+
+    def test_passwordtext_over_http_is_rejected(self) -> None:
+        """PasswordText over HTTP must produce a 500 Client fault."""
+        app = self._make_app(allow_plaintext=False)
+        status, _, body = app.handle_request(self._passwordtext_envelope())
+        assert status == 500
+        assert b"PasswordText" in body or b"non-TLS" in body or b"plaintext" in body.lower()
+
+    def test_passwordtext_over_http_with_opt_in_is_accepted(self) -> None:
+        """allow_plaintext_credentials=True bypasses the hard gate."""
+        app = self._make_app(allow_plaintext=True)
+        status, _, _ = app.handle_request(self._passwordtext_envelope())
+        # Validator will accept correct password → successful dispatch (200)
+        assert status == 200
+
+    def test_passworddigest_over_http_not_gated(self) -> None:
+        """PasswordDigest credentials over plain HTTP are NOT blocked by S08
+        (only PasswordText is gated; Digest is safe over any transport)."""
+        import warnings
+
+        from lxml import etree
+
+        from soapbar.core.wssecurity import (
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+        from soapbar.server.application import SoapApplication
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "secret" if u == "alice" else None
+
+        class _Svc(SoapService):
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation()
+            def ping(self) -> str:
+                return "pong"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication(service_url="http://example.com/soap", security_validator=_V())
+        app.register(_Svc())
+
+        cred = UsernameTokenCredential(
+            username="alice",
+            password="secret",  # noqa: S106
+            use_digest=True,
+            nonce=b"\x01" * 16,
+            created="2026-01-01T00:00:00Z",
+        )
+        sec_elem = build_security_header(cred, soap_ns=NS.SOAP_ENV)
+        sec_bytes = etree.tostring(sec_elem)
+        wsse_ns = NS.WSSE
+        xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            b' xmlns:wsse="' + wsse_ns.encode() + b'">'
+            b"<soapenv:Header>" + sec_bytes + b"</soapenv:Header>"
+            b"<soapenv:Body><ping/></soapenv:Body></soapenv:Envelope>"
+        )
+        status, _, _ = app.handle_request(xml)
+        # PasswordDigest is safe over HTTP so the S08 gate must not fire
+        assert status == 200
