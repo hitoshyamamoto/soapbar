@@ -753,3 +753,19 @@ class TestEprAddressValidation:
         )
         assert env.ws_addressing is not None
         assert env.ws_addressing.reply_to.address == "urn:example:anonymous"
+
+    def test_wsa_anonymous_uri_accepted(self):
+        """WSA_ANONYMOUS magic address must be accepted and round-trip without modification."""
+        from soapbar.core.envelope import WSA_ANONYMOUS
+        env = SoapEnvelope.from_xml(self._envelope_with_reply_to(WSA_ANONYMOUS))
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.reply_to is not None
+        assert env.ws_addressing.reply_to.address == WSA_ANONYMOUS
+
+    def test_wsa_none_uri_accepted(self):
+        """WSA_NONE magic address must be accepted and round-trip without modification."""
+        from soapbar.core.envelope import WSA_NONE
+        env = SoapEnvelope.from_xml(self._envelope_with_reply_to(WSA_NONE))
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.reply_to is not None
+        assert env.ws_addressing.reply_to.address == WSA_NONE

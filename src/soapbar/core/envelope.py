@@ -43,6 +43,17 @@ class SoapHeaderBlock:
 
 
 # ---------------------------------------------------------------------------
+# WS-Addressing constants (WS-Addressing 1.0 §2.1)
+# ---------------------------------------------------------------------------
+
+# Magic address URIs with special routing semantics — valid absolute URIs but
+# must not be routed as real endpoints.  Callers should check
+# ``address in (WSA_ANONYMOUS, WSA_NONE)`` before attempting to route.
+WSA_ANONYMOUS = "http://www.w3.org/2005/08/addressing/anonymous"
+WSA_NONE      = "http://www.w3.org/2005/08/addressing/none"
+
+
+# ---------------------------------------------------------------------------
 # WS-Addressing dataclasses
 # ---------------------------------------------------------------------------
 
@@ -83,6 +94,9 @@ def _parse_endpoint_reference(elem: _Element) -> WsaEndpointReference:
             "Client",
             f"wsa:Address {address!r} is not a valid absolute URI (WS-Addressing 1.0 §2.1)",
         )
+    # WSA_ANONYMOUS / WSA_NONE pass the scheme check above but carry special routing
+    # semantics (WS-Addressing 1.0 §2.1); callers should test address against those
+    # constants before attempting to dispatch to the address as a real endpoint.
     rp_elem = elem.find(f"{{{NS.WSA}}}ReferenceParameters")
     ref_params = list(rp_elem) if rp_elem is not None else []
     return WsaEndpointReference(address=address, reference_parameters=ref_params)
