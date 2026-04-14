@@ -43,6 +43,14 @@ class AsgiSoapApp:
         accept = headers.get(b"accept", b"").decode()
 
         if method == "GET" and "wsdl" in query_string.lower():
+            # X06 — WSDL access control
+            _req_headers = {
+                k.decode(errors="replace"): v.decode(errors="replace")
+                for k, v in scope.get("headers", [])
+            }
+            if not self.soap_app.check_wsdl_access(_req_headers):
+                await self._send_response(send, 403, "text/plain", b"WSDL access denied")
+                return
             wsdl = self.soap_app.get_wsdl()
             await self._send_response(send, 200, "text/xml; charset=utf-8", wsdl)
             return

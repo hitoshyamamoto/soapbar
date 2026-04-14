@@ -29,6 +29,18 @@ class WsgiSoapApp:
         accept = environ.get("HTTP_ACCEPT", "")
 
         if method == "GET" and "wsdl" in query_string.lower():
+            # X06 — WSDL access control
+            _req_headers = {
+                k[5:].replace("_", "-").lower(): v
+                for k, v in environ.items() if k.startswith("HTTP_")
+            }
+            if not self.soap_app.check_wsdl_access(_req_headers):
+                body = b"WSDL access denied"
+                start_response("403 Forbidden", [
+                    ("Content-Type", "text/plain"),
+                    ("Content-Length", str(len(body))),
+                ])
+                return [body]
             wsdl = self.soap_app.get_wsdl()
             start_response("200 OK", [
                 ("Content-Type", "text/xml; charset=utf-8"),

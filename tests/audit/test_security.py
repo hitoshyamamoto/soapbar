@@ -601,3 +601,93 @@ class TestXmlsecRoundTrip:
         tampered = signed.replace(b"<ping/>", b"<ping>injected</ping>")
         with pytest.raises(xmlsec.Error):
             self._verify(tampered, cert)
+
+
+# ---------------------------------------------------------------------------
+# X06 — WSDL access control (check_wsdl_access)
+# ---------------------------------------------------------------------------
+
+class TestWsdlAccessControl:
+    """X06: SoapApplication.check_wsdl_access() enforces wsdl_access policy."""
+
+    def test_public_always_allowed(self):
+        """wsdl_access='public' returns True for any headers."""
+        app = SoapApplication(wsdl_access="public")
+        assert app.check_wsdl_access({}) is True
+        assert app.check_wsdl_access({"authorization": "Bearer xyz"}) is True
+
+    def test_disabled_always_denied(self):
+        """wsdl_access='disabled' returns False regardless of headers."""
+        app = SoapApplication(wsdl_access="disabled")
+        assert app.check_wsdl_access({}) is False
+        assert app.check_wsdl_access({"authorization": "Bearer xyz"}) is False
+
+    def test_authenticated_with_hook_allow(self):
+        """wsdl_access='authenticated' delegates to wsdl_auth_hook; hook returns True."""
+        app = SoapApplication(
+            wsdl_access="authenticated",
+            wsdl_auth_hook=lambda h: h.get("authorization") == "Bearer valid",
+        )
+        assert app.check_wsdl_access({"authorization": "Bearer valid"}) is True
+
+    def test_authenticated_with_hook_deny(self):
+        """wsdl_access='authenticated' delegates to wsdl_auth_hook; hook returns False."""
+        app = SoapApplication(
+            wsdl_access="authenticated",
+            wsdl_auth_hook=lambda h: h.get("authorization") == "Bearer valid",
+        )
+        assert app.check_wsdl_access({"authorization": "Bearer bad"}) is False
+
+    def test_authenticated_without_hook_denied(self):
+        """wsdl_access='authenticated' with no hook always denies."""
+        app = SoapApplication(wsdl_access="authenticated")
+        assert app.check_wsdl_access({}) is False
+
+    def test_wsgi_wsdl_disabled_returns_403(self):
+        """WsgiSoapApp returns 403 when wsdl_access='disabled'."""
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app = SoapApplication(wsdl_access="disabled")
+        wsgi = WsgiSoapApp(app)
+        responses: list[tuple] = []
+        wsgi(
+            {"REQUEST_METHOD": "GET", "QUERY_STRING": "wsdl", "wsgi.input": io.BytesIO(b"")},
+            lambda status, headers: responses.append((status, headers)),
+        )
+        assert responses[0][0].startswith("403"), f"Expected 403, got {responses[0][0]}"
+
+    def test_wsgi_wsdl_public_returns_200(self):
+        """WsgiSoapApp returns 200 for wsdl_access='public'."""
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app = _make_app()
+        wsgi = WsgiSoapApp(app)
+        responses: list[tuple] = []
+        wsgi(
+            {"REQUEST_METHOD": "GET", "QUERY_STRING": "wsdl", "wsgi.input": io.BytesIO(b"")},
+            lambda status, headers: responses.append((status, headers)),
+        )
+        assert responses[0][0].startswith("200"), f"Expected 200, got {responses[0][0]}"
+
+    async def test_asgi_wsdl_disabled_returns_403(self):
+        """AsgiSoapApp returns 403 when wsdl_access='disabled'."""
+        from soapbar.server.asgi import AsgiSoapApp
+
+        app = SoapApplication(wsdl_access="disabled")
+        asgi = AsgiSoapApp(app)
+        responses: list[dict] = []
+
+        async def _receive():
+            return {"body": b"", "more_body": False}
+
+        async def _send(msg: dict) -> None:
+            responses.append(msg)
+
+        scope = {"type": "http", "method": "GET", "query_string": b"wsdl", "headers": []}
+        await asgi(scope, _receive, _send)
+        status_msgs = [r for r in responses if "status" in r]
+        assert status_msgs[0]["status"] == 403

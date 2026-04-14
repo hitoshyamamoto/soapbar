@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Literal
 
 from soapbar.core.binding import (
     OperationSignature,
@@ -94,6 +95,8 @@ class SoapApplication:
         security_validator: Any = None,
         validate_body_schema: bool = False,
         allow_plaintext_credentials: bool = False,
+        wsdl_access: Literal["public", "authenticated", "disabled"] = "public",
+        wsdl_auth_hook: Callable[[dict[str, str]], bool] | None = None,
     ) -> None:
         self._custom_wsdl = custom_wsdl
         self.service_url = service_url
@@ -101,6 +104,8 @@ class SoapApplication:
         self._security_validator = security_validator  # G09: UsernameTokenValidator or None
         self._validate_body_schema = validate_body_schema  # X07
         self._allow_plaintext_credentials = allow_plaintext_credentials  # S08
+        self._wsdl_access = wsdl_access  # X06
+        self._wsdl_auth_hook = wsdl_auth_hook  # X06
         self._compiled_schema: Any = None  # etree.XMLSchema | None; lazy-built
         self._services: list[SoapService] = []
         # operation_name → (service, method)
@@ -192,6 +197,22 @@ class SoapApplication:
             return self._custom_wsdl
         defn = self._build_wsdl_definition()
         return build_wsdl_bytes(defn, self.service_url)
+
+    def check_wsdl_access(self, headers: dict[str, str]) -> bool:
+        """Return True if the WSDL may be served for the given request headers.
+
+        Controlled by the *wsdl_access* constructor parameter:
+
+        - ``"public"`` (default) — always allowed.
+        - ``"disabled"`` — always denied (returns 403).
+        - ``"authenticated"`` — delegates to *wsdl_auth_hook*; denied if no
+          hook is configured.
+        """
+        if self._wsdl_access == "disabled":
+            return False
+        if self._wsdl_access == "authenticated":
+            return self._wsdl_auth_hook(headers) if self._wsdl_auth_hook is not None else False
+        return True  # "public"
 
     def handle_request(
         self,
