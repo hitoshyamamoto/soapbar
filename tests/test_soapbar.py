@@ -4,6 +4,9 @@ from __future__ import annotations
 import io
 import sys
 import urllib.error
+import warnings
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -3631,6 +3634,101 @@ class TestWsdlGlobalElements:
         # RPC/Literal should not have operation-wrapper global elements.
         assert "Add" not in schema_level_elements
         assert "AddResponse" not in schema_level_elements
+
+
+# ---------------------------------------------------------------------------
+# N4 — xsd:import / xsd:include inside <wsdl:types> (Release 0.6.2)
+# ---------------------------------------------------------------------------
+
+class TestXsdImportResolution:
+    """parse_wsdl must recursively resolve xsd:import and xsd:include
+    children of the schemas inside <wsdl:types>, so complex types defined
+    in external schemas land in the type registry just like inline ones.
+    Before 0.6.2 these elements were silently ignored.
+    """
+
+    _FIXTURE_ROOT = Path(__file__).parent / "wsdl_samples"
+
+    def test_multi_file_schema_chain_is_fully_resolved(self) -> None:
+        """crm.wsdl imports types.xsd which imports common.xsd. Both
+        complex types (Customer from types.xsd, Address from common.xsd)
+        must be present in the parsed definition."""
+        from soapbar.core.wsdl.parser import parse_wsdl_file
+
+        wsdl = self._FIXTURE_ROOT / "multi_schema" / "crm.wsdl"
+        defn = parse_wsdl_file(wsdl)
+        # Both complex types — the one from the direct import and the
+        # one reachable only through the transitive import — must be
+        # registered under their local names.
+        assert "Customer" in defn.complex_types, (
+            f"Customer (direct import) missing; got {sorted(defn.complex_types)}"
+        )
+        assert "Address" in defn.complex_types, (
+            f"Address (transitive import via types.xsd → common.xsd) missing; "
+            f"got {sorted(defn.complex_types)}"
+        )
+
+    def test_circular_schema_imports_do_not_recurse_forever(self) -> None:
+        """a.xsd imports b.xsd imports a.xsd. Parsing the WSDL that
+        references a.xsd must complete (not raise RecursionError) and
+        must still collect the types from both sides of the cycle."""
+        from soapbar.core.wsdl.parser import parse_wsdl_file
+
+        wsdl = self._FIXTURE_ROOT / "circular_schema" / "circular.wsdl"
+        defn = parse_wsdl_file(wsdl)
+        assert "Alpha" in defn.complex_types, (
+            f"Alpha missing; got {sorted(defn.complex_types)}"
+        )
+        assert "Beta" in defn.complex_types, (
+            f"Beta missing; got {sorted(defn.complex_types)}"
+        )
+
+    def test_remote_xsd_import_blocked_by_ssrf_guard(self) -> None:
+        """An xsd:import whose schemaLocation is an http:// URL must be
+        rejected with ValueError when allow_remote_imports is False
+        (the default), mirroring the wsdl:import SSRF guard."""
+        from soapbar.core.wsdl.parser import parse_wsdl
+
+        wsdl = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b'             xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+            b'             targetNamespace="urn:test">'
+            b"  <types>"
+            b'    <xsd:schema targetNamespace="urn:test">'
+            b'      <xsd:import namespace="urn:remote"'
+            b'                  schemaLocation="http://attacker.example.com/evil.xsd"/>'
+            b"    </xsd:schema>"
+            b"  </types>"
+            b"</definitions>"
+        )
+        with pytest.raises(ValueError, match="SSRF"):
+            parse_wsdl(wsdl)
+
+    def test_remote_xsd_import_permitted_when_opted_in(self, tmp_path: Any) -> None:
+        """With allow_remote_imports=True the SSRF guard is lifted; the
+        fetch itself may still fail for unrelated reasons, but it must
+        not raise the SSRF-guard ValueError."""
+        from soapbar.core.wsdl.parser import parse_wsdl
+
+        wsdl = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b'             xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+            b'             targetNamespace="urn:test">'
+            b"  <types>"
+            b'    <xsd:schema targetNamespace="urn:test">'
+            b'      <xsd:import namespace="urn:remote"'
+            b'                  schemaLocation="http://nonexistent.invalid/evil.xsd"/>'
+            b"    </xsd:schema>"
+            b"  </types>"
+            b"</definitions>"
+        )
+        # With strict=False the fetch failure becomes a warning; the
+        # SSRF-guard ValueError would fire before the fetch is attempted.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            parse_wsdl(wsdl, allow_remote_imports=True, strict=False)
 
 
 class TestWsdlCircularImportGuard:

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+            targetNamespace="http://example.com/a"
+            elementFormDefault="qualified">
+
+  <!-- a.xsd imports b.xsd which imports a.xsd — exercise cycle detection. -->
+  <xsd:import namespace="http://example.com/b" schemaLocation="b.xsd"/>
+
+  <xsd:complexType name="Alpha">
+    <xsd:sequence>
+      <xsd:element name="name" type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+</xsd:schema>

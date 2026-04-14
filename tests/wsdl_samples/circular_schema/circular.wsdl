@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://example.com/circular"
+             targetNamespace="http://example.com/circular"
+             name="Circular">
+
+  <types>
+    <xsd:schema targetNamespace="http://example.com/circular"
+                elementFormDefault="qualified">
+      <!-- a.xsd and b.xsd form a cycle. parse_wsdl must not recurse
+           infinitely and must still produce a usable WsdlDefinition. -->
+      <xsd:import namespace="http://example.com/a" schemaLocation="a.xsd"/>
+    </xsd:schema>
+  </types>
+
+  <message name="NoopRequest"><part name="dummy" type="xsd:int"/></message>
+  <message name="NoopResponse"><part name="dummy" type="xsd:int"/></message>
+
+  <portType name="NoopPortType">
+    <operation name="Noop">
+      <input  message="tns:NoopRequest"/>
+      <output message="tns:NoopResponse"/>
+    </operation>
+  </portType>
+
+  <binding name="NoopBinding" type="tns:NoopPortType">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Noop">
+      <soap:operation soapAction="Noop" style="document"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+  </binding>
+
+  <service name="NoopService">
+    <port name="NoopPort" binding="tns:NoopBinding">
+      <soap:address location="http://example.com/circular"/>
+    </port>
+  </service>
+</definitions>

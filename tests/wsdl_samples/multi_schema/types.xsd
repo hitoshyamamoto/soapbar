@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+            xmlns:common="http://example.com/common"
+            targetNamespace="http://example.com/types"
+            elementFormDefault="qualified">
+
+  <!-- Transitive dependency: this schema imports common.xsd for the
+       Address type. Exercising this hop proves the recursion in
+       _resolve_schema_imports works, not just the first level. -->
+  <xsd:import namespace="http://example.com/common" schemaLocation="common.xsd"/>
+
+  <xsd:complexType name="Customer">
+    <xsd:sequence>
+      <xsd:element name="id"      type="xsd:int"/>
+      <xsd:element name="name"    type="xsd:string"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+</xsd:schema>

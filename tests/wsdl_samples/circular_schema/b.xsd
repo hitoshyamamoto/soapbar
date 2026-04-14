@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+            targetNamespace="http://example.com/b"
+            elementFormDefault="qualified">
+
+  <!-- Cycle partner — imports a.xsd which imports b.xsd. -->
+  <xsd:import namespace="http://example.com/a" schemaLocation="a.xsd"/>
+
+  <xsd:complexType name="Beta">
+    <xsd:sequence>
+      <xsd:element name="value" type="xsd:int"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+</xsd:schema>

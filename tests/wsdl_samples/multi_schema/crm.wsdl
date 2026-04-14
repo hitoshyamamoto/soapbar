@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://example.com/crm"
+             xmlns:ct="http://example.com/types"
+             targetNamespace="http://example.com/crm"
+             name="Crm">
+
+  <types>
+    <xsd:schema targetNamespace="http://example.com/crm"
+                elementFormDefault="qualified">
+      <!-- The top-level schema imports types.xsd, which in turn imports
+           common.xsd. A conformant parser resolves the full chain and
+           ends up with Customer AND Address in its type registry. -->
+      <xsd:import namespace="http://example.com/types" schemaLocation="types.xsd"/>
+    </xsd:schema>
+  </types>
+
+  <message name="GetCustomerRequest">
+    <part name="id" type="xsd:int"/>
+  </message>
+  <message name="GetCustomerResponse">
+    <part name="customer" type="ct:Customer"/>
+  </message>
+
+  <portType name="CrmPortType">
+    <operation name="GetCustomer">
+      <input  message="tns:GetCustomerRequest"/>
+      <output message="tns:GetCustomerResponse"/>
+    </operation>
+  </portType>
+
+  <binding name="CrmBinding" type="tns:CrmPortType">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="GetCustomer">
+      <soap:operation soapAction="GetCustomer" style="document"/>
+      <input><soap:body use="literal"/></input>
+      <output><soap:body use="literal"/></output>
+    </operation>
+  </binding>
+
+  <service name="CrmService">
+    <port name="CrmPort" binding="tns:CrmBinding">
+      <soap:address location="http://example.com/crm"/>
+    </port>
+  </service>
+</definitions>

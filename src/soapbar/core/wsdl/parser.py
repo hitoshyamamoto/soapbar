@@ -68,6 +68,87 @@ def _merge_definition(target: WsdlDefinition, source: WsdlDefinition) -> None:
     target.schema_elements.extend(source.schema_elements)
 
 
+# Maximum recursion depth for xsd:import / xsd:include chains. Defensive
+# cap against pathological schema graphs; real-world WSDLs are typically
+# 1-3 levels deep.
+_MAX_XSD_IMPORT_DEPTH = 8
+
+
+def _resolve_schema_imports(
+    schema_elem: _Element,
+    base_url: str | None,
+    allow_remote_imports: bool,
+    visited: set[str],
+    strict: bool,
+    depth: int,
+) -> dict[str, XsdType]:
+    """Walk ``<xsd:import>`` and ``<xsd:include>`` children of ``schema_elem``
+    and return the merged complex-type dictionary harvested from each
+    referenced schema document.
+
+    Reuses :func:`_fetch_wsdl_source` (which already SSRF-guards via the
+    ``allow_remote_imports`` flag). ``visited`` is a resolved-URL set
+    for cycle detection (separate from the WSDL-level visited set to
+    avoid conflating xsd-schema and wsdl-document resolution planes).
+    """
+    if depth > _MAX_XSD_IMPORT_DEPTH:
+        raise ValueError(
+            f"xsd:import recursion depth exceeded {_MAX_XSD_IMPORT_DEPTH}; "
+            "possible cycle or pathological schema graph."
+        )
+    result: dict[str, XsdType] = {}
+    for child in schema_elem:
+        lname = local_name(child)
+        if lname not in ("import", "include"):
+            continue
+        loc = child.get("schemaLocation")
+        if not loc:
+            # Namespace-only xsd:import (common for xsd / wsdl / soap-env
+            # declarations). Nothing to fetch.
+            continue
+        resolved = _resolve_location(loc, base_url)
+        if resolved.startswith(("http://", "https://")) and not allow_remote_imports:
+            raise ValueError(
+                f"Remote xsd:import blocked (SSRF guard): {resolved!r}. "
+                "Pass allow_remote_imports=True to permit outbound HTTP fetches."
+            )
+        if resolved in visited:
+            continue  # already fetched (cycle); skip silently
+        visited.add(resolved)
+        try:
+            data = _fetch_wsdl_source(resolved)
+        except Exception as exc:
+            if strict:
+                raise
+            import warnings
+            warnings.warn(
+                f"xsd:import failed (strict=False, skipping): "
+                f"{resolved!r} — {exc}",
+                stacklevel=2,
+            )
+            continue
+        sub_root = parse_xml_document(data)
+        if local_name(sub_root) != "schema":
+            # A schemaLocation pointing at something that isn't an XSD —
+            # skip rather than fail, matching the permissive behavior we
+            # apply to namespace-only imports.
+            continue
+        sub_nsmap: dict[str, str] = {
+            k: v for k, v in sub_root.nsmap.items() if k is not None
+        }
+        result.update(_parse_schema_types(sub_root, sub_nsmap))
+        # Recurse for transitive imports in the sub-schema.
+        result.update(_resolve_schema_imports(
+            sub_root,
+            base_url=resolved,
+            allow_remote_imports=allow_remote_imports,
+            visited=visited,
+            strict=strict,
+            depth=depth + 1,
+        ))
+    return result
+
+
 def parse_wsdl(
     source: str | bytes | Path | _Element,
     base_url: str | None = None,
@@ -137,9 +218,23 @@ def parse_wsdl(
 
         elif lname == "types":
             defn.schema_elements = list(child)
+            # Schema-import resolution plane is separate from the WSDL
+            # import plane above, so visited uses its own set.
+            xsd_visited: set[str] = set()
             for schema in child:
                 if local_name(schema) == "schema":
                     parsed = _parse_schema_types(schema, nsmap)
+                    # Resolve xsd:import / xsd:include children recursively,
+                    # merging the harvested complex types on top of the
+                    # inline ones.
+                    parsed.update(_resolve_schema_imports(
+                        schema,
+                        base_url=base_url,
+                        allow_remote_imports=allow_remote_imports,
+                        visited=xsd_visited,
+                        strict=strict,
+                        depth=0,
+                    ))
                     defn.complex_types.update(parsed)
                     for t in parsed.values():
                         xsd.register(t)
