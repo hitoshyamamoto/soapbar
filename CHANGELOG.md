@@ -6,6 +6,50 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.6.3] — 2026-04-14
+
+### Fixed (CRITICAL)
+
+- **`SoapClient(wsdl_url=…)` now actually drives the call.** A bug
+  present since the WSDL-driven client landed: `_init_from_wsdl` parsed
+  the WSDL and set `_address`, `_binding_style`, and `_soap_version`
+  but never iterated `binding.operations` and never called
+  `register_operation(...)`. `client._signatures` therefore stayed `{}`
+  after any `SoapClient(wsdl_url=…)`, `SoapClient.from_file(...)`, or
+  `SoapClient.from_wsdl_string(...)` load. Subsequent
+  `client.call("Op", **kwargs)` fell through to `_get_sig()`'s bare
+  fallback, the serializer emitted an empty wrapper, and every kwarg
+  was silently dropped on the wire. Against soapbar↔soapbar this
+  surfaced as `Client` fault `"Missing required input parameter(s): …"`;
+  against permissive third-party servers it delivered empty calls.
+  `_init_from_wsdl` now walks `port_types` and `messages` to register
+  one `OperationSignature` per binding operation, resolving
+  `part.element` (document-literal) or `part.type` (RPC) into
+  `OperationParameter`s. DOCUMENT_LITERAL_WRAPPED is auto-detected from
+  the message shape (one part with `element=` whose local-name matches
+  the operation name, per WS-I BP R2201 + R2204).
+- **DLW deserializer tolerates namespace-less signatures.**
+  `DocumentLiteralWrappedSerializer._extract_params` now falls back to
+  a local-name match across any namespace when qualified and
+  unqualified finds both miss. Makes the common server-side case
+  (`@soap_operation` without explicit `input_namespace`) able to read
+  the qualified wire that the WSDL-driven client emits.
+
+### Added
+
+- **16-example directory restructure under `examples/`** — numbered,
+  feature-focused folders keyed to specific audit IDs. Each example
+  is self-contained, binds to `127.0.0.1` only, and ships its own
+  `uv run …` invocation in its module docstring. See
+  `examples/README.md` for the index.
+- **`TestWsdlDrivenClientCall` in `tests/test_soapbar.py`** — the
+  first test class that exercises `SoapClient.from_wsdl_string(...) →
+  client.call(...)` end-to-end. Three cases: DLW round-trip,
+  RPC/Literal round-trip, and a signature-registration assertion that
+  pins the fix so the bug cannot silently come back.
+
+---
+
 ## [0.6.2] — 2026-04-14
 
 ### Added
