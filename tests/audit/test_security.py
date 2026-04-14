@@ -886,3 +886,207 @@ class TestEprAddressValidation:
         assert env.ws_addressing is not None
         assert env.ws_addressing.reply_to is not None
         assert env.ws_addressing.reply_to.address == WSA_NONE
+
+
+# ---------------------------------------------------------------------------
+# C2 — opt-in HTTP Content-Encoding: gzip on the WSGI/ASGI adapters
+# ---------------------------------------------------------------------------
+
+class TestGzipCompression:
+    """SoapApplication(enable_gzip=True) decompresses inbound gzip bodies
+    and compresses outbound responses when the client advertises gzip."""
+
+    def _make_app(self, enable_gzip: bool):
+        """Return (SoapApplication, request-body-bytes, expected-substring-in-response).
+
+        The service echoes an 'ok' payload; we only care about whether the
+        adapter handled the HTTP-level encoding, not the SOAP semantics.
+        """
+        from soapbar.core.binding import OperationParameter
+        from soapbar.core.types import xsd as _xsd
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        str_type = _xsd.resolve("string")
+        assert str_type is not None
+
+        class Echo(SoapService):
+            __service_name__ = "Echo"
+            __tns__ = "http://example.com/echo"
+
+            @soap_operation(
+                name="Ping",
+                input_params=[OperationParameter("msg", str_type)],
+                output_params=[OperationParameter("result", str_type)],
+                soap_action="Ping",
+            )
+            def ping(self, msg: str) -> str:
+                return "ok"
+
+        app = SoapApplication(
+            service_url="https://example.com/echo",
+            enable_gzip=enable_gzip,
+        )
+        app.register(Echo())
+        xml = (
+            b'<?xml version="1.0"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b'<soapenv:Body>'
+            b'<ns:Ping xmlns:ns="http://example.com/echo">'
+            b'<msg>hello</msg>'
+            b'</ns:Ping>'
+            b'</soapenv:Body>'
+            b'</soapenv:Envelope>'
+        )
+        return app, xml
+
+    def test_wsgi_gzipped_inbound_is_decompressed(self):
+        """POST with Content-Encoding: gzip and gzipped body must be decompressed
+        before dispatch when enable_gzip=True."""
+        import gzip
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app, xml = self._make_app(enable_gzip=True)
+        compressed = gzip.compress(xml)
+        wsgi = WsgiSoapApp(app)
+
+        responses: list[tuple] = []
+        body_chunks = wsgi(
+            {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": "text/xml; charset=utf-8",
+                "CONTENT_LENGTH": str(len(compressed)),
+                "HTTP_CONTENT_ENCODING": "gzip",
+                "HTTP_SOAPACTION": "Ping",
+                "wsgi.input": io.BytesIO(compressed),
+            },
+            lambda status, headers: responses.append((status, headers)),
+        )
+        assert responses[0][0].startswith("200"), f"got {responses[0][0]}"
+        assert b"PingResponse" in b"".join(body_chunks)
+
+    def test_wsgi_gzipped_inbound_rejected_when_disabled(self):
+        """When enable_gzip=False, a gzipped inbound body is passed
+        through as-is (and fails XML parsing downstream). The adapter
+        itself does not attempt decompression."""
+        import gzip
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app, xml = self._make_app(enable_gzip=False)
+        compressed = gzip.compress(xml)
+        wsgi = WsgiSoapApp(app)
+
+        responses: list[tuple] = []
+        wsgi(
+            {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": "text/xml; charset=utf-8",
+                "CONTENT_LENGTH": str(len(compressed)),
+                "HTTP_CONTENT_ENCODING": "gzip",
+                "HTTP_SOAPACTION": "Ping",
+                "wsgi.input": io.BytesIO(compressed),
+            },
+            lambda status, headers: responses.append((status, headers)),
+        )
+        # Fault path — SOAP server sees binary garbage where XML should be.
+        assert responses[0][0].startswith("500"), (
+            f"Expected 500 fault when gzip is off, got {responses[0][0]}"
+        )
+
+    def test_wsgi_accept_encoding_gzip_produces_gzipped_response(self):
+        """When the client sends Accept-Encoding: gzip and enable_gzip=True,
+        the response body MUST be gzipped and Content-Encoding: gzip set."""
+        import gzip
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app, xml = self._make_app(enable_gzip=True)
+        wsgi = WsgiSoapApp(app)
+
+        responses: list[tuple] = []
+        body_chunks = wsgi(
+            {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": "text/xml; charset=utf-8",
+                "CONTENT_LENGTH": str(len(xml)),
+                "HTTP_ACCEPT_ENCODING": "gzip, deflate",
+                "HTTP_SOAPACTION": "Ping",
+                "wsgi.input": io.BytesIO(xml),
+            },
+            lambda status, headers: responses.append((status, headers)),
+        )
+        status, headers = responses[0]
+        assert status.startswith("200")
+        header_dict = dict(headers)
+        assert header_dict.get("Content-Encoding") == "gzip", (
+            f"expected Content-Encoding: gzip in {headers!r}"
+        )
+        # Decompress and confirm the original XML came through.
+        raw = gzip.decompress(b"".join(body_chunks))
+        assert b"PingResponse" in raw
+
+    def test_wsgi_no_accept_encoding_skips_compression_even_when_enabled(self):
+        """Clients that do not advertise gzip must get an uncompressed
+        response regardless of enable_gzip."""
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app, xml = self._make_app(enable_gzip=True)
+        wsgi = WsgiSoapApp(app)
+
+        responses: list[tuple] = []
+        body_chunks = wsgi(
+            {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": "text/xml; charset=utf-8",
+                "CONTENT_LENGTH": str(len(xml)),
+                "HTTP_SOAPACTION": "Ping",
+                "wsgi.input": io.BytesIO(xml),
+            },
+            lambda status, headers: responses.append((status, headers)),
+        )
+        status, headers = responses[0]
+        assert status.startswith("200")
+        header_dict = dict(headers)
+        assert "Content-Encoding" not in header_dict
+        assert b"PingResponse" in b"".join(body_chunks)
+
+    async def test_asgi_gzipped_inbound_is_decompressed(self):
+        """ASGI parity — gzipped inbound body is decompressed when enable_gzip=True."""
+        import gzip
+
+        from soapbar.server.asgi import AsgiSoapApp
+
+        app, xml = self._make_app(enable_gzip=True)
+        compressed = gzip.compress(xml)
+        asgi = AsgiSoapApp(app)
+
+        responses: list[dict] = []
+
+        async def _receive():
+            return {"body": compressed, "more_body": False}
+
+        async def _send(msg: dict) -> None:
+            responses.append(msg)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "query_string": b"",
+            "headers": [
+                (b"content-type", b"text/xml; charset=utf-8"),
+                (b"content-encoding", b"gzip"),
+                (b"soapaction", b"Ping"),
+            ],
+        }
+        await asgi(scope, _receive, _send)
+        start = next(r for r in responses if r["type"] == "http.response.start")
+        assert start["status"] == 200
+        body = next(r for r in responses if r["type"] == "http.response.body")["body"]
+        assert b"PingResponse" in body

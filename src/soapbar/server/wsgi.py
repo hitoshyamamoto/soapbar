@@ -56,6 +56,12 @@ class WsgiSoapApp:
             wsgi_input = environ.get("wsgi.input")
             body_bytes = wsgi_input.read(content_length) if wsgi_input else b""
 
+            # C2 — HTTP-level gzip (opt-in via SoapApplication(enable_gzip=True))
+            if self.soap_app.enable_gzip:
+                from soapbar.server._compression import decompress_if_gzipped
+                content_encoding = environ.get("HTTP_CONTENT_ENCODING", "")
+                body_bytes = decompress_if_gzipped(body_bytes, content_encoding)
+
             # Decode MTOM/XOP into plain XML before dispatch
             if _is_mtom(content_type):
                 from soapbar.core.mtom import parse_mtom
@@ -73,12 +79,23 @@ class WsgiSoapApp:
                 content_type=content_type,
                 accept_header=accept,
             )
+            # C2 — compress outbound if the client advertised Accept-Encoding: gzip.
+            resp_content_encoding: str | None = None
+            if self.soap_app.enable_gzip:
+                from soapbar.server._compression import compress_response
+                resp_body, resp_content_encoding = compress_response(
+                    resp_body,
+                    environ.get("HTTP_ACCEPT_ENCODING", ""),
+                )
             _status_texts = {200: "OK", 202: "Accepted", 500: "Internal Server Error"}
             status_str = f"{status} {_status_texts.get(status, 'Error')}"
-            start_response(status_str, [
+            resp_headers: list[tuple[str, str]] = [
                 ("Content-Type", resp_ct),
                 ("Content-Length", str(len(resp_body))),
-            ])
+            ]
+            if resp_content_encoding:
+                resp_headers.append(("Content-Encoding", resp_content_encoding))
+            start_response(status_str, resp_headers)
             return [resp_body]
 
         # Other methods → 405

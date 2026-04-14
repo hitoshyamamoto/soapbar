@@ -67,6 +67,12 @@ class AsgiSoapApp:
                     break
             body_bytes = b"".join(body_chunks)
 
+            # C2 — HTTP-level gzip (opt-in via SoapApplication(enable_gzip=True))
+            if self.soap_app.enable_gzip:
+                from soapbar.server._compression import decompress_if_gzipped
+                content_encoding = headers.get(b"content-encoding", b"").decode()
+                body_bytes = decompress_if_gzipped(body_bytes, content_encoding)
+
             # Decode MTOM/XOP into plain XML before dispatch
             if _is_mtom(content_type):
                 from soapbar.core.mtom import parse_mtom
@@ -85,7 +91,17 @@ class AsgiSoapApp:
                 content_type=content_type,
                 accept_header=accept,
             )
-            await self._send_response(send, status, resp_ct, resp_body)
+            # C2 — compress outbound if Accept-Encoding advertised gzip.
+            resp_content_encoding: str | None = None
+            if self.soap_app.enable_gzip:
+                from soapbar.server._compression import compress_response
+                accept_encoding = headers.get(b"accept-encoding", b"").decode()
+                resp_body, resp_content_encoding = compress_response(
+                    resp_body, accept_encoding
+                )
+            await self._send_response(
+                send, status, resp_ct, resp_body, resp_content_encoding
+            )
             return
 
         # Other methods → 405
@@ -106,14 +122,18 @@ class AsgiSoapApp:
         status: int,
         content_type: str,
         body: bytes,
+        content_encoding: str | None = None,
     ) -> None:
+        headers: list[tuple[bytes, bytes]] = [
+            (b"content-type", content_type.encode()),
+            (b"content-length", str(len(body)).encode()),
+        ]
+        if content_encoding:
+            headers.append((b"content-encoding", content_encoding.encode()))
         await send({
             "type": "http.response.start",
             "status": status,
-            "headers": [
-                (b"content-type", content_type.encode()),
-                (b"content-length", str(len(body)).encode()),
-            ],
+            "headers": headers,
         })
         await send({
             "type": "http.response.body",

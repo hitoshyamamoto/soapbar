@@ -101,6 +101,7 @@ class SoapApplication:
         allow_plaintext_credentials: bool = False,
         wsdl_access: Literal["public", "authenticated", "disabled"] = "public",
         wsdl_auth_hook: Callable[[dict[str, str]], bool] | None = None,
+        enable_gzip: bool = False,
     ) -> None:
         self._custom_wsdl = custom_wsdl
         self.service_url = service_url
@@ -110,6 +111,7 @@ class SoapApplication:
         self._allow_plaintext_credentials = allow_plaintext_credentials  # S08
         self._wsdl_access = wsdl_access  # X06
         self._wsdl_auth_hook = wsdl_auth_hook  # X06
+        self.enable_gzip = enable_gzip  # C2: opt-in HTTP-level gzip
         self._compiled_schema: Any = None  # etree.XMLSchema | None; lazy-built
         self._services: list[SoapService] = []
         # operation_name → (service, method)
