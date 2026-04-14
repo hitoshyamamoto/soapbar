@@ -5,12 +5,58 @@ from __future__ import annotations
 
 import urllib.error
 import urllib.request
+from typing import Any
 
 
 class HttpTransport:
     def __init__(self, timeout: float = 30.0, verify_ssl: bool = True) -> None:
         self.timeout = timeout
         self.verify_ssl = verify_ssl
+        # Lazy long-lived httpx clients; created on first use, reused for
+        # every subsequent request so TCP/TLS connections get pooled
+        # (httpx.Client maintains an internal connection pool).
+        # Call close()/aclose() or use the transport as a context manager
+        # to release them.
+        self._httpx_client: Any = None
+        self._httpx_async_client: Any = None
+
+    def _get_httpx_client(self) -> Any:
+        """Return the lazy-initialized sync httpx.Client."""
+        import httpx
+        if self._httpx_client is None:
+            self._httpx_client = httpx.Client(
+                timeout=self.timeout, verify=self.verify_ssl
+            )
+        return self._httpx_client
+
+    def _get_httpx_async_client(self) -> Any:
+        """Return the lazy-initialized async httpx.AsyncClient."""
+        import httpx
+        if self._httpx_async_client is None:
+            self._httpx_async_client = httpx.AsyncClient(
+                timeout=self.timeout, verify=self.verify_ssl
+            )
+        return self._httpx_async_client
+
+    def close(self) -> None:
+        """Close the long-lived sync httpx.Client, if any. Safe to call
+        multiple times; no-op when httpx is not installed or the client
+        has never been created."""
+        if self._httpx_client is not None:
+            self._httpx_client.close()
+            self._httpx_client = None
+
+    async def aclose(self) -> None:
+        """Close the long-lived async httpx.AsyncClient, if any."""
+        if self._httpx_async_client is not None:
+            await self._httpx_async_client.aclose()
+            self._httpx_async_client = None
+
+    def __enter__(self) -> HttpTransport:
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        self.close()
 
     def send(
         self,
@@ -48,13 +94,11 @@ class HttpTransport:
         body: bytes,
         headers: dict[str, str],
     ) -> tuple[int, str, bytes]:
-        import httpx
-        verify = self.verify_ssl
-        with httpx.Client(timeout=self.timeout, verify=verify) as client:
-            resp = client.post(url, content=body, headers=headers)
-            ct = resp.headers.get("content-type", "text/xml")
-            ct, content = self._decode_mtom_if_needed(ct, resp.content)
-            return resp.status_code, ct, content
+        client = self._get_httpx_client()
+        resp = client.post(url, content=body, headers=headers)
+        ct = resp.headers.get("content-type", "text/xml")
+        ct, content = self._decode_mtom_if_needed(ct, resp.content)
+        return resp.status_code, ct, content
 
     def _send_urllib(
         self,
@@ -81,26 +125,26 @@ class HttpTransport:
     ) -> tuple[int, str, bytes]:
         """Send async SOAP request. Requires httpx."""
         try:
-            import httpx
+            import httpx  # noqa: F401
         except ImportError as err:
             raise RuntimeError(
                 "httpx is required for async transport. Install soapbar[client]."
             ) from err
 
-        async with httpx.AsyncClient(timeout=self.timeout, verify=self.verify_ssl) as client:
-            resp = await client.post(url, content=body, headers=headers)
-            ct = resp.headers.get("content-type", "text/xml")
-            ct, content = self._decode_mtom_if_needed(ct, resp.content)
-            return resp.status_code, ct, content
+        client = self._get_httpx_async_client()
+        resp = await client.post(url, content=body, headers=headers)
+        ct = resp.headers.get("content-type", "text/xml")
+        ct, content = self._decode_mtom_if_needed(ct, resp.content)
+        return resp.status_code, ct, content
 
     def fetch(self, url: str) -> bytes:
         """GET request for WSDL retrieval."""
         try:
-            import httpx
-            with httpx.Client(timeout=self.timeout, verify=self.verify_ssl) as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-                return bytes(resp.content)
+            import httpx  # noqa: F401
+            client = self._get_httpx_client()
+            resp = client.get(url)
+            resp.raise_for_status()
+            return bytes(resp.content)
         except ImportError:
             with urllib.request.urlopen(url, timeout=self.timeout) as resp:  # noqa: S310
                 return bytes(resp.read())

@@ -127,6 +127,32 @@ class SoapClient:
     def register_operation(self, sig: OperationSignature) -> None:
         self._signatures[sig.name] = sig
 
+    def close(self) -> None:
+        """Close the underlying transport's pooled HTTP client, if any.
+
+        Safe to call multiple times. Since 0.6.1 :class:`HttpTransport`
+        maintains a long-lived ``httpx.Client`` for connection reuse;
+        calling ``close()`` releases that client and the connections it
+        owns. Not required for correctness (the transport tolerates
+        garbage-collection), but recommended in long-running processes
+        that create many short-lived ``SoapClient`` instances.
+        """
+        close = getattr(self._transport, "close", None)
+        if callable(close):
+            close()
+
+    async def aclose(self) -> None:
+        """Async counterpart to :meth:`close` for the async transport."""
+        aclose = getattr(self._transport, "aclose", None)
+        if callable(aclose):
+            await aclose()
+
+    def __enter__(self) -> SoapClient:
+        return self
+
+    def __exit__(self, *exc_info: Any) -> None:
+        self.close()
+
     def add_attachment(self, data: bytes, content_type: str, content_id: str | None = None) -> str:
         """Queue a binary attachment to be sent with the next MTOM call.
 

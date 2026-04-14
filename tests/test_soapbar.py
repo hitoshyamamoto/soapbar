@@ -6102,7 +6102,7 @@ class TestHttpTransportCoverage:
     """HttpTransport.send(), fetch(), and send_async() — coverage-targeted tests."""
 
     def test_send_uses_httpx_when_available(self) -> None:
-        """send() routes to _send_httpx and returns (status, ct, body) (lines 20-24, 49-55)."""
+        """send() routes to _send_httpx which reuses a long-lived httpx.Client."""
         from unittest.mock import MagicMock, patch
 
         from soapbar.client.transport import HttpTransport
@@ -6113,9 +6113,14 @@ class TestHttpTransportCoverage:
         mock_resp.headers.get.return_value = "text/xml; charset=utf-8"
         mock_resp.content = b"<response/>"
 
+        # C3: _send_httpx stores and reuses a Client via _get_httpx_client().
+        # Patch the Client class itself; the instance is NOT used as a
+        # context manager any more.
         with patch("httpx.Client") as mock_client_cls:
-            mock_ctx = mock_client_cls.return_value.__enter__.return_value
-            mock_ctx.post.return_value = mock_resp
+            mock_client = MagicMock()
+            mock_client.post.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
+
             transport = HttpTransport()
             status, _ct, body = transport.send(
                 "http://example.com/soap", b"<req/>", {"Content-Type": "text/xml"}
@@ -6154,7 +6159,7 @@ class TestHttpTransportCoverage:
         assert body == error_body
 
     def test_fetch_uses_httpx_when_available(self) -> None:
-        """fetch() retrieves WSDL bytes via httpx.Client.get (lines 98-101)."""
+        """fetch() retrieves WSDL bytes via the long-lived httpx.Client."""
         from unittest.mock import MagicMock, patch
 
         from soapbar.client.transport import HttpTransport
@@ -6162,16 +6167,20 @@ class TestHttpTransportCoverage:
         mock_resp = MagicMock()
         mock_resp.content = b"<wsdl/>"
 
+        # C3: fetch() uses _get_httpx_client(), not a fresh context-managed one.
         with patch("httpx.Client") as mock_client_cls:
-            mock_ctx = mock_client_cls.return_value.__enter__.return_value
-            mock_ctx.get.return_value = mock_resp
+            mock_client = MagicMock()
+            mock_client.get.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
+
             transport = HttpTransport()
             result = transport.fetch("http://example.com/service?wsdl")
 
         assert result == b"<wsdl/>"
 
     async def test_send_async_uses_httpx_async_client(self) -> None:
-        """send_async() posts via httpx.AsyncClient and returns (status, ct, body)."""
+        """send_async() posts via the long-lived httpx.AsyncClient and returns
+        (status, ct, body)."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from soapbar.client.transport import HttpTransport
@@ -6182,11 +6191,11 @@ class TestHttpTransportCoverage:
         mock_resp.headers.get.return_value = "text/xml"
         mock_resp.content = b"<resp/>"
 
+        # C3: send_async() uses _get_httpx_async_client(), no async-context-manager.
         with patch("httpx.AsyncClient") as mock_async_cls:
-            mock_ctx = MagicMock()
-            mock_async_cls.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
-            mock_async_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_ctx.post = AsyncMock(return_value=mock_resp)
+            mock_client = MagicMock()
+            mock_client.post = AsyncMock(return_value=mock_resp)
+            mock_async_cls.return_value = mock_client
 
             transport = HttpTransport()
             status, _ct, body = await transport.send_async(
@@ -7127,3 +7136,65 @@ class TestPasswordTextHardGate:
         status, _, _ = app.handle_request(xml)
         # PasswordDigest is safe over HTTP so the S08 gate must not fire
         assert status == 200
+
+
+# ---------------------------------------------------------------------------
+# C3 — HttpTransport reuses a long-lived httpx.Client across requests
+# ---------------------------------------------------------------------------
+
+class TestHttpTransportConnectionReuse:
+    """HttpTransport must lazy-init one httpx.Client and reuse it across
+    send()/fetch() calls, instead of opening a new one every request."""
+
+    def test_httpx_client_is_lazy(self) -> None:
+        """_httpx_client is None until the first request actually needs it."""
+        transport = HttpTransport()
+        assert transport._httpx_client is None
+
+    def test_httpx_client_is_reused_across_sends(self) -> None:
+        """Two consecutive send() calls must reuse the same httpx.Client."""
+        httpx = pytest.importorskip("httpx")
+
+        transport = HttpTransport()
+        # Register a stub MockTransport so we don't hit the network.
+        calls: list[bytes] = []
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.content)
+            return httpx.Response(200, content=b"<response/>", headers={
+                "content-type": "text/xml",
+            })
+
+        transport._httpx_client = httpx.Client(transport=httpx.MockTransport(_handler))
+        first_client = transport._httpx_client
+
+        transport._send_httpx("http://example.com/", b"<a/>", {})
+        transport._send_httpx("http://example.com/", b"<b/>", {})
+
+        assert transport._httpx_client is first_client, (
+            "Second _send_httpx should reuse the same Client instance"
+        )
+        assert len(calls) == 2
+
+    def test_close_releases_the_client(self) -> None:
+        """close() disposes the client so the next request lazy-creates one."""
+        httpx = pytest.importorskip("httpx")
+
+        transport = HttpTransport()
+        transport._httpx_client = httpx.Client()
+        assert transport._httpx_client is not None
+        transport.close()
+        assert transport._httpx_client is None
+
+        # close() is idempotent
+        transport.close()
+        assert transport._httpx_client is None
+
+    def test_context_manager_closes_on_exit(self) -> None:
+        """Using HttpTransport as a context manager auto-closes on exit."""
+        httpx = pytest.importorskip("httpx")
+
+        with HttpTransport() as transport:
+            transport._httpx_client = httpx.Client()
+            assert transport._httpx_client is not None
+        assert transport._httpx_client is None
