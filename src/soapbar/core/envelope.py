@@ -261,6 +261,14 @@ class SoapEnvelope:
         body_elem = root.find(f"{{{env_ns}}}Body")
         if body_elem is not None:
             body_elements = list(body_elem)
+            # E08 — SOAP 1.2 Part 1 §5.1: env:Fault MUST be the sole child of env:Body
+            if version is SoapVersion.SOAP_12:
+                _fault_tag = f"{{{env_ns}}}Fault"
+                if any(e.tag == _fault_tag for e in body_elements) and len(body_elements) > 1:
+                    raise SoapFault(
+                        "Sender",
+                        "env:Fault must be the only child of env:Body in SOAP 1.2",
+                    )
 
         envelope = cls(version=version)
         envelope.header_blocks = header_blocks

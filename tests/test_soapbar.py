@@ -6807,3 +6807,73 @@ class TestJsonDualMode:
         assert ct != "application/json; charset=utf-8"
         # Response should be SOAP XML, not JSON
         assert body.startswith(b"<") or b"Envelope" in body
+
+
+
+# ===========================================================================
+# E08 — SOAP 1.2 Body must not contain Fault plus siblings
+# ===========================================================================
+
+class TestSoap12FaultBodySiblings:
+    """E08: SOAP 1.2 Part 1 §5.1 — env:Fault must be sole child of env:Body."""
+
+    _NS12 = "http://www.w3.org/2003/05/soap-envelope"
+
+    def test_fault_with_sibling_raises(self) -> None:
+        """SOAP 1.2 Body containing Fault and a sibling element must raise SoapFault."""
+        from soapbar.core.envelope import SoapEnvelope
+        from soapbar.core.fault import SoapFault
+        xml = (
+            f'<env:Envelope xmlns:env="{self._NS12}">'
+            f"<env:Body>"
+            f"<env:Fault><env:Code><env:Value>env:Sender</env:Value></env:Code>"
+            f"<env:Reason><env:Text>oops</env:Text></env:Reason></env:Fault>"
+            f"<extra/>"
+            f"</env:Body>"
+            f"</env:Envelope>"
+        ).encode()
+        with pytest.raises(SoapFault, match="Fault must be the only child"):
+            SoapEnvelope.from_xml(xml)
+
+    def test_fault_alone_is_accepted(self) -> None:
+        """A single Fault child in SOAP 1.2 Body must parse without error."""
+        from soapbar.core.envelope import SoapEnvelope
+        xml = (
+            f'<env:Envelope xmlns:env="{self._NS12}">'
+            f"<env:Body>"
+            f"<env:Fault><env:Code><env:Value>env:Sender</env:Value></env:Code>"
+            f"<env:Reason><env:Text>oops</env:Text></env:Reason></env:Fault>"
+            f"</env:Body>"
+            f"</env:Envelope>"
+        ).encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert env.is_fault
+
+    def test_sibling_without_fault_is_accepted(self) -> None:
+        """Multiple non-Fault children in SOAP 1.2 Body are valid."""
+        from soapbar.core.envelope import SoapEnvelope
+        xml = (
+            f'<env:Envelope xmlns:env="{self._NS12}">'
+            f"<env:Body><a/><b/></env:Body>"
+            f"</env:Envelope>"
+        ).encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert len(env.body_elements) == 2
+
+    def test_soap11_fault_with_sibling_is_accepted(self) -> None:
+        """SOAP 1.1 does not impose the Fault-only-child constraint."""
+        from soapbar.core.envelope import SoapEnvelope
+        _NS11 = "http://schemas.xmlsoap.org/soap/envelope/"  # noqa: N806 — spec URI constant
+        xml = (
+            f'<env:Envelope xmlns:env="{_NS11}">'
+            f"<env:Body>"
+            f"<env:Fault><faultcode>env:Server</faultcode>"
+            f"<faultstring>err</faultstring></env:Fault>"
+            f"<extra/>"
+            f"</env:Body>"
+            f"</env:Envelope>"
+        ).encode()
+        env = SoapEnvelope.from_xml(xml)
+        assert len(env.body_elements) == 2
+
+
