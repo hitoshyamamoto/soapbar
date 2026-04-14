@@ -1470,3 +1470,134 @@ class TestXsdTypeRegistry:
         resolved = xsd.resolve("xsd:string")
         assert resolved is not None
         assert resolved.name == "string"
+
+
+# ---------------------------------------------------------------------------
+# WS-I Basic Profile 1.1 — WSDL conformance (August 2004, Final April 2006)
+# ---------------------------------------------------------------------------
+
+class TestWsiBasicProfile11:
+    """Conformance tests keyed to WS-I BP 1.1 R-numbers.
+
+    Each test generates a WSDL from a representative `SoapApplication` and
+    asserts a single profile rule. If any of these regress, a strict WS-I
+    validator (or a peer enforcing the profile) will reject soapbar's
+    generated WSDL even when the on-the-wire SOAP messages are valid.
+    """
+
+    _WSDL_NS = "http://schemas.xmlsoap.org/wsdl/"
+    _XSD_NS = "http://www.w3.org/2001/XMLSchema"
+    _SOAP_HTTP = "http://schemas.xmlsoap.org/soap/http"
+
+    def _dlw_wsdl_bytes(self) -> bytes:
+        """Build WSDL from a DOCUMENT_LITERAL_WRAPPED test service."""
+        app, _ = _make_app()
+        return app.get_wsdl()
+
+    def _iter_parts(self, root: object) -> list[object]:
+        return list(root.iter(f"{{{self._WSDL_NS}}}part"))  # type: ignore[attr-defined]
+
+    # --- R2201: document-literal messages MUST have at most one part -----
+
+    def test_r2201_document_literal_messages_have_at_most_one_part(self):
+        """WS-I BP 1.1 R2201: document-literal <wsdl:message> MUST contain
+        zero or one <wsdl:part> — never multiple parts in the Body."""
+        from lxml import etree
+
+        root = etree.fromstring(self._dlw_wsdl_bytes())
+        for msg in root.iter(f"{{{self._WSDL_NS}}}message"):
+            parts = msg.findall(f"{{{self._WSDL_NS}}}part")
+            msg_name = msg.get("name") or "<anon>"
+            assert len(parts) <= 1, (
+                f"R2201 violation: message {msg_name!r} has {len(parts)} parts; "
+                "document-literal must have at most one."
+            )
+
+    # --- R2204: document-literal parts MUST use element=, not type= ------
+
+    def test_r2204_document_literal_parts_reference_element(self):
+        """WS-I BP 1.1 R2204: each <wsdl:part> inside a document-literal
+        <wsdl:message> MUST carry element= (pointing at a global xsd:element)
+        and MUST NOT carry type=."""
+        from lxml import etree
+
+        root = etree.fromstring(self._dlw_wsdl_bytes())
+        for part in self._iter_parts(root):
+            assert part.get("element") is not None, (
+                f"R2204 violation: <wsdl:part name={part.get('name')!r}> has no "
+                "element= attribute. Expected element='tns:…' for document-literal."
+            )
+            assert part.get("type") is None, (
+                f"R2204 violation: <wsdl:part name={part.get('name')!r}> carries "
+                f"type={part.get('type')!r}; document-literal must use element= only."
+            )
+
+    # --- R2706: literal messages MUST NOT use SOAP Encoding --------------
+
+    def test_r2706_literal_messages_have_no_soap_encoding_attributes(self):
+        """WS-I BP 1.1 R2706: a message that uses use='literal' MUST NOT
+        carry encodingStyle attributes, SOAP-ENC references, or other
+        hallmarks of Section 5 encoding."""
+        wsdl = self._dlw_wsdl_bytes()
+        assert b"encodingStyle" not in wsdl, (
+            "R2706 violation: literal WSDL contains encodingStyle attribute."
+        )
+        assert b"SOAP-ENC:" not in wsdl, (
+            "R2706 violation: literal WSDL references SOAP-ENC namespace."
+        )
+        # The soap:body element itself must declare use='literal'.
+        assert b'use="literal"' in wsdl
+
+    # --- R2716: SOAP/HTTP transport URI ----------------------------------
+
+    def test_r2716_soap_http_transport_uri(self):
+        """WS-I BP 1.1 R2716: <soap:binding transport=…> MUST be
+        http://schemas.xmlsoap.org/soap/http for SOAP-over-HTTP."""
+        wsdl = self._dlw_wsdl_bytes()
+        expected = f'transport="{self._SOAP_HTTP}"'.encode()
+        assert expected in wsdl, (
+            f"R2716 violation: expected {expected!r} in WSDL."
+        )
+
+    # --- R2710: UTF-8 or UTF-16 encoding ---------------------------------
+
+    def test_r2710_wsdl_bytes_are_utf8_decodable(self):
+        """WS-I BP 1.1 R2710: emitted envelope/WSDL encoding MUST be UTF-8
+        or UTF-16. soapbar emits UTF-8; the bytes must decode cleanly."""
+        wsdl = self._dlw_wsdl_bytes()
+        # Should not raise UnicodeDecodeError.
+        wsdl.decode("utf-8")
+        # XML declaration should advertise utf-8 explicitly when present.
+        if wsdl.startswith(b"<?xml"):
+            assert b"utf-8" in wsdl[:100].lower() or b"UTF-8" in wsdl[:100]
+
+    # --- R2714: no processing instructions -------------------------------
+
+    def test_r2714_wsdl_has_no_processing_instructions(self):
+        """WS-I BP 1.1 R2714: conformant ENVELOPE/WSDL MUST NOT contain
+        processing instructions other than the XML declaration."""
+        from lxml import etree
+
+        wsdl = self._dlw_wsdl_bytes()
+        # lxml parses the XML declaration separately, so any PI that shows
+        # up as a ProcessingInstruction node is a real R2714 violation.
+        root = etree.fromstring(wsdl)
+        pis = [
+            node
+            for node in root.iter()
+            if isinstance(node.tag, str) is False  # PI nodes have callable tag
+        ]
+        assert not pis, f"R2714 violation: unexpected processing instructions: {pis!r}"
+
+    # --- R2711: no DTD declarations --------------------------------------
+
+    def test_r2711_wsdl_has_no_dtd_declaration(self):
+        """WS-I BP 1.1 R2711 (also XXE defense, masterprompt §18.1):
+        conformant WSDL MUST NOT contain a <!DOCTYPE …> declaration."""
+        wsdl = self._dlw_wsdl_bytes()
+        assert b"<!DOCTYPE" not in wsdl, (
+            "R2711 violation: WSDL contains a DOCTYPE declaration."
+        )
+        assert b"<!ENTITY" not in wsdl, (
+            "R2711 violation: WSDL contains an ENTITY declaration."
+        )
