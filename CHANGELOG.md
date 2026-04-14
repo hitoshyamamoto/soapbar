@@ -6,6 +6,59 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.6.0] — 2026-04-14
+
+### ⚠ Generated WSDL shape change (no on-the-wire SOAP change)
+
+Auto-generated WSDL for `DOCUMENT_LITERAL_WRAPPED` services now emits
+WS-I Basic Profile 1.1-conformant message shapes:
+
+- The `<xsd:schema>` block carries `elementFormDefault="qualified"`,
+  matching the qualified wire format soapbar's serializer has produced
+  since 0.5.3.
+- Each operation contributes two global `<xsd:element>` declarations to
+  the schema: one named after the operation (input wrapper), one named
+  `{OperationName}Response` (output wrapper). Each has an inline
+  `<xsd:complexType>` whose `<xsd:sequence>` declares the per-parameter
+  child elements.
+- Each `<wsdl:message>` for a DLW operation contains exactly one
+  `<wsdl:part name="parameters" element="tns:OperationName"/>`,
+  referencing the global element rather than a per-parameter
+  `type="xsd:…"`. This satisfies WS-I BP 1.1 R2201 (one part per
+  document-literal message) and R2204 (part references element=, not
+  type=).
+
+**On-the-wire SOAP messages are unchanged from 0.5.x.** Existing
+client stubs that are already deployed continue to work without
+modification. The change is in the WSDL contract, which means
+**consumers that regenerate stubs from soapbar's WSDL will see updated
+parameter-binding code** — the new shape is what strict WS-I
+validators, Apache CXF, .NET WCF, and WSS4J expect to see in the
+first place. Stubs should regenerate cleanly across every major
+SOAP stack (zeep / spyne / WCF / CXF / WSS4J), and parameter access
+should remain identical at the application level.
+
+RPC/Literal, RPC/Encoded, Document/Encoded, and plain Document/Literal
+(non-wrapped) services are unchanged: WS-I permits the per-parameter
+`type=` shape for RPC, and encoded styles are already flagged
+non-conformant via `BindingStyle.is_wsi_conformant`.
+
+### Added
+
+- **`build_doc_literal_wrapper(name, params)`** in
+  `soapbar.core.wsdl.builder` — exposed helper that synthesizes the
+  global `<xsd:element>` declaration for a document-literal operation
+  wrapper. Useful for callers building custom `WsdlDefinition`
+  instances by hand
+- **`WsdlDefinition.global_elements: list[Any]`** — new field carrying
+  the synthesized wrapper elements. Empty by default; the auto-WSDL
+  builder populates it for DLW operations only
+- **`tests/audit/test_compliance.py::TestWsiBasicProfile11`** — seven
+  conformance tests, one per WS-I BP 1.1 R-number (R2201, R2204,
+  R2706, R2710, R2711, R2714, R2716), pinning the new WSDL shape
+
+---
+
 ## [0.5.5] — 2026-04-14
 
 ### Security
