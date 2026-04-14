@@ -1,15 +1,15 @@
-"""Flask + soapbar: same SOAP service on a WSGI framework.
+"""Flask + soapbar: the same calculator on a WSGI framework.
 
-Demonstrates framework-agnostic nature of soapbar — identical service class,
+Demonstrates that soapbar is framework-agnostic — identical service class,
 different adapter (WsgiSoapApp instead of AsgiSoapApp).
 
 Run:
     uv add flask
-    uv run python examples/calculator_flask.py
+    uv run python examples/01_calculator/server_flask.py
 
 Endpoints:
-    GET  http://localhost:5000/soap?wsdl   → WSDL
-    POST http://localhost:5000/soap        → SOAP 1.1 / 1.2
+    GET  http://127.0.0.1:5000/soap?wsdl   → WSDL
+    POST http://127.0.0.1:5000/soap        → SOAP 1.1
 """
 from __future__ import annotations
 
@@ -38,16 +38,20 @@ class Calculator(SoapService):
     def multiply(self, a: int, b: int) -> int:
         return a * b
 
+    @soap_operation(documentation="Divide a by b; b == 0 raises a SOAP fault")
+    def divide(self, a: int, b: int) -> float:
+        return a / b
 
-soap_app = SoapApplication(service_url="http://localhost:5000/soap")
+
+soap_app = SoapApplication(service_url="http://127.0.0.1:5000/soap")
 soap_app.register(Calculator())
 
 flask_app = Flask(__name__)
 
-# Mount soapbar under /soap; all other paths go to Flask
 application = DispatcherMiddleware(flask_app, {
     "/soap": WsgiSoapApp(soap_app),
 })
 
+
 if __name__ == "__main__":
-    run_simple("0.0.0.0", 5000, application, use_reloader=True)
+    run_simple("127.0.0.1", 5000, application, use_reloader=True)
