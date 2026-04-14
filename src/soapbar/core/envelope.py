@@ -72,12 +72,12 @@ def _parse_endpoint_reference(elem: _Element) -> WsaEndpointReference:
 
     from soapbar.core.fault import SoapFault  # local import; fault.py does not import envelope.py
     addr_elem = elem.find(f"{{{NS.WSA}}}Address")
-    if addr_elem is None or not (addr_elem.text or "").strip():
+    address = ((addr_elem.text or "").strip() if addr_elem is not None else "")
+    if not address:
         raise SoapFault(
             "Client",
             "wsa:EndpointReference is missing required wsa:Address (WS-Addressing 1.0 §2.1)",
         )
-    address = addr_elem.text.strip()
     if not _urlparse(address).scheme:
         raise SoapFault(
             "Client",

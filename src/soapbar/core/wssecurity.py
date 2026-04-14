@@ -347,7 +347,8 @@ def sign_envelope(
 
         # S04 — assign wsu:Id to Body and build explicit reference list so that
         # Body and Timestamp are independently covered (BSP R5416, R5441).
-        _env_ns = root.tag.split("}")[0].lstrip("{") if "}" in root.tag else ""
+        _root_tag = str(root.tag)
+        _env_ns = _root_tag.split("}")[0].lstrip("{") if "}" in _root_tag else ""
         _wsu_ns = _NS.WSU
         _body_elem = root.find(f"{{{_env_ns}}}Body")
         _ref_uris: list[str] = []
