@@ -6,6 +6,43 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.5] — 2026-04-14
+
+### Security
+
+- **Signature-wrapping defense in `verify_envelope` and
+  `verify_envelope_bsp`** (WSS 1.0 §4.3; masterprompt §18.5). Two
+  layered, pure-Python mitigations:
+  - Envelopes containing duplicate `wsu:Id` attribute values are now
+    rejected with `XmlSecurityError` before the tree is handed to
+    signxml's `XMLVerifier`, preventing the classic pattern where an
+    attacker injects a second element carrying the same id as a
+    legitimately-signed element.
+  - Both verify functions now accept an optional
+    `expected_references: int | None = None` keyword that forwards to
+    signxml's `expect_references=`. Callers who know the signer's
+    reference count (e.g. 2 for Body + Timestamp) should pin it so the
+    verifier rejects envelopes where references have been dropped or
+    added. Default `None` preserves pre-0.5.5 behavior for existing
+    callers
+- Docstrings on both verify functions now explicitly state that they
+  are not wired into `SoapApplication.handle_request` automatically;
+  applications integrating XML Signature verification must invoke them
+  directly and SHOULD supply `expected_references` for production use
+
+### Fixed
+
+- **S04 Timestamp `wsu:Id` fallback** — `sign_envelope` and
+  `sign_envelope_bsp` constructed `#TS-1` references when a Timestamp
+  lacked `wsu:Id` but never actually wrote the attribute back to the
+  element. The resulting signature carried a reference URI that
+  resolved to nothing. Both sign paths now set the attribute on the
+  element when missing, mirroring the Body handling. Fixes an S04
+  edge-case that was masked by existing tests supplying pre-existing
+  Timestamp ids
+
+---
+
 ## [0.5.4] — 2026-04-14
 
 ### Added
