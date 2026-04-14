@@ -51,7 +51,12 @@ def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
             schema_elem2 = sub_element(
                 types_elem,
                 f"{{{NS.XSD}}}schema",
-                attrib={"targetNamespace": tns},
+                attrib={
+                    "targetNamespace": tns,
+                    # WS-I BP R2112 / common-sense interop: schema wire format
+                    # is qualified (matches soapbar's serializer output).
+                    "elementFormDefault": "qualified",
+                },
             )
             for ct in defn.complex_types.values():
                 if isinstance(ct, ComplexXsdType):
