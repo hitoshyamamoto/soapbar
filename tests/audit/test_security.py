@@ -691,3 +691,65 @@ class TestWsdlAccessControl:
         await asgi(scope, _receive, _send)
         status_msgs = [r for r in responses if "status" in r]
         assert status_msgs[0]["status"] == 403
+
+
+
+# ---------------------------------------------------------------------------
+# A04 — EPR wsa:Address validation (WS-Addressing 1.0 §2.1)
+# ---------------------------------------------------------------------------
+
+class TestEprAddressValidation:
+    """A04: wsa:EndpointReference must have a valid absolute URI in wsa:Address."""
+
+    _WSA = "http://www.w3.org/2005/08/addressing"
+    _NS11 = "http://schemas.xmlsoap.org/soap/envelope/"
+
+    def _envelope_with_reply_to(self, address_text: str | None) -> bytes:
+        addr_elem = (
+            f"<wsa:Address>{address_text}</wsa:Address>"
+            if address_text is not None
+            else ""
+        )
+        return (
+            f'<soapenv:Envelope xmlns:soapenv="{self._NS11}"'
+            f'  xmlns:wsa="{self._WSA}">'
+            f"  <soapenv:Header>"
+            f"    <wsa:ReplyTo>"
+            f"      {addr_elem}"
+            f"    </wsa:ReplyTo>"
+            f"  </soapenv:Header>"
+            f"  <soapenv:Body><ping/></soapenv:Body>"
+            f"</soapenv:Envelope>"
+        ).encode()
+
+    def test_missing_address_raises_fault(self):
+        """EPR with no wsa:Address element must raise SoapFault."""
+        with pytest.raises(SoapFault, match="missing required wsa:Address"):
+            SoapEnvelope.from_xml(self._envelope_with_reply_to(None))
+
+    def test_empty_address_raises_fault(self):
+        """EPR with blank wsa:Address text must raise SoapFault."""
+        with pytest.raises(SoapFault, match="missing required wsa:Address"):
+            SoapEnvelope.from_xml(self._envelope_with_reply_to("   "))
+
+    def test_relative_uri_raises_fault(self):
+        """EPR with a relative URI (no scheme) must raise SoapFault."""
+        with pytest.raises(SoapFault, match="not a valid absolute URI"):
+            SoapEnvelope.from_xml(self._envelope_with_reply_to("not-a-uri"))
+
+    def test_valid_absolute_uri_is_accepted(self):
+        """EPR with a valid absolute URI must parse without error."""
+        env = SoapEnvelope.from_xml(
+            self._envelope_with_reply_to("http://example.com/reply")
+        )
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.reply_to is not None
+        assert env.ws_addressing.reply_to.address == "http://example.com/reply"
+
+    def test_urn_uri_is_accepted(self):
+        """EPR with a urn: URI must be accepted."""
+        env = SoapEnvelope.from_xml(
+            self._envelope_with_reply_to("urn:example:anonymous")
+        )
+        assert env.ws_addressing is not None
+        assert env.ws_addressing.reply_to.address == "urn:example:anonymous"
