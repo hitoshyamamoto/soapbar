@@ -492,6 +492,51 @@ class TestExplicitBodyReference:
         assert any("#Body" in u for u in uris), f"No Body reference found; refs={uris}"
         assert any("#TS-1" in u for u in uris), f"No Timestamp reference found; refs={uris}"
 
+    def test_timestamp_without_wsu_id_gets_id_assigned_on_sign(self):
+        """When the envelope's wsu:Timestamp has no pre-existing wsu:Id, sign_envelope()
+        must assign TS-1 AND emit the attribute on the element, so the #TS-1 Reference
+        URI actually resolves at verify time (S04 Timestamp-ID fallback)."""
+        from lxml import etree
+
+        from soapbar.core.wssecurity import sign_envelope
+
+        _WSSE_NS = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"  # noqa: N806 — spec URI constant
+        _SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"  # noqa: N806 — spec URI constant
+
+        # Envelope with Timestamp but NO wsu:Id attribute on it.
+        envelope_without_ts_id = (
+            f'<?xml version="1.0" encoding="utf-8"?>'
+            f'<soapenv:Envelope xmlns:soapenv="{_SOAP_NS}"'
+            f'  xmlns:wsse="{_WSSE_NS}"'
+            f'  xmlns:wsu="{_WSU_NS}">'
+            f"  <soapenv:Header>"
+            f'    <wsse:Security soapenv:mustUnderstand="1">'
+            f"      <wsu:Timestamp>"
+            f"        <wsu:Created>2026-01-01T00:00:00Z</wsu:Created>"
+            f"        <wsu:Expires>2026-01-01T00:05:00Z</wsu:Expires>"
+            f"      </wsu:Timestamp>"
+            f"    </wsse:Security>"
+            f"  </soapenv:Header>"
+            f"  <soapenv:Body><ping/></soapenv:Body>"
+            f"</soapenv:Envelope>"
+        ).encode()
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(envelope_without_ts_id, key, cert)
+        root = etree.fromstring(signed)
+
+        # Timestamp must now carry wsu:Id="TS-1" on the wire so #TS-1 resolves.
+        ts = root.find(f".//{{{_WSU_NS}}}Timestamp")
+        assert ts is not None
+        ts_id = ts.get(f"{{{_WSU_NS}}}Id")
+        assert ts_id == "TS-1", (
+            f"Timestamp wsu:Id should be set to 'TS-1' but was {ts_id!r}"
+        )
+
+        # The signature must reference it.
+        refs = root.findall(f".//{{{_DS_NS}}}Reference")
+        uris = [r.get("URI") or "" for r in refs]
+        assert any("#TS-1" in u for u in uris), f"No Timestamp reference found; refs={uris}"
 
 
 # ---------------------------------------------------------------------------

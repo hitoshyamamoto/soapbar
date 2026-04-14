@@ -389,6 +389,8 @@ def sign_envelope(
                 _ts = _sec.find(f"{{{_wsu_ns}}}Timestamp")
                 if _ts is not None:
                     _ts_id = _ts.get(f"{{{_wsu_ns}}}Id") or "TS-1"
+                    if not _ts.get(f"{{{_wsu_ns}}}Id"):
+                        _ts.set(f"{{{_wsu_ns}}}Id", _ts_id)
                     _ref_uris.append(f"#{_ts_id}")
 
         # S05 — use Exclusive C14N (BSP R5404); signxml defaults to C14N 1.1
@@ -879,6 +881,8 @@ def sign_envelope_bsp(
         _ts_bsp = security.find(f"{{{wsu_ns}}}Timestamp")
         if _ts_bsp is not None:
             _ts_id_bsp = _ts_bsp.get(f"{{{wsu_ns}}}Id") or "TS-1"
+            if not _ts_bsp.get(f"{{{wsu_ns}}}Id"):
+                _ts_bsp.set(f"{{{wsu_ns}}}Id", _ts_id_bsp)
             _ref_uris_bsp.append(f"#{_ts_id_bsp}")
 
         # S05 — use Exclusive C14N (BSP R5404)
