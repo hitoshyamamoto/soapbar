@@ -3864,6 +3864,367 @@ class TestWsdlDrivenClientCall:
         assert result == 42, f"Expected 42, got {result!r}"
 
 
+class TestInitFromWsdlEdgeCases:
+    """Coverage for the defensive branches in _init_from_wsdl and its
+    helpers (_find_port_operation, _resolve_op_params,
+    _params_from_global_element, _resolve_xsd_type). Each test
+    constructs a crafted WsdlDefinition to reach a specific branch."""
+
+    def setup_method(self) -> None:
+        from soapbar.core.types import xsd as _xsd_registry
+        self._xsd_snapshot = dict(_xsd_registry._by_name)
+
+    def teardown_method(self) -> None:
+        from soapbar.core.types import xsd as _xsd_registry
+        _xsd_registry._by_name = self._xsd_snapshot
+
+    def _bare_client(self) -> SoapClient:
+        """Construct a SoapClient without going through any WSDL load."""
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            client = SoapClient.manual("http://example.com/soap")
+        return client
+
+    def test_init_from_wsdl_with_empty_definition_is_noop(self) -> None:
+        """A WsdlDefinition with no bindings must leave _signatures empty
+        without raising — covers the `if binding is None: return` guard."""
+        from soapbar.core.wsdl import WsdlDefinition
+
+        client = self._bare_client()
+        client._init_from_wsdl(WsdlDefinition())
+        assert client._signatures == {}
+
+    def test_init_from_wsdl_warns_on_binding_op_without_port_type(self) -> None:
+        """A binding operation with no matching portType operation
+        triggers a UserWarning and is skipped — covers the
+        `port_op is None` branch."""
+        import warnings
+
+        from soapbar.core.wsdl import (
+            WsdlBinding,
+            WsdlBindingOperation,
+            WsdlDefinition,
+        )
+
+        defn = WsdlDefinition()
+        defn.bindings["B"] = WsdlBinding(
+            name="B",
+            port_type="tns:P",
+            style="document",
+            operations=[WsdlBindingOperation(name="Orphan")],
+        )
+        # port_types is intentionally empty.
+        client = self._bare_client()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client._init_from_wsdl(defn)
+        assert any("Orphan" in str(w.message) for w in caught), (
+            f"Expected a warning mentioning 'Orphan'; got {[str(w.message) for w in caught]}"
+        )
+        assert "Orphan" not in client._signatures
+
+    def test_resolve_op_params_handles_none_and_missing_message(self) -> None:
+        """_resolve_op_params must return [] for None and for a message
+        name that isn't in defn.messages — defensive early returns."""
+        from soapbar.core.wsdl import WsdlDefinition, WsdlOperationMessage
+
+        client = self._bare_client()
+        client._wsdl = WsdlDefinition()
+        assert client._resolve_op_params(None) == []
+        assert client._resolve_op_params(WsdlOperationMessage(message="tns:Missing")) == []
+
+    def test_params_from_global_element_missing_complex_type(self) -> None:
+        """_params_from_global_element must return [] when the global
+        element exists but has no complexType (edge in the schema walk)."""
+        from lxml import etree
+
+        from soapbar.core.wsdl import WsdlDefinition
+
+        client = self._bare_client()
+        defn = WsdlDefinition()
+        # Global element with NO complexType child.
+        el = etree.Element("{http://www.w3.org/2001/XMLSchema}element", name="Bare")
+        defn.global_elements.append(el)
+        client._wsdl = defn
+        assert client._params_from_global_element("Bare") == []
+        assert client._params_from_global_element("NonExistent") == []
+
+    def test_resolve_xsd_type_primitive_and_complex_and_fallback(self) -> None:
+        """_resolve_xsd_type covers three branches: primitive (xsd:),
+        complex (tns:), and fallback-to-string for unknown refs."""
+        from soapbar.core.types import ComplexXsdType, xsd
+        from soapbar.core.wsdl import WsdlDefinition
+
+        client = self._bare_client()
+        client._wsdl = WsdlDefinition()
+        client._wsdl.complex_types["Foo"] = ComplexXsdType("Foo", [])
+
+        # Primitive via xsd registry.
+        int_type = xsd.resolve("int")
+        assert client._resolve_xsd_type("xsd:int") is int_type
+
+        # Complex from the WSDL's own type table.
+        assert client._resolve_xsd_type("tns:Foo") is client._wsdl.complex_types["Foo"]
+
+        # Unknown reference → string fallback.
+        fallback = client._resolve_xsd_type("tns:DoesNotExist")
+        assert fallback.name == "string"
+
+    def test_binding_is_dlw_shaped_rejects_multi_part_message(self) -> None:
+        """_binding_is_dlw_shaped returns False when a message has
+        multiple parts — covers the first early-return in the shape
+        check (WS-I BP R2201 says DLW messages MUST have one part)."""
+        from soapbar.core.wsdl import (
+            WsdlBindingOperation,
+            WsdlDefinition,
+            WsdlMessage,
+            WsdlOperation,
+            WsdlOperationMessage,
+            WsdlPart,
+            WsdlPortType,
+        )
+
+        defn = WsdlDefinition()
+        defn.messages["TwoPartIn"] = WsdlMessage(
+            name="TwoPartIn",
+            parts=[WsdlPart(name="a", type="xsd:int"), WsdlPart(name="b", type="xsd:int")],
+        )
+        defn.port_types["P"] = WsdlPortType(
+            name="P",
+            operations=[WsdlOperation(
+                name="Op",
+                input=WsdlOperationMessage(message="tns:TwoPartIn"),
+            )],
+        )
+        result = SoapClient._binding_is_dlw_shaped(
+            defn, [WsdlBindingOperation(name="Op")]
+        )
+        assert result is False
+
+    def test_binding_is_dlw_shaped_skips_non_matching_operations(self) -> None:
+        """port_type traversal must skip operations whose name does not
+        match the binding operation name. Covers the `continue` branch
+        at client.py:131."""
+        from soapbar.core.wsdl import (
+            WsdlBindingOperation,
+            WsdlDefinition,
+            WsdlMessage,
+            WsdlOperation,
+            WsdlOperationMessage,
+            WsdlPart,
+            WsdlPortType,
+        )
+
+        defn = WsdlDefinition()
+        defn.messages["AddIn"] = WsdlMessage(
+            name="AddIn", parts=[WsdlPart(name="parameters", element="tns:Add")],
+        )
+        defn.port_types["P"] = WsdlPortType(
+            name="P",
+            operations=[
+                WsdlOperation(name="Ignored"),  # not in binding; should skip
+                WsdlOperation(
+                    name="Add",
+                    input=WsdlOperationMessage(message="tns:AddIn"),
+                ),
+            ],
+        )
+        # Binding only references "Add" — the "Ignored" port_type op
+        # must be stepped over by the `if op.name != bop.name: continue`.
+        result = SoapClient._binding_is_dlw_shaped(
+            defn, [WsdlBindingOperation(name="Add")]
+        )
+        assert result is True
+
+    def test_params_from_global_element_without_wsdl_returns_empty(self) -> None:
+        """When self._wsdl is None (defensive early-return at
+        client.py:197), _params_from_global_element must return []
+        without touching any attribute of self._wsdl."""
+        client = self._bare_client()
+        client._wsdl = None
+        assert client._params_from_global_element("Anything") == []
+
+    def test_params_from_global_element_missing_sequence(self) -> None:
+        """Global element with complexType but no sequence child returns
+        [] — covers client.py:227."""
+        from lxml import etree
+
+        from soapbar.core.wsdl import WsdlDefinition
+
+        client = self._bare_client()
+        defn = WsdlDefinition()
+        xsd_ns = "{http://www.w3.org/2001/XMLSchema}"
+        el = etree.Element(f"{xsd_ns}element", name="NoSeq")
+        etree.SubElement(el, f"{xsd_ns}complexType")  # complexType WITHOUT sequence
+        defn.global_elements.append(el)
+        client._wsdl = defn
+        assert client._params_from_global_element("NoSeq") == []
+
+    def test_params_from_global_element_skips_comments_and_non_elements(self) -> None:
+        """Sequence walk must skip lxml comments (non-str tag) AND skip
+        non-<xsd:element> children (e.g. <xsd:any>). Also skips element
+        declarations missing a `name` attribute. Covers client.py:231,
+        233, 237."""
+        from lxml import etree
+
+        from soapbar.core.wsdl import WsdlDefinition
+
+        client = self._bare_client()
+        defn = WsdlDefinition()
+        xsd_ns = "{http://www.w3.org/2001/XMLSchema}"
+        el = etree.Element(f"{xsd_ns}element", name="Mixed")
+        ct = etree.SubElement(el, f"{xsd_ns}complexType")
+        seq = etree.SubElement(ct, f"{xsd_ns}sequence")
+        # Comment node — non-str tag, must be skipped.
+        seq.append(etree.Comment("inline comment"))
+        # Non-element sibling — e.g. <xsd:any>, must be skipped.
+        etree.SubElement(seq, f"{xsd_ns}any")
+        # <xsd:element> with no `name` attribute — must be skipped.
+        etree.SubElement(seq, f"{xsd_ns}element", type="xsd:int")
+        # Real element — must be emitted.
+        etree.SubElement(seq, f"{xsd_ns}element", name="real", type="xsd:string")
+        defn.global_elements.append(el)
+        client._wsdl = defn
+
+        params = client._params_from_global_element("Mixed")
+        assert len(params) == 1
+        assert params[0].name == "real"
+
+    def test_binding_is_dlw_shaped_rejects_part_without_element(self) -> None:
+        """A part with type= but no element= fails the DLW shape check
+        (the other early-return in _binding_is_dlw_shaped)."""
+        from soapbar.core.wsdl import (
+            WsdlBindingOperation,
+            WsdlDefinition,
+            WsdlMessage,
+            WsdlOperation,
+            WsdlOperationMessage,
+            WsdlPart,
+            WsdlPortType,
+        )
+
+        defn = WsdlDefinition()
+        defn.messages["TypedIn"] = WsdlMessage(
+            name="TypedIn",
+            parts=[WsdlPart(name="only", type="xsd:int")],
+        )
+        defn.port_types["P"] = WsdlPortType(
+            name="P",
+            operations=[WsdlOperation(
+                name="Op",
+                input=WsdlOperationMessage(message="tns:TypedIn"),
+            )],
+        )
+        result = SoapClient._binding_is_dlw_shaped(
+            defn, [WsdlBindingOperation(name="Op")]
+        )
+        assert result is False
+
+    def test_soap_client_close_and_context_manager(self) -> None:
+        """SoapClient.close() propagates to the transport; context-manager
+        exit calls close(). Covers the close/__enter__/__exit__ public API."""
+        import warnings
+
+        from soapbar.client.transport import HttpTransport
+
+        class _TrackingTransport(HttpTransport):
+            def __init__(self) -> None:
+                super().__init__()
+                self.close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        t = _TrackingTransport()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            client = SoapClient.manual("http://example.com/", transport=t)
+        # Direct close() call.
+        client.close()
+        assert t.close_calls == 1
+
+        # Context-manager exit also closes.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            client2 = SoapClient.manual("http://example.com/", transport=t)
+        with client2:
+            pass
+        assert t.close_calls == 2
+
+        # close() on a transport without a close() method is a no-op
+        # (covers the getattr-returns-None path).
+        class _NoCloseTransport(HttpTransport):
+            close = None  # type: ignore[assignment]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            client3 = SoapClient.manual(
+                "http://example.com/", transport=_NoCloseTransport()
+            )
+        client3.close()  # must not raise
+
+    async def test_soap_client_aclose(self) -> None:
+        """SoapClient.aclose() propagates to the transport's aclose()."""
+        import warnings
+
+        from soapbar.client.transport import HttpTransport
+
+        class _TrackingAsyncTransport(HttpTransport):
+            def __init__(self) -> None:
+                super().__init__()
+                self.aclose_calls = 0
+
+            async def aclose(self) -> None:
+                self.aclose_calls += 1
+
+        t = _TrackingAsyncTransport()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            client = SoapClient.manual("http://example.com/", transport=t)
+        await client.aclose()
+        assert t.aclose_calls == 1
+
+        # aclose() on a transport without aclose is a no-op.
+        class _NoAcloseTransport(HttpTransport):
+            aclose = None  # type: ignore[assignment]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            client2 = SoapClient.manual(
+                "http://example.com/", transport=_NoAcloseTransport()
+            )
+        await client2.aclose()  # must not raise
+
+    def test_dlw_extract_params_falls_back_to_local_name(self) -> None:
+        """DocumentLiteralWrappedSerializer._extract_params must read a
+        qualified child even when the signature carries no namespace —
+        covers the local-name-across-any-namespace fallback added in
+        the 0.6.3 deserializer fix."""
+        from lxml import etree
+
+        from soapbar.core.binding import (
+            DocumentLiteralWrappedSerializer,
+            OperationParameter,
+        )
+        from soapbar.core.types import xsd
+
+        int_type = xsd.resolve("int")
+        ser = DocumentLiteralWrappedSerializer()
+        wrapper = etree.fromstring(
+            b'<ns:Add xmlns:ns="http://example.com/calc">'
+            b'<ns:a>3</ns:a><ns:b>4</ns:b>'
+            b'</ns:Add>'
+        )
+        # Signature has NO namespace — mimics @soap_operation's default.
+        params = [
+            OperationParameter("a", int_type),
+            OperationParameter("b", int_type),
+        ]
+        result = ser._extract_params(params, wrapper, op_namespace="")
+        assert result == {"a": 3, "b": 4}
+
+
 class TestWsdlCircularImportGuard:
     def test_circular_import_does_not_recurse(self) -> None:
         """parse_wsdl() must not raise RecursionError when WSDL A imports A."""
