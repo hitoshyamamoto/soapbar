@@ -390,11 +390,22 @@ class TestSpyneInterop:
         assert client.call("Add", a=10, b=32) == 42
 
     def test_spyne_wsdl_parseable_by_soapbar(self) -> None:
+        from soapbar.core.types import xsd as _xsd_registry
         from soapbar.core.wsdl.parser import parse_wsdl
 
         wsgi = _make_spyne_wsgi(SoapVersion.SOAP_11)
         transport = _SpyneWsgiTransport(wsgi)
         wsdl_bytes = transport.fetch_wsdl()
         assert wsdl_bytes.startswith(b"<?xml") or b"definitions" in wsdl_bytes
-        defn = parse_wsdl(wsdl_bytes)
+
+        # parse_wsdl registers any xsd types it encounters into the global
+        # `xsd` registry as a side effect. Spyne's WSDL introduces types
+        # that would otherwise leak into later tests (e.g. the 27-types
+        # invariant in tests/test_soapbar.py::TestTypes). Snapshot and
+        # restore the registry around the parse to contain the leak.
+        registry_snapshot = dict(_xsd_registry._by_name)
+        try:
+            defn = parse_wsdl(wsdl_bytes)
+        finally:
+            _xsd_registry._by_name = registry_snapshot
         assert defn is not None
