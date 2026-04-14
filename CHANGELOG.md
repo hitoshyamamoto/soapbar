@@ -6,6 +6,56 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.6.1] — 2026-04-14
+
+### Added
+
+- **`SoapApplication(enable_gzip=True)`** — opt-in HTTP-level gzip on
+  the WSGI and ASGI adapters. Inbound bodies carrying
+  `Content-Encoding: gzip` are transparently decompressed before SOAP
+  dispatch; outbound responses are gzip-compressed when the client
+  advertises `Accept-Encoding: gzip` (with the corresponding
+  `Content-Encoding: gzip` response header). Default is off to
+  preserve bit-identical pre-0.6.1 behavior. Helper module
+  `soapbar.server._compression` exposes the wrapped gzip primitives
+- **`HttpTransport.close()`**, **`HttpTransport.aclose()`**, and
+  context-manager support (`__enter__` / `__exit__`) — release the
+  pooled `httpx.Client` / `httpx.AsyncClient` that the transport now
+  reuses across requests (see *Changed* below). Both close methods
+  are idempotent
+- **`SoapClient.close()`**, **`SoapClient.aclose()`**, and
+  context-manager support — propagate transport cleanup. Recommended
+  usage in long-running processes that create many short-lived
+  clients: `with SoapClient(…) as client: …`
+
+### Changed
+
+- **`HttpTransport` now reuses a long-lived `httpx.Client`** (and
+  `httpx.AsyncClient` for the async path) across `send()`, `fetch()`,
+  and `send_async()` invocations. The client is lazy-initialized on
+  first use and pooled by httpx internally, so consecutive requests
+  to the same host reuse TCP/TLS connections. Pre-0.6.1 behavior
+  created a fresh `with httpx.Client(...)` per request — measurably
+  slower under load. No public API change for callers that do not
+  invoke `close()`
+
+### Docs
+
+- **README Known Limitations** extended with four new rows: SOAP 1.2
+  recursive `Subcode` support on `SoapFault` (previously undocumented
+  feature surfaced); WSDL 2.0 declared unsupported (WSDL 1.1 only);
+  WS-Policy / WS-PolicyAttachment declared out of scope;
+  WS-ReliableMessaging / WS-Trust / WS-SecureConversation /
+  WS-Federation declared out of scope
+- **`SECURITY.md`** gains a section on WS-Addressing reply/fault
+  routing (A04, A05): EPRs are validated on parse but soapbar does
+  not dispatch responses or faults to the addresses they encode —
+  everything returns on the HTTP back-channel. The `WSA_ANONYMOUS`
+  and `WSA_NONE` constants are referenced for callers layering
+  EPR-aware logic on top of `handle_request()`
+
+---
+
 ## [0.6.0] — 2026-04-14
 
 ### ⚠ Generated WSDL shape change (no on-the-wire SOAP change)
