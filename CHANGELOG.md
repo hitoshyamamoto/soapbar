@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.4] — 2026-04-14
+
+### Added
+
+- **`WSA_ANONYMOUS`** and **`WSA_NONE`** constants in
+  `soapbar.core.envelope` — the two well-known addresses defined by
+  WS-Addressing 1.0 §2.1. Completes the A04 magic-URI allowlist
+  follow-on from 0.5.3: callers routing on `wsa:Address` should now
+  test against these constants explicitly, since neither refers to a
+  real endpoint (the anonymous URI requests back-channel reply; the
+  none URI indicates no reply is expected). Two round-trip tests
+  added to `tests/audit/test_security.py::TestEprAddressValidation`
+
+### Fixed
+
+- **Mypy strict compliance** for the 0.5.3 A04 / S04 code paths
+  (`src/soapbar/core/envelope.py:80`, `src/soapbar/core/wssecurity.py:350`).
+  Runtime behavior unchanged — only type-narrowing adjustments
+
+---
+
 ## [0.5.3] — 2026-04-14
 
 ### Added
