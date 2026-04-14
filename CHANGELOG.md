@@ -6,6 +6,51 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.6.2] — 2026-04-14
+
+### Added
+
+- **`xsd:import` and `xsd:include` resolution inside `<wsdl:types>`** —
+  `parse_wsdl` now walks these elements recursively, fetching each
+  referenced schema via the existing SSRF-guarded `_fetch_wsdl_source`
+  and merging the harvested complex types into the type registry.
+  Before 0.6.2 they were silently ignored (documented as a known
+  limitation in the README), which broke the first real enterprise
+  WSDL (SAP, Salesforce partner, NF-e) whose contracts typically span
+  two to four schema files. Cycle detection via a scoped resolved-URL
+  set; recursion capped at 8 levels via `_MAX_XSD_IMPORT_DEPTH`; the
+  `allow_remote_imports` and `strict` flags apply uniformly to
+  `xsd:import` and `wsdl:import`
+- **`tests/wsdl_samples/multi_schema/`** — fixture WSDL + two-hop
+  schema chain (`crm.wsdl` → `types.xsd` → `common.xsd`) modelled on
+  the shape of real enterprise SOAP contracts
+- **`tests/wsdl_samples/circular_schema/`** — fixture WSDL + two
+  cross-importing schemas (`a.xsd` ⇄ `b.xsd`) exercising cycle
+  detection
+- **`tests/test_real_wsdls.py::TestMultiSchemaWsdl`** — integration
+  tests for the multi-schema fixture, asserting both direct and
+  transitive imports produce registered complex types
+- **`tests/test_soapbar.py::TestXsdImportResolution`** — unit tests
+  covering multi-file resolution, circular imports, SSRF guard on
+  remote `xsd:import`, and the `allow_remote_imports` opt-in
+- **GitHub Release on tag push** — `.github/workflows/release.yml`
+  gains a `github-release` job that extracts the matching CHANGELOG
+  section via `awk` and publishes a GitHub Release via
+  `softprops/action-gh-release@v3.0.0` (SHA-pinned). Previous tags
+  shipped to PyPI but produced no GitHub Release; `latestRelease` was
+  `null` despite 8 tags
+
+### Fixed
+
+- **`xsd` registry leak from WSDL-parsing tests** — both new test
+  classes (`TestXsdImportResolution`,
+  `TestMultiSchemaWsdl`) snapshot and restore the global xsd registry
+  around each test, matching the pattern commit `6ec36a1` applied to
+  the spyne WSDL-parse test. Prevents test-order pollution from
+  breaking the 27-types invariant asserted elsewhere in the suite
+
+---
+
 ## [0.6.1] — 2026-04-14
 
 ### Added
