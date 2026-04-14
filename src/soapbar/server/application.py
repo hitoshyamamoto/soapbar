@@ -31,7 +31,11 @@ from soapbar.core.wsdl import (
     WsdlPortType,
     WsdlService,
 )
-from soapbar.core.wsdl.builder import _type_ref, build_wsdl_bytes
+from soapbar.core.wsdl.builder import (
+    _type_ref,
+    build_doc_literal_wrapper,
+    build_wsdl_bytes,
+)
 from soapbar.core.xml import check_xml_depth, compile_schema, to_bytes, validate_schema
 from soapbar.server.service import SoapService, _SoapMethod
 
@@ -515,6 +519,20 @@ class SoapApplication:
             for op_name, method in svc_instance.get_operations().items():
                 sig: OperationSignature = method.__soap_operation__
                 doc = getattr(method, "__soap_documentation__", "")
+
+                # Synthesize global <xsd:element> wrappers for doc/literal
+                # operations (WS-I BP R2204 prerequisite). Only DLW emits
+                # wrappers here; plain DOCUMENT_LITERAL and RPC-style
+                # messages continue to reference per-parameter types.
+                if binding_style.is_wrapped:
+                    defn.global_elements.append(
+                        build_doc_literal_wrapper(op_name, sig.input_params)
+                    )
+                    defn.global_elements.append(
+                        build_doc_literal_wrapper(
+                            f"{op_name}Response", sig.output_params
+                        )
+                    )
 
                 # Input message
                 in_msg_name = f"{op_name}Request"

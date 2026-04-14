@@ -3510,6 +3510,120 @@ class TestWsdlComplexTypeRef:
         assert 'type="xsd:string"' in wsdl_str
 
 
+# ---------------------------------------------------------------------------
+# WSDL — global <xsd:element> wrappers for document/literal/wrapped ops
+# (prerequisite for WS-I BP R2204 element= part references)
+# ---------------------------------------------------------------------------
+
+class TestWsdlGlobalElements:
+    """Generated WSDL must include global <xsd:element> wrappers for each
+    DOCUMENT_LITERAL_WRAPPED operation so <wsdl:part element="tns:…"/>
+    references (added in the next commit) have something to resolve to."""
+
+    def test_dlw_operation_emits_input_and_response_wrappers(self) -> None:
+        from lxml import etree
+
+        from soapbar.core.binding import BindingStyle
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+
+        class AddSvc(SoapService):
+            __service_name__ = "Calc"
+            __tns__ = "http://example.com/calc"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", int_type),
+                    OperationParameter("b", int_type),
+                ],
+                output_params=[OperationParameter("result", int_type)],
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        app = SoapApplication(service_url="https://example.com/calc")
+        app.register(AddSvc())
+        wsdl_bytes = app.get_wsdl()
+        root = etree.fromstring(wsdl_bytes)
+
+        xsd_ns = "http://www.w3.org/2001/XMLSchema"
+        globals_found = {
+            e.get("name"): e
+            for e in root.iter(f"{{{xsd_ns}}}element")
+            if e.getparent() is not None
+            and e.getparent().tag == f"{{{xsd_ns}}}schema"
+        }
+        assert "Add" in globals_found, (
+            f"Expected global <xsd:element name='Add'>; saw {sorted(globals_found)}"
+        )
+        assert "AddResponse" in globals_found, (
+            f"Expected global <xsd:element name='AddResponse'>; saw {sorted(globals_found)}"
+        )
+
+        # The input wrapper should declare <a> and <b> as a sequence; the
+        # output wrapper should declare <result>.
+        add_ct = globals_found["Add"].find(f"{{{xsd_ns}}}complexType")
+        assert add_ct is not None
+        add_seq = add_ct.find(f"{{{xsd_ns}}}sequence")
+        assert add_seq is not None
+        assert [c.get("name") for c in add_seq] == ["a", "b"]
+
+        resp_ct = globals_found["AddResponse"].find(f"{{{xsd_ns}}}complexType")
+        assert resp_ct is not None
+        resp_seq = resp_ct.find(f"{{{xsd_ns}}}sequence")
+        assert resp_seq is not None
+        assert [c.get("name") for c in resp_seq] == ["result"]
+
+    def test_non_wrapped_binding_does_not_emit_wrappers(self) -> None:
+        """Only DOCUMENT_LITERAL_WRAPPED gets the new global elements; RPC
+        and other styles keep their existing WSDL shape for now."""
+        from lxml import etree
+
+        from soapbar.core.binding import BindingStyle
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+
+        class RpcSvc(SoapService):
+            __service_name__ = "Calc"
+            __tns__ = "http://example.com/calc"
+            __binding_style__ = BindingStyle.RPC_LITERAL
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", int_type),
+                    OperationParameter("b", int_type),
+                ],
+                output_params=[OperationParameter("result", int_type)],
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        app = SoapApplication(service_url="https://example.com/calc")
+        app.register(RpcSvc())
+        wsdl_bytes = app.get_wsdl()
+        root = etree.fromstring(wsdl_bytes)
+
+        xsd_ns = "http://www.w3.org/2001/XMLSchema"
+        schema_level_elements = [
+            e.get("name")
+            for e in root.iter(f"{{{xsd_ns}}}element")
+            if e.getparent() is not None
+            and e.getparent().tag == f"{{{xsd_ns}}}schema"
+        ]
+        # RPC/Literal should not have operation-wrapper global elements.
+        assert "Add" not in schema_level_elements
+        assert "AddResponse" not in schema_level_elements
+
+
 class TestWsdlCircularImportGuard:
     def test_circular_import_does_not_recurse(self) -> None:
         """parse_wsdl() must not raise RecursionError when WSDL A imports A."""

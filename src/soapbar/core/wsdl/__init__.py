@@ -105,6 +105,12 @@ class WsdlDefinition:
     services: dict[str, WsdlService] = field(default_factory=dict)
     schema_elements: list[Any] = field(default_factory=list)
     complex_types: dict[str, XsdType] = field(default_factory=dict)
+    # Global <xsd:element> declarations synthesized for document/literal
+    # operations so <wsdl:part element="tns:…"/> can reference them per
+    # WS-I BP 1.1 R2204. Each entry is an already-built lxml Element in
+    # the XSD namespace. Inserted into the main schema block by the
+    # builder alongside complex_types.
+    global_elements: list[Any] = field(default_factory=list)
 
     @property
     def first_service_address(self) -> str | None:
