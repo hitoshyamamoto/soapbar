@@ -301,6 +301,31 @@ class XmlSecurityError(Exception):
     """Raised when XML Signature verification or XML Encryption fails."""
 
 
+def _check_unique_wsu_ids(root: _Element) -> None:
+    """Reject envelopes containing duplicate ``wsu:Id`` values.
+
+    An XML document may carry more than one attribute with the same
+    ``wsu:Id`` value at parse time. Signature-wrapping attacks (WSS 1.0
+    §4.3; masterprompt §18.5) exploit this by injecting a second element
+    carrying the same id as a legitimate signed element; the signature
+    remains valid against the original content but downstream processing
+    may bind to the injected element instead. Verification paths MUST
+    reject any envelope that carries duplicate ids.
+    """
+    wsu_id_attr = f"{{{NS.WSU}}}Id"
+    seen: set[str] = set()
+    for el in root.iter():
+        val = el.get(wsu_id_attr)
+        if val is None:
+            continue
+        if val in seen:
+            raise XmlSecurityError(
+                f"Duplicate wsu:Id {val!r} detected — signature-wrapping "
+                "attempt rejected (WSS 1.0 §4.3)."
+            )
+        seen.add(val)
+
+
 def sign_envelope(
     envelope_bytes: bytes,
     private_key: Any,
@@ -385,13 +410,28 @@ def sign_envelope(
 def verify_envelope(
     envelope_bytes: bytes,
     certificate: Any,
+    expected_references: int | None = None,
 ) -> bytes:
     """Verify the XML Digital Signature on a SOAP envelope.
+
+    Not wired into :meth:`SoapApplication.handle_request` automatically —
+    callers integrating XML Signature verification MUST invoke this
+    function explicitly. For production use, pass ``expected_references``
+    matching the number of ``ds:Reference`` elements the signer pinned
+    (e.g. ``2`` for Body + Timestamp); this prevents an attacker from
+    dropping references and still getting a successful verify.
+
+    Envelopes carrying duplicate ``wsu:Id`` values are rejected before
+    verification as a signature-wrapping countermeasure (WSS 1.0 §4.3;
+    masterprompt §18.5).
 
     Args:
         envelope_bytes: The signed SOAP envelope as bytes.
         certificate: The expected signer's ``cryptography`` X.509 certificate
             or PEM bytes used to verify the signature.
+        expected_references: If set, the number of ``ds:Reference`` elements
+            the verifier must see inside ``ds:SignedInfo``. Mismatch fails
+            verification. Default ``None`` preserves pre-0.5.5 behavior.
 
     Returns:
         The verified envelope bytes (same content, parsed and re-serialised
@@ -399,7 +439,8 @@ def verify_envelope(
 
     Raises:
         ImportError: If ``signxml`` is not installed.
-        XmlSecurityError: If signature verification fails.
+        XmlSecurityError: If signature verification fails or the envelope
+            contains duplicate ``wsu:Id`` values.
     """
     try:
         from signxml import XMLVerifier  # type: ignore[attr-defined]
@@ -415,8 +456,12 @@ def verify_envelope(
 
     try:
         root = parse_xml(envelope_bytes)
+        _check_unique_wsu_ids(root)
         verifier: Any = XMLVerifier()
-        verify_result: Any = verifier.verify(root, x509_cert=certificate)
+        verify_kwargs: dict[str, Any] = {"x509_cert": certificate}
+        if expected_references is not None:
+            verify_kwargs["expect_references"] = expected_references
+        verify_result: Any = verifier.verify(root, **verify_kwargs)
         # verify() may return a VerifyResult or list[VerifyResult]
         if isinstance(verify_result, list):
             verify_result = verify_result[0]
@@ -871,14 +916,33 @@ def sign_envelope_bsp(
         raise XmlSecurityError(f"BSP X.509 signing failed: {exc}") from exc
 
 
-def verify_envelope_bsp(envelope_bytes: bytes) -> bytes:
+def verify_envelope_bsp(
+    envelope_bytes: bytes,
+    expected_references: int | None = None,
+) -> bytes:
     """Verify a SOAP envelope signed with the WS-I BSP 1.1 X.509 token profile.
 
     Extracts the ``wsse:BinarySecurityToken`` certificate from the
-    ``wsse:Security`` header and uses it to verify the enveloped ``ds:Signature``.
+    ``wsse:Security`` header and uses it to verify the enveloped
+    ``ds:Signature``.
+
+    Not wired into :meth:`SoapApplication.handle_request` automatically —
+    callers integrating BSP verification MUST invoke this function
+    explicitly. For production use, pass ``expected_references`` matching
+    the number of ``ds:Reference`` elements the signer pinned (e.g. ``2``
+    for Body + Timestamp); this prevents an attacker from dropping
+    references and still getting a successful verify.
+
+    Envelopes carrying duplicate ``wsu:Id`` values are rejected before
+    verification as a signature-wrapping countermeasure (WSS 1.0 §4.3;
+    masterprompt §18.5).
 
     Args:
         envelope_bytes: The signed SOAP envelope as bytes.
+        expected_references: If set, the number of ``ds:Reference``
+            elements the verifier must see inside ``ds:SignedInfo``.
+            Mismatch fails verification. Default ``None`` preserves
+            pre-0.5.5 behavior.
 
     Returns:
         The verified envelope bytes (same content, re-serialised after
@@ -886,7 +950,8 @@ def verify_envelope_bsp(envelope_bytes: bytes) -> bytes:
 
     Raises:
         ImportError: If ``signxml`` or ``cryptography`` is not installed.
-        XmlSecurityError: If signature verification fails or no token is found.
+        XmlSecurityError: If signature verification fails, no token is
+            found, or the envelope contains duplicate ``wsu:Id`` values.
     """
     try:
         from signxml import XMLVerifier  # type: ignore[attr-defined]
@@ -902,6 +967,7 @@ def verify_envelope_bsp(envelope_bytes: bytes) -> bytes:
 
     try:
         root = parse_xml(envelope_bytes)
+        _check_unique_wsu_ids(root)
         wsse_ns = NS.WSSE
 
         # Locate wsse:Security in any soap:Header child
@@ -920,7 +986,10 @@ def verify_envelope_bsp(envelope_bytes: bytes) -> bytes:
 
         # Verify using the extracted certificate (bypasses KeyInfo resolution)
         verifier: Any = XMLVerifier()
-        verify_result: Any = verifier.verify(root, x509_cert=cert)
+        verify_kwargs: dict[str, Any] = {"x509_cert": cert}
+        if expected_references is not None:
+            verify_kwargs["expect_references"] = expected_references
+        verify_result: Any = verifier.verify(root, **verify_kwargs)
         if isinstance(verify_result, list):
             verify_result = verify_result[0]
         signed_xml: Any = verify_result.signed_xml

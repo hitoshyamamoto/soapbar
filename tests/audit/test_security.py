@@ -604,6 +604,78 @@ class TestXmlsecRoundTrip:
 
 
 # ---------------------------------------------------------------------------
+# Signature-wrapping defense (WSS 1.0 §4.3; masterprompt §18.5)
+# ---------------------------------------------------------------------------
+
+class TestSignatureWrappingDefense:
+    """verify_envelope must reject envelopes carrying duplicate wsu:Id values."""
+
+    def test_duplicate_wsu_id_in_signed_envelope_is_rejected(self) -> None:
+        """A classic signature-wrapping payload carries a second element with
+        the same wsu:Id as the signed Body. verify_envelope MUST reject it
+        before handing the tree to the signature verifier.
+
+        We inject by parsing the signed tree, appending a sibling element
+        that carries ``{wsu}Id="Body-1"`` in Clark notation (prefix-agnostic,
+        same effective attribute as the real Body), and re-serializing —
+        so the assertion works regardless of how lxml binds the wsu prefix
+        in the signed output.
+        """
+        from lxml import etree
+
+        from soapbar.core.wssecurity import (
+            XmlSecurityError,
+            sign_envelope,
+            verify_envelope,
+        )
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)
+
+        root = etree.fromstring(signed)
+        wsu_id = f"{{{_WSU_NS}}}Id"
+        # Sanity: the real Body carries wsu:Id="Body-1" after signing.
+        bodies_with_id = [e for e in root.iter() if e.get(wsu_id) == "Body-1"]
+        assert len(bodies_with_id) == 1, "soapbar should have set Body-1 exactly once"
+
+        # Inject a sibling element with the same id.
+        wrapped = etree.SubElement(root, "wrapped")
+        wrapped.set(wsu_id, "Body-1")
+        etree.SubElement(wrapped, "attacker-controlled")
+        tampered = etree.tostring(root, xml_declaration=True, encoding="utf-8")
+
+        with pytest.raises(XmlSecurityError, match=r"[Dd]uplicate"):
+            verify_envelope(tampered, cert)
+
+    def test_expected_references_mismatch_is_rejected(self) -> None:
+        """Passing expected_references=N where N != actual reference count
+        must fail verification, so attackers cannot drop references."""
+        from soapbar.core.wssecurity import (
+            XmlSecurityError,
+            sign_envelope,
+            verify_envelope,
+        )
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)  # emits 1 Reference (Body)
+
+        # Caller pins "we expect 2 references" but the signed envelope only
+        # has 1 — signxml must reject.
+        with pytest.raises(XmlSecurityError):
+            verify_envelope(signed, cert, expected_references=2)
+
+    def test_expected_references_match_passes(self) -> None:
+        """The positive control: the same signed envelope verifies cleanly
+        when expected_references matches the actual reference count."""
+        from soapbar.core.wssecurity import sign_envelope, verify_envelope
+
+        key, cert = _make_key_and_cert()
+        signed = sign_envelope(_SIMPLE_ENV, key, cert)
+        # sign_envelope emits exactly 1 Reference (Body) for _SIMPLE_ENV.
+        verify_envelope(signed, cert, expected_references=1)
+
+
+# ---------------------------------------------------------------------------
 # X06 — WSDL access control (check_wsdl_access)
 # ---------------------------------------------------------------------------
 
