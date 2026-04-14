@@ -534,20 +534,33 @@ class SoapApplication:
                         )
                     )
 
-                # Input message
+                # Input / output messages. WS-I BP R2201 + R2204:
+                # document-literal-wrapped messages MUST contain exactly one
+                # part, and that part MUST reference a global xsd:element
+                # (not xsd:type). RPC-style and encoded styles keep the
+                # per-parameter `type=` shape permitted by the profile.
                 in_msg_name = f"{op_name}Request"
-                in_parts = [
-                    WsdlPart(name=p.name, type=_type_ref(p.xsd_type))
-                    for p in sig.input_params
-                ]
-                defn.messages[in_msg_name] = WsdlMessage(name=in_msg_name, parts=in_parts)
-
-                # Output message
                 out_msg_name = f"{op_name}Response"
-                out_parts = [
-                    WsdlPart(name=p.name, type=_type_ref(p.xsd_type))
-                    for p in sig.output_params
-                ]
+                if binding_style.is_wrapped:
+                    in_parts = [
+                        WsdlPart(name="parameters", element=f"tns:{op_name}")
+                    ]
+                    out_parts = [
+                        WsdlPart(
+                            name="parameters",
+                            element=f"tns:{op_name}Response",
+                        )
+                    ]
+                else:
+                    in_parts = [
+                        WsdlPart(name=p.name, type=_type_ref(p.xsd_type))
+                        for p in sig.input_params
+                    ]
+                    out_parts = [
+                        WsdlPart(name=p.name, type=_type_ref(p.xsd_type))
+                        for p in sig.output_params
+                    ]
+                defn.messages[in_msg_name] = WsdlMessage(name=in_msg_name, parts=in_parts)
                 defn.messages[out_msg_name] = WsdlMessage(name=out_msg_name, parts=out_parts)
 
                 # PortType operation

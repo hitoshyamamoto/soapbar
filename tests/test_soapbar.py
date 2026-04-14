@@ -3484,11 +3484,19 @@ class TestWsdlComplexTypeRef:
         app.register(MySvc())
         wsdl_bytes = app.get_wsdl()
         wsdl_str = wsdl_bytes.decode()
+        # Inside the global wrapper element, parameters still declare
+        # type="tns:Person" (complex types keep the tns prefix).
         assert 'type="tns:Person"' in wsdl_str, f"Expected tns:Person in WSDL, got:\n{wsdl_str}"
         assert 'type="xsd:Person"' not in wsdl_str
+        # WS-I BP R2204: DLW <wsdl:part> must reference element=, not type=,
+        # so message shape is `element="tns:OperationName"`.
+        assert 'element="tns:get_person"' in wsdl_str or 'element="tns:GetPerson"' in wsdl_str, (
+            f"Expected <wsdl:part element='tns:…'/> in WSDL; got:\n{wsdl_str}"
+        )
 
     def test_wsdl_part_keeps_xsd_for_primitives(self) -> None:
-        """Auto-WSDL must keep xsd: prefix for primitive XSD types."""
+        """Auto-WSDL must keep xsd: prefix for primitive XSD types
+        (inside the global wrapper's parameter declarations)."""
         from soapbar.server.application import SoapApplication
         from soapbar.server.service import SoapService, soap_operation
 
@@ -3507,6 +3515,7 @@ class TestWsdlComplexTypeRef:
         app.register(MySvc2())
         wsdl_bytes = app.get_wsdl()
         wsdl_str = wsdl_bytes.decode()
+        # Parameter declaration inside the wrapper keeps xsd:string.
         assert 'type="xsd:string"' in wsdl_str
 
 
