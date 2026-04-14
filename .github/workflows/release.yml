@@ -66,31 +66,37 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
-      - name: Extract release notes from CHANGELOG.md
-        id: notes
+      - name: Create GitHub Release from CHANGELOG section
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # Strip the leading "v" from refs/tags/v0.6.1 → 0.6.1
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           # CHANGELOG sections start with `## [X.Y.Z] — DATE`. Grab the
           # lines from the matching header up to (but not including) the
-          # next `## [` header.
-          awk -v ver="## [${VERSION}]" '
-            $0 ~ "^" ver { grab=1; print; next }
-            grab && /^## \[/ { exit }
-            grab { print }
-          ' CHANGELOG.md > release-notes.md
+          # next `## [` header. Use a fixed-string match (index) to avoid
+          # regex metacharacter interpretation of the version's dots.
+          python3 - <<PY > release-notes.md
+          import sys
+          version = "${VERSION}"
+          header = f"## [{version}]"
+          lines = open("CHANGELOG.md").read().splitlines()
+          out, grab = [], False
+          for line in lines:
+              if not grab and line.startswith(header):
+                  grab = True
+                  out.append(line)
+              elif grab and line.startswith("## ["):
+                  break
+              elif grab:
+                  out.append(line)
+          sys.stdout.write("\n".join(out))
+          PY
           if [ ! -s release-notes.md ]; then
             echo "::error::No CHANGELOG.md section found for ${VERSION}"
             exit 1
           fi
-          # Surface for diagnostics; not used by downstream steps.
-          echo "Extracted $(wc -l < release-notes.md) lines for ${VERSION}"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
-        with:
-          body_path: release-notes.md
-          # tag_name defaults to github.ref_name (already the v0.6.1 tag).
-          # Do not mark prerelease — soapbar uses semver-style tags and
-          # the Development Status classifier conveys alpha/beta state.
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --notes-file release-notes.md
