@@ -6,6 +6,58 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.3] — 2026-04-14
+
+### Added
+
+- **`SECURITY.md`** — deployer-facing threat model documenting
+  certificate-trust limitations (no CRL/OCSP/path-building), the
+  spec-mandated SHA-1 in PasswordDigest (WSS 1.0 §3.2.1), and the
+  delegation of timeouts / concurrency to the WSGI/ASGI host
+- **`TestXmlsecRoundTrip`** in `tests/audit/test_security.py` — four
+  new tests that sign envelopes with soapbar and re-verify them via
+  `python-xmlsec` (libxmlsec1, the same C library used by Apache
+  Santuario / WSS4J / CXF / .NET XmlDsig). Tampered-body negative test
+  proves the verifier is not vacuously passing
+- **`crypto-interop`** dev-dependency group (`xmlsec>=1.3`) — CI
+  installs `libxmlsec1-dev` via apt; local suites without the group
+  skip the four xmlsec tests via a `_HAS_XMLSEC` import guard
+- **`allow_plaintext_credentials`** parameter on `SoapApplication`
+  (default `False`) — opt-out for the new S08 hard-gate
+- **`wsdl_access`** (`"public"` / `"authenticated"` / `"disabled"`)
+  and **`wsdl_auth_hook`** parameters on `SoapApplication` — optional
+  gating for the `?wsdl` endpoint (X06)
+- **`SoapApplication.check_wsdl_access(headers)`** public method —
+  invoked by WSGI and ASGI adapters before serving the WSDL
+
+### Fixed
+
+- **S04 + S05 (WS-I BSP 1.1 R5404 / R5416 / R5441)** — `sign_envelope`
+  and `sign_envelope_bsp` now emit Exclusive XML Canonicalization
+  (`http://www.w3.org/2001/10/xml-exc-c14n#`) on `SignedInfo` and
+  every `Reference/Transforms/Transform`, and produce discrete
+  `ds:Reference` elements for the Body (by `wsu:Id="Body-1"`) and the
+  Timestamp (when present). Previously the canonicalization defaulted
+  to `signxml`'s Canonical XML 1.1 and the signature was an enveloped
+  signature over the root with no discrete references — both patterns
+  that WSS4J / Apache CXF / .NET WCF peers reject. Interop with those
+  stacks is now unblocked
+- **E08 (SOAP 1.2 Part 1 §5.1)** — `SoapEnvelope.from_xml()` now
+  rejects SOAP 1.2 envelopes whose `env:Body` contains `env:Fault`
+  alongside other sub-elements. The output path already respected the
+  constraint; the input-side enforcement was missing
+- **S08 (WSS 1.0 §6.2 / WS-I BSP R4202)** — `UsernameToken` with
+  `#PasswordText` credentials is now rejected with a `Client` fault
+  when arriving at an `http://` service_url. Previously only a
+  `UserWarning` was emitted. Override via the new
+  `allow_plaintext_credentials=True` flag for dev environments
+- **A04 (WS-Addressing 1.0 §2.1)** — `wsa:EndpointReference` parsing
+  now requires `wsa:Address` to be present, non-empty, and a valid
+  absolute URI; malformed EPRs raise `Client` fault instead of being
+  silently accepted with blank addresses
+
+---
+
 ## [0.5.2] — 2026-04-13
 
 ### Added
