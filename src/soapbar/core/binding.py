@@ -513,11 +513,24 @@ class DocumentLiteralWrappedSerializer(BindingSerializer):
         result: dict[str, Any] = {}
         for param in params:
             ns = param.namespace or op_namespace
-            # Accept qualified (elementFormDefault=qualified) children first,
-            # falling back to unqualified for tolerance.
+            # Try qualified first (elementFormDefault=qualified is the
+            # default shape emitted by 0.6.0+ soapbar servers), then
+            # unqualified, then fall back to a local-name match across
+            # any namespace. The last step matters when the server-side
+            # signature was built without an explicit input_namespace
+            # (the common `@soap_operation` case) but the wire is
+            # qualified because the client knew the tns.
             child = wrapper.find(f"{{{ns}}}{param.name}") if ns else None
             if child is None:
                 child = wrapper.find(param.name)
+            if child is None:
+                for sibling in wrapper:
+                    if not isinstance(sibling.tag, str):
+                        continue
+                    local = sibling.tag.split("}", 1)[-1]
+                    if local == param.name:
+                        child = sibling
+                        break
             if child is not None:
                 result[param.name] = self._deserialize_param_value(child, param)
         return result

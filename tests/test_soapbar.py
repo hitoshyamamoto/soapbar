@@ -3743,6 +3743,127 @@ class TestXsdImportResolution:
             parse_wsdl(wsdl, allow_remote_imports=True, strict=False)
 
 
+# ---------------------------------------------------------------------------
+# 0.6.3 — SoapClient(wsdl_url=…).call(...) end-to-end (the CRITICAL fix)
+# ---------------------------------------------------------------------------
+
+class TestWsdlDrivenClientCall:
+    """Pins the 0.6.3 fix: `_init_from_wsdl` now registers operation
+    signatures from the loaded WSDL so ``client.call("Op", **kwargs)``
+    actually drives the call. Before 0.6.3 signatures stayed empty and
+    every call silently dropped its kwargs into an empty wrapper."""
+
+    def setup_method(self) -> None:
+        # parse_wsdl registers harvested complex types into the global
+        # xsd registry as a side effect; snapshot and restore so the
+        # 27-types invariant survives this class.
+        from soapbar.core.types import xsd as _xsd_registry
+        self._xsd_snapshot = dict(_xsd_registry._by_name)
+
+    def teardown_method(self) -> None:
+        from soapbar.core.types import xsd as _xsd_registry
+        _xsd_registry._by_name = self._xsd_snapshot
+
+    @staticmethod
+    def _calc_app(
+        binding_style: BindingStyle = BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+        soap_version: SoapVersion = SoapVersion.SOAP_11,
+    ) -> tuple[SoapApplication, bytes]:
+        """Build a minimal Calculator service and return (app, its WSDL)."""
+        import warnings
+
+        from soapbar.core.binding import OperationParameter
+        from soapbar.core.types import xsd as _xsd
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        int_type = _xsd.resolve("int")
+        assert int_type is not None
+
+        class Calc(SoapService):
+            __service_name__ = "Calculator"
+            __tns__ = "http://example.com/calc"
+            __binding_style__ = binding_style
+            __soap_version__ = soap_version
+
+            @soap_operation(
+                name="Add",
+                input_params=[
+                    OperationParameter("a", int_type),
+                    OperationParameter("b", int_type),
+                ],
+                output_params=[OperationParameter("result", int_type)],
+                soap_action="Add",
+            )
+            def add(self, a: int, b: int) -> int:
+                return a + b
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(Calc())
+        return app, app.get_wsdl()
+
+    @staticmethod
+    def _inline_transport(app: SoapApplication) -> HttpTransport:
+        """Route SoapClient requests directly through SoapApplication,
+        no network — same pattern as tests/test_interop.py."""
+
+        class _InlineTransport(HttpTransport):
+            def send(
+                self,
+                url: str,
+                body: bytes,
+                headers: dict[str, str],
+            ) -> tuple[int, str, bytes]:
+                soap_action = headers.get("SOAPAction", "").strip('"')
+                if not soap_action:
+                    ct = headers.get("Content-Type", "")
+                    for part in ct.split(";"):
+                        part = part.strip()
+                        if part.startswith("action="):
+                            soap_action = part[len("action="):].strip('"')
+                            break
+                return app.handle_request(body, soap_action=soap_action)
+
+        return _InlineTransport()
+
+    def test_signatures_registered_after_wsdl_load(self) -> None:
+        """After from_wsdl_string(...), client._signatures must contain
+        the operation with the correct parameter names and arities."""
+        _app, wsdl = self._calc_app()
+        client = SoapClient.from_wsdl_string(wsdl)
+        assert "Add" in client._signatures, (
+            f"Add not registered; _signatures={list(client._signatures)}"
+        )
+        sig = client._signatures["Add"]
+        assert [p.name for p in sig.input_params] == ["a", "b"], (
+            f"Expected input [a, b]; got {[p.name for p in sig.input_params]}"
+        )
+        assert [p.name for p in sig.output_params] == ["result"]
+
+    def test_dlw_wsdl_driven_call_round_trips(self) -> None:
+        """The canonical pattern: load WSDL, call operation, assert
+        the server's reply reaches the client. This is the regression
+        test for the pre-0.6.3 bug where kwargs were silently dropped."""
+        app, wsdl = self._calc_app(BindingStyle.DOCUMENT_LITERAL_WRAPPED)
+        client = SoapClient.from_wsdl_string(wsdl)
+        client._transport = self._inline_transport(app)
+
+        result = client.call("Add", a=3, b=4)
+        assert result == 7, f"Expected 7, got {result!r}"
+
+    def test_rpc_wsdl_driven_call_round_trips(self) -> None:
+        """Same pattern for RPC/Literal — exercises the non-DLW branch
+        of _resolve_message_params (part.type instead of part.element)."""
+        app, wsdl = self._calc_app(BindingStyle.RPC_LITERAL)
+        client = SoapClient.from_wsdl_string(wsdl)
+        client._transport = self._inline_transport(app)
+
+        result = client.call("Add", a=10, b=32)
+        assert result == 42, f"Expected 42, got {result!r}"
+
+
 class TestWsdlCircularImportGuard:
     def test_circular_import_does_not_recurse(self) -> None:
         """parse_wsdl() must not raise RecursionError when WSDL A imports A."""

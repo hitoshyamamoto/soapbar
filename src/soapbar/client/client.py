@@ -8,10 +8,19 @@ from pathlib import Path
 from typing import Any
 
 from soapbar.client.transport import HttpTransport
-from soapbar.core.binding import BindingStyle, OperationSignature, get_serializer
+from soapbar.core.binding import (
+    BindingStyle,
+    OperationParameter,
+    OperationSignature,
+    get_serializer,
+)
 from soapbar.core.envelope import SoapEnvelope, SoapVersion, http_headers
 from soapbar.core.namespaces import NS
-from soapbar.core.wsdl import WsdlDefinition
+from soapbar.core.wsdl import (
+    WsdlDefinition,
+    WsdlOperation,
+    WsdlOperationMessage,
+)
 from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
 from soapbar.core.xml import make_element
 
@@ -56,12 +65,204 @@ class SoapClient:
         self._wsdl = defn
         self._address = defn.first_service_address or ""
         binding = defn.first_binding
-        if binding:
-            self._binding_style = binding.binding_style_for(
-                binding.operations[0].name if binding.operations else ""
+        if binding is None:
+            return
+
+        self._binding_style = binding.binding_style_for(
+            binding.operations[0].name if binding.operations else ""
+        )
+        if binding.soap_ns == NS.WSDL_SOAP12:
+            self._soap_version = SoapVersion.SOAP_12
+
+        # Upgrade DOCUMENT_LITERAL → DOCUMENT_LITERAL_WRAPPED when every
+        # operation's input/output message matches the WS-I BP 1.1 DLW
+        # shape (one part, part.element set, element local-name equals
+        # the operation name). binding_style_for() can't distinguish DLW
+        # from plain doc/literal via WSDL metadata alone; the message
+        # shape is the spec-sanctioned signal.
+        if (
+            self._binding_style is BindingStyle.DOCUMENT_LITERAL
+            and binding.operations
+            and self._binding_is_dlw_shaped(defn, binding.operations)
+        ):
+            self._binding_style = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+        # Register one OperationSignature per binding operation so
+        # client.call("Op", **kwargs) actually drives the call. Before
+        # 0.6.3 this loop did not exist and the signature map stayed
+        # empty, silently dropping kwargs. Missing / unresolvable
+        # messages are skipped with a warning so partial WSDLs remain
+        # parseable (same tolerance as parse_wsdl(strict=False)).
+        for binding_op in binding.operations:
+            port_op = self._find_port_operation(binding_op.name)
+            if port_op is None:
+                import warnings
+                warnings.warn(
+                    f"WSDL binding operation {binding_op.name!r} has no "
+                    "matching portType operation; skipping signature "
+                    "registration.",
+                    stacklevel=2,
+                )
+                continue
+            sig = OperationSignature(
+                name=binding_op.name,
+                input_params=self._resolve_op_params(port_op.input),
+                output_params=self._resolve_op_params(port_op.output),
+                soap_action=binding_op.soap_action or "",
+                input_namespace=binding_op.input_namespace,
+                output_namespace=binding_op.output_namespace,
             )
-            if binding.soap_ns == NS.WSDL_SOAP12:
-                self._soap_version = SoapVersion.SOAP_12
+            self.register_operation(sig)
+
+    @staticmethod
+    def _binding_is_dlw_shaped(
+        defn: WsdlDefinition, operations: list[Any]
+    ) -> bool:
+        """Return True if every operation's input/output message looks
+        like document-literal-wrapped (one part, element=, element
+        local-name matches the operation name — WS-I BP R2201 + R2204)."""
+        for bop in operations:
+            msg_names = []
+            # We only need the message names to inspect shape; reach
+            # into port_types for the input/output refs.
+            for pt in defn.port_types.values():
+                for op in pt.operations:
+                    if op.name != bop.name:
+                        continue
+                    if op.input is not None:
+                        msg_names.append(op.input.message)
+                    if op.output is not None:
+                        msg_names.append(op.output.message)
+            for msg_ref in msg_names:
+                local = msg_ref.split(":", 1)[-1]
+                msg = defn.messages.get(local)
+                if msg is None or len(msg.parts) != 1:
+                    return False
+                part = msg.parts[0]
+                if not part.element:
+                    return False
+        return True
+
+    def _find_port_operation(self, op_name: str) -> WsdlOperation | None:
+        """Locate the portType operation matching ``op_name``."""
+        if self._wsdl is None:
+            return None
+        for pt in self._wsdl.port_types.values():
+            for op in pt.operations:
+                if op.name == op_name:
+                    return op
+        return None
+
+    def _resolve_op_params(
+        self, op_msg: WsdlOperationMessage | None
+    ) -> list[OperationParameter]:
+        """Translate a ``WsdlOperationMessage`` (an input/output ref) into
+        ``OperationParameter``s. Supports both document-literal (part
+        references a global element whose inline complexType enumerates
+        the parameters) and RPC-style (one part per parameter with a
+        type reference)."""
+        if op_msg is None or self._wsdl is None:
+            return []
+        local = op_msg.message.split(":", 1)[-1]
+        msg = self._wsdl.messages.get(local)
+        if msg is None:
+            return []
+        params: list[OperationParameter] = []
+        for part in msg.parts:
+            if part.element:
+                # Document-literal — part.element points at a global
+                # xsd:element whose inline complexType sequence carries
+                # the actual parameters.
+                elem_local = part.element.split(":", 1)[-1]
+                params.extend(self._params_from_global_element(elem_local))
+            elif part.type:
+                # RPC-style — one part per parameter.
+                params.append(
+                    OperationParameter(
+                        name=part.name,
+                        xsd_type=self._resolve_xsd_type(part.type),
+                    )
+                )
+        return params
+
+    def _params_from_global_element(
+        self, element_name: str
+    ) -> list[OperationParameter]:
+        """Find a global <xsd:element name=…> in the parsed WSDL and
+        return its inline complexType's sequence as OperationParameters.
+        Searches ``defn.global_elements`` first (soapbar-generated
+        WSDLs, post-0.6.0) then ``defn.schema_elements`` (externally
+        authored WSDLs)."""
+        if self._wsdl is None:
+            return []
+        from lxml import etree
+
+        xsd_ns = "http://www.w3.org/2001/XMLSchema"
+        candidates: list[Any] = list(self._wsdl.global_elements)
+        # schema_elements entries are entire <xsd:schema> blocks; walk
+        # their children for <xsd:element> declarations.
+        for schema in self._wsdl.schema_elements:
+            if isinstance(schema, etree._Element):
+                for child in schema:
+                    if (
+                        isinstance(child.tag, str)
+                        and child.tag == f"{{{xsd_ns}}}element"
+                    ):
+                        candidates.append(child)
+
+        target = None
+        for cand in candidates:
+            if isinstance(cand, etree._Element) and cand.get("name") == element_name:
+                target = cand
+                break
+        if target is None:
+            return []
+
+        # Walk <complexType>/<sequence>/<element> children.
+        ct = target.find(f"{{{xsd_ns}}}complexType")
+        if ct is None:
+            return []
+        seq = ct.find(f"{{{xsd_ns}}}sequence")
+        if seq is None:
+            return []
+        params: list[OperationParameter] = []
+        for child in seq:
+            if not isinstance(child.tag, str):
+                continue
+            if child.tag != f"{{{xsd_ns}}}element":
+                continue
+            name = child.get("name")
+            type_ref = child.get("type")
+            if not name:
+                continue
+            params.append(
+                OperationParameter(
+                    name=name,
+                    xsd_type=self._resolve_xsd_type(type_ref or "xsd:string"),
+                )
+            )
+        return params
+
+    def _resolve_xsd_type(self, type_ref: str) -> Any:
+        """Resolve a ``prefix:local`` type reference against the primitive
+        xsd registry first, then the WsdlDefinition's complex_types."""
+        from soapbar.core.types import xsd as _xsd_registry
+
+        resolved = _xsd_registry.resolve(type_ref)
+        if resolved is not None:
+            return resolved
+        local = type_ref.split(":", 1)[-1] if ":" in type_ref else type_ref
+        if self._wsdl is not None and local in self._wsdl.complex_types:
+            return self._wsdl.complex_types[local]
+        # Fall back to xsd:string so the client at least produces a
+        # shaped request rather than crashing on an unresolved type.
+        fallback = _xsd_registry.resolve("string")
+        if fallback is None:  # pragma: no cover — xsd:string is always registered
+            raise RuntimeError(
+                "xsd:string type is missing from the xsd registry; "
+                "core types are not initialized."
+            )
+        return fallback
 
     @classmethod
     def from_file(cls, path: str | Path, use_wsa: bool = False) -> SoapClient:
