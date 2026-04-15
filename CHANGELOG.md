@@ -6,6 +6,47 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.6.4] — 2026-04-15
+
+### Changed
+
+- **Repositioned as a SOAP library, not a framework.** The PyPI
+  `description` and the README tagline both previously read "A SOAP
+  framework for Python". Corrected to "A SOAP library for Python".
+  soapbar exposes a decorator-based server API (`SoapService` +
+  `@soap_operation`) that mounts inside a host ASGI/WSGI framework; it
+  does not own routing, configuration, lifecycle, DI, a CLI, or plugin
+  contracts, so "library" is the honest positioning. The GitHub
+  repository About blurb was updated in the same pass via `gh repo
+  edit`. No API or behaviour change.
+
+### Fixed
+
+- **`examples/10_complex_types/` now round-trips correctly.** Two
+  defects prevented the complex-types example from working end-to-end:
+  - `client.py` used `SoapClient(wsdl_url=...)`, but the WSDL-driven
+    auto-registration path drops the `ComplexXsdType` binding for the
+    `User` type — the registered signature falls back to strings and
+    the complex fields do not survive the round-trip. Switched to
+    `SoapClient.manual(...)` + `register_operation(...)` with an
+    explicit `OperationSignature` that carries the `User`
+    `ComplexXsdType` on both input and output. A comment in the
+    example flags the limitation so readers do not mistake this for
+    the recommended client pattern.
+  - `server.py` returned the User fields at the top level of the
+    result dict. `server/application.py` uses the dict verbatim when
+    the handler returns a dict, so the response must be keyed by the
+    output-param name (`"user"`). Wrapped the fields accordingly and
+    added a comment explaining the contract.
+  No library code changes.
+
+### Chore
+
+- `uv.lock` synced from 0.6.2 to 0.6.3 (local lockfile had not been
+  regenerated after the previous release).
+
+---
+
 ## [0.6.3] — 2026-04-14
 
 ### Fixed (CRITICAL)
