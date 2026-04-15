@@ -45,10 +45,16 @@ class UserService(SoapService):
     )
     def create_user(self, user: dict) -> dict:
         # Server-side normalisation: lower-case the email, bump the age.
+        # The returned dict must be keyed by the output-param name ("user"),
+        # not be the User fields themselves — application.py uses the dict
+        # verbatim when result is already a dict (see
+        # server/application.py's "if isinstance(result, dict)" branch).
         return {
-            "name":  user.get("name", ""),
-            "email": (user.get("email") or "").lower(),
-            "age":   int(user.get("age") or 0) + 1,
+            "user": {
+                "name":  user.get("name", ""),
+                "email": (user.get("email") or "").lower(),
+                "age":   int(user.get("age") or 0) + 1,
+            },
         }
 
 
