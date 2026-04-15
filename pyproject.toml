@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "soapbar"
 version = "0.6.3"
-description = "A SOAP framework for Python — client, server, and WSDL handling."
+description = "A SOAP library for Python — client, server, and WSDL handling."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["lxml>=5.0"]

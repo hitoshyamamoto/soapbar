@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/pypi/l/soapbar.svg)](https://github.com/hitoshyamamoto/soapbar/blob/main/LICENSE)
 ![Conformance](https://img.shields.io/badge/SOAP%20conformance-100%25-brightgreen)
 
-A SOAP framework for Python — client, server, and WSDL handling.
+A SOAP library for Python — client, server, and WSDL handling.
 
 soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates WSDL from Python service classes, parses existing WSDL to drive a typed client, and integrates with any ASGI or WSGI framework via thin adapter classes. The XML parser is hardened against XXE attacks using lxml with `resolve_entities=False`.
 
