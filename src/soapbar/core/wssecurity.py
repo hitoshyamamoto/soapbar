@@ -409,6 +409,127 @@ def sign_envelope(
         raise XmlSecurityError(f"XML Signature failed: {exc}") from exc
 
 
+# Algorithm option → signxml enum maps (resolved lazily so signxml stays optional).
+_SIGNATURE_METHODS = {"rsa-sha256", "rsa-sha1"}
+_DIGEST_METHODS = {"sha256", "sha1"}
+_C14N_METHODS = {"exclusive", "inclusive"}
+
+
+def sign_element_by_id(
+    doc_bytes: bytes,
+    id_value: str,
+    private_key: Any,
+    certificate: Any,
+    *,
+    id_attr: str = "Id",
+    signature_method: str = "rsa-sha256",
+    digest_method: str = "sha256",
+    c14n: str = "exclusive",
+    end_cert_only: bool = True,
+) -> bytes:
+    """Sign one *internal* element of a document, selected by its ``Id``.
+
+    Unlike :func:`sign_envelope` (which covers the whole SOAP envelope), this
+    produces an enveloped ``ds:Signature`` with a single ``ds:Reference`` whose
+    URI is ``#<id_value>`` — the standard XML-DSIG pattern for signing an inner
+    element. The ``ds:Signature`` is appended to the document root, so for a
+    ``<NFe><infNFe Id="NFe…">…</infNFe></NFe>`` document the signature becomes a
+    sibling of ``<infNFe>``.
+
+    The defaults (RSA-SHA256 / SHA-256 / Exclusive C14N) suit modern services.
+    SEFAZ NF-e mandates the legacy set — pass ``signature_method="rsa-sha1"``,
+    ``digest_method="sha1"``, ``c14n="inclusive"`` (the
+    ``REC-xml-c14n-20010315`` algorithm) and keep ``end_cert_only=True`` (only
+    the end-entity certificate in ``KeyInfo/X509Data``, no ``KeyValue``).
+
+    Args:
+        doc_bytes: The XML document containing the target element.
+        id_value: The value of the target element's id attribute (e.g. the
+            ``NFe`` + 44-char access key for NF-e).
+        private_key: A ``cryptography`` private key (or PEM bytes).
+        certificate: The signing X.509 certificate (object or PEM bytes).
+        id_attr: Name of the attribute that holds the id. Default ``"Id"``.
+        signature_method: ``"rsa-sha256"`` (default) or ``"rsa-sha1"``.
+        digest_method: ``"sha256"`` (default) or ``"sha1"``.
+        c14n: ``"exclusive"`` (default) or ``"inclusive"`` (C14N 1.0,
+            ``http://www.w3.org/TR/2001/REC-xml-c14n-20010315``).
+        end_cert_only: When True (default) ``KeyInfo`` carries only the
+            end-entity certificate and no ``KeyValue``.
+
+    Returns:
+        The signed document as bytes.
+
+    Raises:
+        ImportError: If ``signxml`` is not installed.
+        ValueError: If an algorithm option is unsupported.
+        XmlSecurityError: If signing fails.
+    """
+    if signature_method not in _SIGNATURE_METHODS:
+        raise ValueError(f"unsupported signature_method: {signature_method!r}")
+    if digest_method not in _DIGEST_METHODS:
+        raise ValueError(f"unsupported digest_method: {digest_method!r}")
+    if c14n not in _C14N_METHODS:
+        raise ValueError(f"unsupported c14n: {c14n!r}")
+
+    try:
+        from signxml import SignatureConstructionMethod, XMLSigner  # type: ignore[attr-defined]
+    except ImportError as exc:
+        raise ImportError(
+            "signxml is required for XML Signature support. "
+            "Install it with: pip install soapbar[security]"
+        ) from exc
+
+    from lxml import etree
+    from signxml.algorithms import (
+        CanonicalizationMethod,
+        DigestAlgorithm,
+        SignatureMethod,
+    )
+
+    from soapbar.core.xml import parse_xml
+
+    sig_alg = (
+        SignatureMethod.RSA_SHA256 if signature_method == "rsa-sha256" else SignatureMethod.RSA_SHA1
+    )
+    dig_alg = DigestAlgorithm.SHA256 if digest_method == "sha256" else DigestAlgorithm.SHA1
+    c14n_alg = (
+        CanonicalizationMethod.EXCLUSIVE_XML_CANONICALIZATION_1_0
+        if c14n == "exclusive"
+        else CanonicalizationMethod.CANONICAL_XML_1_0
+    )
+
+    # signxml refuses SHA-1 by default. SEFAZ NF-e *mandates* RSA-SHA1/SHA-1, so
+    # when the caller explicitly opts in we permit it via a subclass that skips
+    # the deprecation guard. SHA-256 (the default) goes through unchanged.
+    class _Signer(XMLSigner):
+        def check_deprecated_methods(self) -> None:
+            return
+
+    signer_cls = (
+        _Signer if signature_method == "rsa-sha1" or digest_method == "sha1" else XMLSigner
+    )
+
+    try:
+        root = parse_xml(doc_bytes)
+        signer = signer_cls(
+            method=SignatureConstructionMethod.enveloped,
+            signature_algorithm=sig_alg,
+            digest_algorithm=dig_alg,
+            c14n_algorithm=c14n_alg,
+        )
+        signed: Any = signer.sign(
+            root,
+            key=private_key,
+            cert=[certificate],
+            reference_uri=f"#{id_value}",
+            id_attribute=id_attr,
+            always_add_key_value=not end_cert_only,
+        )
+        return bytes(etree.tostring(signed, xml_declaration=True, encoding="utf-8"))
+    except Exception as exc:
+        raise XmlSecurityError(f"Id-targeted XML Signature failed: {exc}") from exc
+
+
 def verify_envelope(
     envelope_bytes: bytes,
     certificate: Any,

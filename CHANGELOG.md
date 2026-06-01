@@ -10,6 +10,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`sign_element_by_id()` — sign an internal element by its `Id`.** Produces an
+  enveloped `ds:Signature` whose single `ds:Reference` targets `#<id>` (the
+  standard XML-DSIG pattern for signing an inner element, not the whole
+  envelope). Algorithms are configurable: defaults are RSA-SHA256 / SHA-256 /
+  Exclusive C14N, and the SEFAZ NF-e mandate is supported via
+  `signature_method="rsa-sha1"`, `digest_method="sha1"`, `c14n="inclusive"`
+  (the `REC-xml-c14n-20010315` algorithm), with `end_cert_only=True` keeping
+  only the end-entity certificate in `KeyInfo`. Exported as
+  `soapbar.sign_element_by_id`; requires `signxml` (`soapbar[security]`).
 - **Session cookie persistence in `HttpTransport`.** The pooled httpx client
   now carries cookies across calls by default, so a `Set-Cookie` from one SOAP
   call (e.g. a login returning `JSESSIONID`) is sent on the next — the basis
