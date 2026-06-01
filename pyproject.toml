@@ -73,8 +73,14 @@ warn_unreachable = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov=soapbar --cov-report=term-missing -q"
-markers = ["integration: real-world WSDL parsing tests"]
+# `live` tests reach a real external service or need credentials; they are
+# deselected by default so the suite stays green offline. Run them explicitly
+# with `pytest -m live`. Offline tests (including `integration`) always run.
+addopts = "--cov=soapbar --cov-report=term-missing -q -m 'not live'"
+markers = [
+    "integration: real-world WSDL parsing tests (offline; vendored samples)",
+    "live: requires a live external service or credentials; deselected by default",
+]
 
 [tool.coverage.run]
 source         = ["soapbar"]
