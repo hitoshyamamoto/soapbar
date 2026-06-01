@@ -754,6 +754,32 @@ except XmlSecurityError as exc:
     print("Signature invalid:", exc)
 ```
 
+#### Signing an internal element by `Id`
+
+Some services sign an inner element selected by its `Id` (referenced as
+`#<id>`) rather than the whole envelope — most notably SEFAZ NF-e, which signs
+`<infNFe>`. `sign_element_by_id` does exactly that, with a single
+`ds:Reference` and an enveloped signature:
+
+```python
+from soapbar.core.wssecurity import sign_element_by_id
+
+# Defaults: RSA-SHA256 / SHA-256 / Exclusive C14N.
+signed = sign_element_by_id(nfe_xml, "NFe3106...", private_key, certificate)
+
+# SEFAZ NF-e mandates the legacy algorithm set:
+signed = sign_element_by_id(
+    nfe_xml,
+    "NFe3106...",            # the <infNFe Id="..."> value
+    private_key,
+    certificate,
+    signature_method="rsa-sha1",
+    digest_method="sha1",
+    c14n="inclusive",        # http://www.w3.org/TR/2001/REC-xml-c14n-20010315
+    end_cert_only=True,      # only the end-entity cert in KeyInfo
+)
+```
+
 ### XML Encryption (AES-256-CBC + RSA-OAEP)
 
 ```python
