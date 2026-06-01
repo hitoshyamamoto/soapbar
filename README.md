@@ -474,6 +474,29 @@ transport = HttpTransport(client_cert=(cert_pem, key_pem), ca_bundle="private-ca
 Mutual TLS requires httpx (`soapbar[client]`); `load_pkcs12` requires
 `cryptography` (`soapbar[security]`).
 
+#### Session cookies
+
+Stateful services keep a session across calls via cookies (e.g. a login that
+returns `JSESSIONID`). When a transport is reused, its cookie jar persists, so
+the session is carried automatically. Read or inject cookies via
+`transport.cookies`:
+
+```python
+transport = HttpTransport()  # persist_cookies=True by default
+client = SoapClient(wsdl_url="https://service/?wsdl", transport=transport)
+
+client.call("Login", user="...", password="...")   # server sets JSESSIONID
+print(transport.cookies.get("JSESSIONID"))          # read it
+client.call("DoWork", ...)                          # cookie sent automatically
+client.call("Logout")
+
+# Or inject a session cookie obtained out of band:
+transport.cookies.set("JSESSIONID", "abc123", domain="service")
+```
+
+Pass `HttpTransport(persist_cookies=False)` for stateless behaviour — the jar
+is cleared after every call. Session cookies require httpx (`soapbar[client]`).
+
 ### Advanced: manual client with explicit operation signature
 
 Use `register_operation` when you need full control over the operation schema without a WSDL:
