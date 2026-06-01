@@ -22,6 +22,21 @@ and binds to `127.0.0.1` so it never exposes a socket outside the host.
 | [`15_xml_encryption/`](15_xml_encryption/) | `encrypt_body` / `decrypt_body` round-trip (AES-256-CBC + RSA-OAEP-SHA256). |
 | [`16_introspection/`](16_introspection/) | Inspect a `SoapEnvelope` (WS-A headers, fault status); walk a parsed `WsdlDefinition`. |
 
+### Real-world services
+
+These point soapbar at actual government/industry SOAP services. VIES and
+WITSML run against live endpoints; NF-e and MeF are faithful references whose
+`main()` prints guidance without touching the network — exercising them needs
+external certificates/enrollment, but the soapbar features they use (mutual
+TLS, session cookies, `Id`-targeted signing) are all shipped.
+
+| Folder | Service | Auth | Runs live? |
+|---|---|---|---|
+| [`17_vies/`](17_vies/) | EU VIES VAT validation (`checkVat`) | none | ✅ yes (needs network) |
+| [`18_witsml/`](18_witsml/) | WITSML 1.4.1.1 STORE API (RPC, manual ops) | WS-Security UsernameToken | ✅ yes (needs a WITSML server) |
+| [`19_nfe/`](19_nfe/) | SEFAZ NF-e (`NFeStatusServico4`) | mutual TLS (ICP-Brasil) + `<infNFe>` Id-signing | reference (needs A1 cert + endpoint) |
+| [`20_mef/`](20_mef/) | IRS MeF A2A | mutual TLS (Strong Auth) + session cookies | reference (needs IRS enrollment) |
+
 ## Running
 
 Every example lists its own `uv run …` invocation in its module docstring.
@@ -36,7 +51,9 @@ Optional extras the examples assume:
 - `fastapi`, `uvicorn` — `01_calculator/server_fastapi.py`, most ASGI servers.
 - `flask` — `01_calculator/server_flask.py`.
 - `zeep` — `01_calculator/client_zeep.py` (interoperability demo).
-- `cryptography` — `04_ws_security_signing/` (bundled with `soapbar[security]`).
+- `cryptography` / `signxml` — `04_ws_security_signing/`, `19_nfe/` (bundled with `soapbar[security]`).
+
+The `fastapi`/`uvicorn`/`flask` servers are also available via `uv sync --group examples`.
 
 ## Security note
 
