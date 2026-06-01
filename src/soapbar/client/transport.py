@@ -21,6 +21,7 @@ class HttpTransport:
         verify_ssl: bool = True,
         client_cert: ClientCert = None,
         ca_bundle: str | None = None,
+        persist_cookies: bool = True,
     ) -> None:
         self.timeout = timeout
         self.verify_ssl = verify_ssl
@@ -31,6 +32,13 @@ class HttpTransport:
         # carry a client certificate).
         self.client_cert = client_cert
         self.ca_bundle = ca_bundle
+        # Session cookies. The pooled httpx client keeps a cookie jar across
+        # calls, so a ``Set-Cookie`` from one SOAP call (e.g. a login that
+        # returns JSESSIONID) is sent on the next — the basis for stateful
+        # services like IRS MeF. Set ``persist_cookies=False`` for stateless
+        # behaviour (the jar is cleared after every call). Read or inject
+        # cookies via the :attr:`cookies` jar.
+        self.persist_cookies = persist_cookies
         # Lazy long-lived httpx clients; created on first use, reused for
         # every subsequent request so TCP/TLS connections get pooled
         # (httpx.Client maintains an internal connection pool).
@@ -42,6 +50,21 @@ class HttpTransport:
 
     def _mtls_requested(self) -> bool:
         return self.client_cert is not None or self.ca_bundle is not None
+
+    @property
+    def cookies(self) -> Any:
+        """The live ``httpx.Cookies`` jar this transport carries across calls.
+
+        Read a session cookie after a call (``transport.cookies.get("JSESSIONID")``)
+        or inject one before (``transport.cookies.set("sid", "...", domain=...)``).
+        Backed by the pooled sync client, so it persists for the session.
+        Requires httpx.
+        """
+        return self._get_httpx_client().cookies
+
+    def _clear_cookies_if_stateless(self, client: Any) -> None:
+        if not self.persist_cookies:
+            client.cookies.clear()
 
     def _verify_arg(self) -> Any:
         """Return the value to pass as httpx ``verify``.
@@ -184,6 +207,7 @@ class HttpTransport:
         resp = client.post(url, content=body, headers=headers)
         ct = resp.headers.get("content-type", "text/xml")
         ct, content = self._decode_mtom_if_needed(ct, resp.content)
+        self._clear_cookies_if_stateless(client)
         return resp.status_code, ct, content
 
     def _send_urllib(
@@ -221,6 +245,7 @@ class HttpTransport:
         resp = await client.post(url, content=body, headers=headers)
         ct = resp.headers.get("content-type", "text/xml")
         ct, content = self._decode_mtom_if_needed(ct, resp.content)
+        self._clear_cookies_if_stateless(client)
         return resp.status_code, ct, content
 
     def fetch(self, url: str) -> bytes:

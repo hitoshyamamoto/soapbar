@@ -10,6 +10,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Session cookie persistence in `HttpTransport`.** The pooled httpx client
+  now carries cookies across calls by default, so a `Set-Cookie` from one SOAP
+  call (e.g. a login returning `JSESSIONID`) is sent on the next — the basis
+  for stateful services such as IRS MeF. The live jar is exposed as
+  `transport.cookies` for reading a session cookie after a call or injecting
+  one before; pass `HttpTransport(persist_cookies=False)` for stateless
+  behaviour (the jar is cleared after every call). Sync and async.
 - **Mutual TLS (client certificates) in `HttpTransport`.** New
   `HttpTransport(client_cert=..., ca_bundle=...)` parameters present a client
   certificate on the TLS handshake and verify the server against a custom CA
