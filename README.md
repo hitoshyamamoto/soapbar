@@ -449,6 +449,31 @@ transport = HttpTransport(timeout=60.0, verify_ssl=False)
 client = SoapClient(wsdl_url="http://localhost:8000/soap?wsdl", transport=transport)
 ```
 
+#### Mutual TLS (client certificate)
+
+Services behind a private or government PKI require the client to present a
+certificate on the TLS handshake, and often to verify the server against a
+custom CA. Pass `client_cert` (a combined-PEM path, a `(certfile, keyfile)`
+tuple, or in-memory `(cert_pem, key_pem)` bytes) and `ca_bundle`:
+
+```python
+from soapbar import HttpTransport, load_pkcs12
+
+# From PEM files on disk:
+transport = HttpTransport(
+    client_cert=("client.pem", "client.key"),
+    ca_bundle="private-ca.pem",
+)
+
+# Or from a PKCS#12 (.pfx) bundle (e.g. an ICP-Brasil A1 certificate) — the
+# private key stays in memory and is never written to disk:
+cert_pem, key_pem = load_pkcs12("certificate.pfx", "password")
+transport = HttpTransport(client_cert=(cert_pem, key_pem), ca_bundle="private-ca.pem")
+```
+
+Mutual TLS requires httpx (`soapbar[client]`); `load_pkcs12` requires
+`cryptography` (`soapbar[security]`).
+
 ### Advanced: manual client with explicit operation signature
 
 Use `register_operation` when you need full control over the operation schema without a WSDL:

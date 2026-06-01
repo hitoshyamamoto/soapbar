@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Mutual TLS (client certificates) in `HttpTransport`.** New
+  `HttpTransport(client_cert=..., ca_bundle=...)` parameters present a client
+  certificate on the TLS handshake and verify the server against a custom CA
+  bundle — needed for private/government PKIs (e.g. ICP-Brasil for SEFAZ NF-e,
+  IRS MeF Strong Authentication, enterprise WITSML). `client_cert` accepts a
+  combined-PEM path, a `(certfile, keyfile[, password])` tuple, or in-memory
+  `(cert_pem, key_pem)` bytes; the latter is loaded through an
+  `ssl.SSLContext` so the key never lands in a persistent file. Both sync and
+  async clients are covered. Mutual TLS requires httpx (`soapbar[client]`).
+- **`load_pkcs12(path, password) -> (cert_pem, key_pem)`** helper (exported as
+  `soapbar.load_pkcs12`) that converts a PKCS#12 (`.pfx`/`.p12`) bundle — such
+  as an ICP-Brasil A1 certificate — into in-memory PEM bytes, returning the
+  full certificate chain and the unencrypted PKCS#8 private key. The key is
+  never written to disk or logged. Requires `cryptography` (`soapbar[security]`).
+
+---
+
 ## [0.6.4] — 2026-04-15
 
 ### Changed

@@ -6759,8 +6759,9 @@ class TestHttpTransportCoverage:
         http_error.headers = {"Content-Type": "text/xml"}  # type: ignore[assignment]
 
         transport = HttpTransport()
+        # httpx absent → send() falls back to urllib, which surfaces the HTTPError.
         with (
-            patch.object(transport, "_send_httpx", side_effect=ImportError),
+            patch.dict(sys.modules, {"httpx": None}),
             patch("urllib.request.urlopen", side_effect=http_error),
         ):
             status, _ct, body = transport.send("http://x/", b"<r/>", {})
