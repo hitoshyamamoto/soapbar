@@ -14,7 +14,7 @@ Run:
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from soapbar.core.envelope import SoapVersion
 from soapbar.core.namespaces import NS
@@ -36,7 +36,7 @@ def main() -> None:
 
     print("--- N07: nonce replay protection")
     fixed_nonce = b"\x00" * 16
-    fixed_created = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fixed_created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     cred = UsernameTokenCredential(
         username="alice",
@@ -64,7 +64,7 @@ def main() -> None:
     # Force the Expires element into the past.
     ts = sec2.find(f"{{{NS.WSU}}}Timestamp")
     expires = ts.find(f"{{{NS.WSU}}}Expires")
-    expires.text = (datetime.now(UTC) - timedelta(seconds=10)).strftime(
+    expires.text = (datetime.now(timezone.utc) - timedelta(seconds=10)).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
 

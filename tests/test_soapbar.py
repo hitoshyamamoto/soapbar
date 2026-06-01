@@ -1844,6 +1844,23 @@ class TestHttpTransport:
 
         assert data == b"<wsdl/>"
 
+    def test_sync_httpx_client_follows_redirects(self) -> None:
+        # Regression: a SOAP endpoint behind a proxy or an ASGI ``app.mount``
+        # may answer the documented URL with a 307 redirect; WSDL fetches and
+        # SOAP POSTs must follow it rather than fail.
+        transport = HttpTransport()
+        try:
+            assert transport._get_httpx_client().follow_redirects is True
+        finally:
+            transport.close()
+
+    async def test_async_httpx_client_follows_redirects(self) -> None:
+        transport = HttpTransport()
+        try:
+            assert transport._get_httpx_async_client().follow_redirects is True
+        finally:
+            await transport.aclose()
+
     async def test_send_async_no_httpx(self) -> None:
         transport = HttpTransport()
         with patch.dict(sys.modules, {"httpx": None}), pytest.raises(RuntimeError, match="httpx"):

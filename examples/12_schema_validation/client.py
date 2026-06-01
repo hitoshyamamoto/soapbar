@@ -32,7 +32,7 @@ INVALID = (
 
 
 def post(label: str, body: bytes) -> None:
-    r = httpx.post(URL, content=body, headers={
+    r = httpx.post(URL, content=body, follow_redirects=True, headers={
         "Content-Type": "text/xml; charset=utf-8",
         "SOAPAction": '""',
     })
