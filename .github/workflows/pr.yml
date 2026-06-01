@@ -60,12 +60,13 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest tests/ -q --cov=soapbar --cov-report=xml --cov-report=term-missing
 
-      - name: Upload coverage XML
+      - name: Upload coverage data
         if: matrix.python-version == '3.12'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: coverage-pr-${{ github.event.pull_request.number }}
-          path: coverage.xml
+          path: .coverage
+          include-hidden-files: true   # .coverage is dotfile-hidden; excluded by default
           retention-days: 7
 
   # ── 3. Coverage summary comment on PR ────────────────────────────────────
@@ -74,6 +75,9 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: write        # update the python-coverage-comment-action-data branch + edit prior comment
+      pull-requests: write   # post the coverage comment on trusted same-repo PRs
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
@@ -83,7 +87,18 @@ jobs:
           name: coverage-pr-${{ github.event.pull_request.number }}
 
       - name: Post coverage comment
-        uses: py-cov-action/python-coverage-comment-action@4c2eefcda8b94596768855a80ac94edc61aba669  # v3
+        id: coverage_comment
+        uses: py-cov-action/python-coverage-comment-action@b5c9b343bf45af753a29486e9a793d9baf246936  # v3
         with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COVERAGE_DATA_FILE: coverage.xml
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # Dependabot / fork PRs run with a read-only token, so the step above
+      # cannot post directly and instead writes the comment to a file. Store it
+      # so the trusted coverage-comment.yml (workflow_run) can publish it.
+      - name: Store comment for later publication
+        if: steps.coverage_comment.outputs.COMMENT_FILE_WRITTEN == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: python-coverage-comment-action
+          path: python-coverage-comment-action.txt
+          retention-days: 1

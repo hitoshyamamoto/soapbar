@@ -1,0 +1,34 @@
+name: Coverage Comment
+
+# Trusted companion to "CI — Pull Request". That workflow runs the tests and,
+# for PRs whose token is read-only (Dependabot, forks), saves the coverage
+# comment as an artifact instead of posting it. This workflow runs in the base
+# repository context with write access and publishes that comment.
+on:
+  workflow_run:
+    workflows: ["CI — Pull Request"]
+    types:
+      - completed
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Post coverage comment
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write        # edit the existing comment / data branch
+      pull-requests: write   # post the comment
+      actions: read          # download the artifact from the triggering run
+    steps:
+      # Do NOT check out the repository here — this workflow runs with write
+      # permissions in response to untrusted PRs. See:
+      # https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+      - name: Post coverage comment
+        uses: py-cov-action/python-coverage-comment-action@b5c9b343bf45af753a29486e9a793d9baf246936  # v3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_PR_RUN_ID: ${{ github.event.workflow_run.id }}

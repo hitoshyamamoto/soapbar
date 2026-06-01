@@ -73,8 +73,9 @@ addopts = "--cov=soapbar --cov-report=term-missing -q"
 markers = ["integration: real-world WSDL parsing tests"]
 
 [tool.coverage.run]
-source  = ["soapbar"]
-branch  = true
+source         = ["soapbar"]
+branch         = true
+relative_files = true   # required by python-coverage-comment-action so paths resolve across jobs
 
 [tool.coverage.report]
 show_missing = true
