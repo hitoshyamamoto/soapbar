@@ -13,7 +13,7 @@ except Exception:
 from soapbar.client.client import SoapClient
 
 # Client
-from soapbar.client.transport import HttpTransport
+from soapbar.client.transport import HttpTransport, load_pkcs12
 from soapbar.core.binding import (
     BindingStyle,
     OperationParameter,
@@ -142,4 +142,5 @@ __all__ = [  # noqa: RUF022
     # client
     "HttpTransport",
     "SoapClient",
+    "load_pkcs12",
 ]
