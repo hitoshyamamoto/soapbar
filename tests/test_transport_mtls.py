@@ -26,7 +26,7 @@ from cryptography import x509  # noqa: E402
 from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: E402
 from cryptography.hazmat.primitives.serialization import pkcs12  # noqa: E402
-from cryptography.x509.oid import NameOID  # noqa: E402
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +44,7 @@ def _cert(
     *,
     is_ca: bool,
     san: list[x509.GeneralName] | None = None,
+    eku: list[x509.ObjectIdentifier] | None = None,
 ) -> x509.Certificate:
     now = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
@@ -57,7 +58,32 @@ def _cert(
         .not_valid_before(now - datetime.timedelta(days=1))
         .not_valid_after(now + datetime.timedelta(days=3650))
         .add_extension(x509.BasicConstraints(ca=is_ca, path_length=None), critical=True)
+        # Subject/Authority Key Identifiers — required by the stricter RFC 5280
+        # chain validation in newer OpenSSL (Python 3.13+).
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(subject_key.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(issuer_key.public_key()),
+            critical=False,
+        )
     )
+    if is_ca:
+        key_usage = x509.KeyUsage(
+            digital_signature=True, content_commitment=False, key_encipherment=False,
+            data_encipherment=False, key_agreement=False, key_cert_sign=True,
+            crl_sign=True, encipher_only=False, decipher_only=False,
+        )
+    else:
+        key_usage = x509.KeyUsage(
+            digital_signature=True, content_commitment=False, key_encipherment=True,
+            data_encipherment=False, key_agreement=False, key_cert_sign=False,
+            crl_sign=False, encipher_only=False, decipher_only=False,
+        )
+    builder = builder.add_extension(key_usage, critical=True)
+    if eku:
+        builder = builder.add_extension(x509.ExtendedKeyUsage(eku), critical=False)
     if san:
         builder = builder.add_extension(x509.SubjectAlternativeName(san), critical=False)
     return builder.sign(issuer_key, hashes.SHA256())
@@ -83,10 +109,14 @@ class _PKI:
                 x509.DNSName("localhost"),
                 x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
             ],
+            eku=[ExtendedKeyUsageOID.SERVER_AUTH],
         )
 
         cli_key = _key()
-        cli = _cert("soapbar-test-client", cli_key, "soapbar-test-ca", ca_key, is_ca=False)
+        cli = _cert(
+            "soapbar-test-client", cli_key, "soapbar-test-ca", ca_key, is_ca=False,
+            eku=[ExtendedKeyUsageOID.CLIENT_AUTH],
+        )
 
         pem = serialization.Encoding.PEM
         nokey = serialization.NoEncryption()
