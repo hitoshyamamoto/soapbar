@@ -83,7 +83,7 @@ jobs:
           name: coverage-pr-${{ github.event.pull_request.number }}
 
       - name: Post coverage comment
-        uses: py-cov-action/python-coverage-comment-action@4c2eefcda8b94596768855a80ac94edc61aba669  # v3
+        uses: py-cov-action/python-coverage-comment-action@b5c9b343bf45af753a29486e9a793d9baf246936  # v3
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COVERAGE_DATA_FILE: coverage.xml
