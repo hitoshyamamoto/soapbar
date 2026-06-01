@@ -41,7 +41,7 @@ def main() -> None:
     print(f"  echo('hello') = {client.call('echo', msg='hello')}\n")
 
     print("--- 2) One-way operation: expect HTTP 202 + empty body")
-    r = httpx.post(URL, content=ONE_WAY_REQUEST, headers={
+    r = httpx.post(URL, content=ONE_WAY_REQUEST, follow_redirects=True, headers={
         "Content-Type": "text/xml; charset=utf-8",
         "SOAPAction": '""',
     })
@@ -49,7 +49,7 @@ def main() -> None:
     print(f"  body bytes  = {len(r.content)}\n")
 
     print("--- 3) JSON dual-mode: same SOAP request, Accept: application/json")
-    r = httpx.post(URL, content=ECHO_REQUEST, headers={
+    r = httpx.post(URL, content=ECHO_REQUEST, follow_redirects=True, headers={
         "Content-Type": "text/xml; charset=utf-8",
         "Accept": "application/json",
         "SOAPAction": '""',

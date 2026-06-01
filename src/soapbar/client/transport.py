@@ -25,7 +25,7 @@ class HttpTransport:
         import httpx
         if self._httpx_client is None:
             self._httpx_client = httpx.Client(
-                timeout=self.timeout, verify=self.verify_ssl
+                timeout=self.timeout, verify=self.verify_ssl, follow_redirects=True
             )
         return self._httpx_client
 
@@ -34,7 +34,7 @@ class HttpTransport:
         import httpx
         if self._httpx_async_client is None:
             self._httpx_async_client = httpx.AsyncClient(
-                timeout=self.timeout, verify=self.verify_ssl
+                timeout=self.timeout, verify=self.verify_ssl, follow_redirects=True
             )
         return self._httpx_async_client
 
