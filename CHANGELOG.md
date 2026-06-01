@@ -10,6 +10,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Real-world service examples.** Four new examples point soapbar at actual
+  government/industry SOAP services: `examples/17_vies/` (EU VIES VAT
+  validation — runs live), `examples/18_witsml/` (WITSML 1.4.1.1 STORE API over
+  the RPC binding with manually-registered operations), `examples/19_nfe/`
+  (SEFAZ NF-e — mutual TLS + `<infNFe>` `Id`-signing) and `examples/20_mef/`
+  (IRS MeF A2A — mutual TLS + session cookies). VIES/WITSML run against live
+  endpoints; NF-e/MeF are faithful references whose `main()` prints guidance
+  without network access. A smoke test imports all four (guarding against
+  public-API drift) and runs the NF-e/MeF references.
+
 - **`sign_element_by_id()` — sign an internal element by its `Id`.** Produces an
   enveloped `ds:Signature` whose single `ds:Reference` targets `#<id>` (the
   standard XML-DSIG pattern for signing an inner element, not the whole

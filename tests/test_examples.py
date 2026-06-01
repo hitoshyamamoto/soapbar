@@ -241,3 +241,34 @@ def test_wsdl_access_control() -> None:
         with urllib.request.urlopen(req, timeout=10) as resp:
             assert resp.status == 200
             assert "definitions" in resp.read().decode()
+
+
+# ---------------------------------------------------------------------------
+# 6. Real-world service demos (VIES, WITSML, NF-e, MeF)
+# ---------------------------------------------------------------------------
+# These talk to external services at runtime, so we cannot run them live in CI.
+# Importing each (module-level code, not main()) validates that its soapbar API
+# usage still resolves — catching public-API drift.
+REAL_WORLD = [
+    "17_vies/vies_demo.py",
+    "18_witsml/witsml_demo.py",
+    "19_nfe/nfe_demo.py",
+    "20_mef/mef_demo.py",
+]
+
+
+@pytest.mark.parametrize("script", REAL_WORLD, ids=lambda s: s.split("/")[0])
+def test_real_world_example_imports(script: str) -> None:
+    name = script.split("/")[-1][:-3]
+    spec = importlib.util.spec_from_file_location(f"_ex_{name}", EXAMPLES / script)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+
+
+def test_nfe_and_mef_reference_scripts_run() -> None:
+    # NF-e and MeF main() are honest references: they print guidance and exit 0
+    # without touching the network (live calls need certificates / enrollment).
+    for script, needle in [("19_nfe/nfe_demo.py", "NF-e"), ("20_mef/mef_demo.py", "MeF")]:
+        result = _run(EXAMPLES / script)
+        _ok(result, script)
+        assert needle in result.stdout
