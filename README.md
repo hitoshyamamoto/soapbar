@@ -935,7 +935,7 @@ ship under `soapbar.contrib.*` (installable via extras).
 | Service | Binding | Auth | Example | Client |
 |---|---|---|---|---|
 | EU VIES (VAT validation) | document/literal, SOAP 1.1 | none | [`17_vies/`](examples/17_vies/) | `soapbar.contrib.vies` (`soapbar[vies]`) |
-| WITSML 1.4.1.1 STORE | RPC | WS-Security UsernameToken | [`18_witsml/`](examples/18_witsml/) | `soapbar.contrib.witsml` *(planned, `soapbar[witsml]`)* |
+| WITSML 1.4.1.1 STORE | RPC | WS-Security UsernameToken | [`18_witsml/`](examples/18_witsml/) | `soapbar.contrib.witsml` (`soapbar[witsml]`) |
 | SEFAZ NF-e | document/literal, SOAP 1.2 | mutual TLS (ICP-Brasil) + `<infNFe>` `Id`-signing | [`19_nfe/`](examples/19_nfe/) | *(use the core APIs directly)* |
 | IRS MeF (A2A) | SOAP/HTTP, session-based | mutual TLS (Strong Auth) + session cookies | [`20_mef/`](examples/20_mef/) | *(use the core APIs directly)* |
 
