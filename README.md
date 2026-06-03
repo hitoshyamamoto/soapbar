@@ -59,6 +59,7 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - Message size limit (10 MB default) and XML nesting depth limit (100 levels) — DoS protection
 - **WS-Security UsernameToken** — PasswordText and PasswordDigest (SHA-1) on both client and server
 - **XML Signature** — enveloped XML-DSIG signing and verification (`sign_envelope` / `verify_envelope`, requires `signxml`)
+- **Id-targeted signing** — sign an inner element selected by its `Id`/Reference URI (`sign_element_by_id`), with a configurable algorithm set (incl. the SEFAZ NF-e RSA-SHA1 / inclusive-C14N / EndCertOnly profile)
 - **XML Encryption** — AES-256-CBC body encryption with RSA-OAEP session-key wrapping (`encrypt_body` / `decrypt_body`, requires `cryptography`)
 - **MTOM/XOP** — send and receive SOAP messages with binary attachments; `SoapClient(use_mtom=True)` + `add_attachment()`; server decodes inbound MTOM automatically
 - **WSDL schema validation** — opt-in Body validation against WSDL-embedded XSD types (`SoapApplication(validate_body_schema=True)`)
@@ -69,6 +70,10 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - WS-Addressing 1.0 — MessageID, RelatesTo, Action, ReferenceParameters propagated in responses
 - XSD type registry with 27 built-in types
 - Sync and async HTTP client (httpx optional)
+- **Mutual TLS** — client certificates + custom CA bundle (`HttpTransport(client_cert=…, ca_bundle=…)`), with a PKCS#12 helper (`load_pkcs12`) for ICP-Brasil A1 `.pfx`
+- **Session cookies** — persisted across calls (`HttpTransport(persist_cookies=True)`) for stateful services; read/inject via `transport.cookies`
+- **Document/literal *bare* + `xsd:any`** — passes raw XML through a single body element (e.g. NF-e's `nfeDadosMsg`)
+- **Real-world clients** — optional typed clients under `soapbar.contrib.*`: EU VIES (`ViesClient`), WITSML 1.4.1.1 (`WitsmlClient`), SEFAZ NF-e (`NfeClient`)
 - Interoperable with zeep and spyne out-of-the-box (verified by integration tests)
 - **JSON dual-mode** — any SOAP endpoint returns JSON when client sends `Accept: application/json`; no separate endpoint needed
 - **Non-strict WSDL parsing** — `parse_wsdl(..., strict=False)` silently skips unresolvable imports instead of raising
@@ -84,8 +89,13 @@ pip install soapbar              # core + server + WSDL (lxml only)
 pip install soapbar[core]        # explicit alias for the above
 pip install soapbar[server]      # explicit alias for the above
 pip install soapbar[client]      # + httpx for the HTTP client
-pip install soapbar[security]    # + signxml + cryptography (XML Sig/Enc)
+pip install soapbar[security]    # + signxml + cryptography (XML Sig/Enc, mutual TLS)
 pip install soapbar[all]         # everything (client + security)
+
+# Real-world contrib clients (see "Real-world services"):
+pip install soapbar[vies]        # EU VIES VAT validation
+pip install soapbar[witsml]      # WITSML 1.4.1.1 STORE
+pip install soapbar[nfe]         # SEFAZ NF-e (mutual TLS + signing)
 ```
 
 Or with uv:
@@ -95,6 +105,7 @@ uv add soapbar
 uv add "soapbar[client]"
 uv add "soapbar[security]"
 uv add "soapbar[all]"
+uv add "soapbar[nfe]"            # or [vies] / [witsml]
 ```
 
 ---
@@ -1027,7 +1038,8 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | `AsgiSoapApp` | `from soapbar import AsgiSoapApp` | ASGI adapter |
 | `WsgiSoapApp` | `from soapbar import WsgiSoapApp` | WSGI adapter |
 | `SoapClient` | `from soapbar import SoapClient` | SOAP client |
-| `HttpTransport` | `from soapbar import HttpTransport` | HTTP transport layer |
+| `HttpTransport` | `from soapbar import HttpTransport` | HTTP transport layer (timeout, mutual TLS, session cookies) |
+| `load_pkcs12` | `from soapbar import load_pkcs12` | PKCS#12 (`.pfx`) → in-memory PEM `(cert, key)` for mutual TLS |
 | `SoapFault` | `from soapbar import SoapFault` | SOAP fault exception |
 | `BindingStyle` | `from soapbar import BindingStyle` | Binding style enum |
 | `SoapVersion` | `from soapbar import SoapVersion` | SOAP version enum |
@@ -1042,6 +1054,7 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | `SecurityValidationError` | `from soapbar.core.wssecurity import SecurityValidationError` | Raised on authentication failure |
 | `build_security_header` | `from soapbar.core.wssecurity import build_security_header` | Build `wsse:Security` header element |
 | `sign_envelope` | `from soapbar.core.wssecurity import sign_envelope` | Enveloped XML-DSIG signature (RSA-SHA256) |
+| `sign_element_by_id` | `from soapbar import sign_element_by_id` | Sign an inner element by its `Id` (configurable algorithms; e.g. SEFAZ NF-e) |
 | `verify_envelope` | `from soapbar.core.wssecurity import verify_envelope` | Verify and return signed envelope bytes |
 | `encrypt_body` | `from soapbar.core.wssecurity import encrypt_body` | AES-256-CBC body encryption + RSA-OAEP key wrap |
 | `decrypt_body` | `from soapbar.core.wssecurity import decrypt_body` | Decrypt `xenc:EncryptedData` body and restore children |
@@ -1054,6 +1067,14 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | `MtomMessage` | `from soapbar import MtomMessage` | Parsed MTOM message (soap_xml + attachments list) |
 | `parse_mtom` | `from soapbar import parse_mtom` | Parse a raw `multipart/related` MTOM body |
 | `build_mtom` | `from soapbar import build_mtom` | Build a `multipart/related` MTOM body |
+
+**Real-world clients** (optional, under `soapbar.contrib.*` — see [Real-world services](#real-world-services)):
+
+| Symbol | Import | Description |
+|--------|--------|-------------|
+| `ViesClient` | `from soapbar.contrib.vies import ViesClient` | EU VIES VAT validation (`soapbar[vies]`) |
+| `WitsmlClient` | `from soapbar.contrib.witsml import WitsmlClient` | WITSML 1.4.1.1 STORE API (`soapbar[witsml]`) |
+| `NfeClient` | `from soapbar.contrib.nfe import NfeClient` | SEFAZ NF-e layout 4.00 (`soapbar[nfe]`) |
 
 ---
 
