@@ -6,6 +6,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`SoapClient.from_file(transport=…, endpoint=…)`.** The WSDL-from-disk
+  constructor now accepts a custom transport (timeouts, mTLS, or a stub in
+  tests) and an endpoint override (e.g. force HTTPS when the WSDL lists a legacy
+  HTTP URL). `soapbar.contrib.vies.ViesClient` uses these instead of reaching
+  into private attributes.
+
+---
+
 ## [0.8.1] — 2026-06-03
 
 ### Fixed

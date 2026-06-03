@@ -13,6 +13,7 @@ from pathlib import Path
 
 from soapbar import parse_wsdl
 from soapbar.client.client import SoapClient
+from soapbar.client.transport import HttpTransport
 
 # Minimal document/literal WSDL whose element lives in a *separate* schema
 # namespace (urn:ex:types) from the WSDL targetNamespace (urn:ex:svc).
@@ -58,3 +59,14 @@ def test_client_qualifies_doc_literal_wrapper(tmp_path: Path) -> None:
     path.write_bytes(_WSDL)
     client = SoapClient.from_file(str(path))
     assert client._signatures["Ping"].input_namespace == "urn:ex:types"
+
+
+def test_from_file_accepts_transport_and_endpoint(tmp_path: Path) -> None:
+    path = tmp_path / "svc.wsdl"
+    path.write_bytes(_WSDL)
+    transport = HttpTransport(timeout=5)
+    client = SoapClient.from_file(
+        str(path), transport=transport, endpoint="https://override.invalid/svc"
+    )
+    assert client._transport is transport  # injected, not a fresh default
+    assert client._address == "https://override.invalid/svc"  # overrides the WSDL address
