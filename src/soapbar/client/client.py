@@ -130,8 +130,9 @@ class SoapClient:
             return msg.parts[0].element_ns
         return None
 
+    @staticmethod
     def _binding_is_dlw_shaped(
-        self, defn: WsdlDefinition, operations: list[Any]
+        defn: WsdlDefinition, operations: list[Any]
     ) -> bool:
         """Return True if every operation's input/output message looks
         like document-literal-wrapped (one part, element=, element
@@ -160,7 +161,7 @@ class SoapClient:
                 part = msg.parts[0]
                 if not part.element:
                     return False
-                if self._element_is_any_wildcard(part.element.split(":", 1)[-1]):
+                if SoapClient._element_is_any_wildcard(defn, part.element.split(":", 1)[-1]):
                     return False
         return True
 
@@ -192,7 +193,7 @@ class SoapClient:
         for part in msg.parts:
             if part.element:
                 elem_local = part.element.split(":", 1)[-1]
-                if self._element_is_any_wildcard(elem_local):
+                if self._element_is_any_wildcard(self._wsdl, elem_local):
                     # Document/literal BARE: the body *is* this element, which
                     # carries arbitrary XML (xsd:any) passed through verbatim —
                     # e.g. NF-e's <nfeDadosMsg>. One param named after it.
@@ -218,17 +219,18 @@ class SoapClient:
                 )
         return params
 
-    def _find_global_element(self, element_name: str) -> Any:
-        """Locate a global ``<xsd:element name=…>`` declaration in the parsed
-        WSDL, or None. Searches ``global_elements`` (soapbar-generated WSDLs)
-        then the ``schema_elements`` blocks (externally authored WSDLs)."""
-        if self._wsdl is None:
+    @staticmethod
+    def _find_global_element(defn: WsdlDefinition | None, element_name: str) -> Any:
+        """Locate a global ``<xsd:element name=…>`` declaration in *defn*, or
+        None. Searches ``global_elements`` (soapbar-generated WSDLs) then the
+        ``schema_elements`` blocks (externally authored WSDLs)."""
+        if defn is None:
             return None
         from lxml import etree
 
         xsd_ns = "http://www.w3.org/2001/XMLSchema"
-        candidates: list[Any] = list(self._wsdl.global_elements)
-        for schema in self._wsdl.schema_elements:
+        candidates: list[Any] = list(defn.global_elements)
+        for schema in defn.schema_elements:
             if isinstance(schema, etree._Element):
                 candidates.extend(
                     c for c in schema
@@ -239,11 +241,12 @@ class SoapClient:
                 return cand
         return None
 
-    def _element_is_any_wildcard(self, element_name: str) -> bool:
+    @staticmethod
+    def _element_is_any_wildcard(defn: WsdlDefinition | None, element_name: str) -> bool:
         """True if the global element's content model is an ``xsd:any`` wildcard
         with no named child elements — i.e. a document/literal *bare* body that
         carries arbitrary XML (e.g. NF-e's ``nfeDadosMsg``)."""
-        target = self._find_global_element(element_name)
+        target = SoapClient._find_global_element(defn, element_name)
         if target is None:
             return False
         xsd_ns = "http://www.w3.org/2001/XMLSchema"
@@ -263,7 +266,7 @@ class SoapClient:
     ) -> list[OperationParameter]:
         """Find a global <xsd:element name=…> in the parsed WSDL and
         return its inline complexType's sequence as OperationParameters."""
-        target = self._find_global_element(element_name)
+        target = self._find_global_element(self._wsdl, element_name)
         if target is None:
             return []
         xsd_ns = "http://www.w3.org/2001/XMLSchema"

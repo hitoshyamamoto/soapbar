@@ -107,8 +107,8 @@ def test_response_inner_xml_returned_as_string() -> None:
 
 def test_wildcard_detection_distinguishes_named_elements() -> None:
     client, _ = _client()
-    assert client._element_is_any_wildcard("nfeDadosMsg") is True
-    assert client._element_is_any_wildcard("does-not-exist") is False
+    assert client._element_is_any_wildcard(client._wsdl, "nfeDadosMsg") is True
+    assert client._element_is_any_wildcard(client._wsdl, "does-not-exist") is False
 
 
 def test_anyxml_type_value_conversions() -> None:
