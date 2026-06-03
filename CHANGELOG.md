@@ -10,6 +10,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`soapbar.contrib.witsml.WitsmlClient`** — a typed client for the WITSML
+  1.4.1.1 STORE API (oil & gas). Registers the STORE operations over soapbar's
+  RPC binding (the WSDL has no `<types>`; domain XML rides as strings), adds an
+  `options_in()` builder for `OptionsIn`, and maps the return code — positive is
+  success, negative raises `WitsmlError` (text resolved via `WMLS_GetBaseMsg`).
+  Methods: `get_cap`, `get_from_store`, `add_to_store`, `update_in_store`,
+  `delete_from_store`, `get_version`, `get_base_message`. WS-Security
+  UsernameToken auth; installable via `soapbar[witsml]`.
 - **`soapbar.contrib.vies.ViesClient`** — a typed client for the EU VIES VAT
   validation service. `check_vat(country_code, vat_number)` returns a
   `ViesResult` (`valid`, `name`, `address`, `request_date`); input is validated
