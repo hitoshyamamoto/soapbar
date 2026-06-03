@@ -182,3 +182,20 @@ def test_live_check_vat() -> None:
     with ViesClient(endpoint=_VIES_TEST_ENDPOINT) as client:
         assert client.check_vat("BE", "100").valid is True
         assert client.check_vat("BE", "200").valid is False
+
+
+@pytest.mark.live
+@pytest.mark.parametrize(
+    "vat,exc",
+    [
+        ("201", ViesInputError),       # INVALID_INPUT
+        ("300", ViesUnavailableError),  # SERVICE_UNAVAILABLE
+        ("301", ViesUnavailableError),  # MS_UNAVAILABLE
+        ("302", ViesUnavailableError),  # TIMEOUT
+    ],
+)
+def test_live_fault_map(vat: str, exc: type[Exception]) -> None:
+    # The EC test service drives the documented fault spectrum deterministically,
+    # so the fault→typed-exception mapping gets real (no-secret) coverage.
+    with ViesClient(endpoint=_VIES_TEST_ENDPOINT) as client, pytest.raises(exc):
+        client.check_vat("BE", vat)
