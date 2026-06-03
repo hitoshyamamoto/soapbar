@@ -80,6 +80,28 @@ class _AnyTypeType(_StringType):
     name = "anyType"
 
 
+class AnyXmlType(XsdType):
+    """Passthrough for an ``xsd:any`` wildcard body.
+
+    The value is a string (or bytes) of XML serialized verbatim as child
+    element(s) of the carrier, and read back as the inner-XML string. This is
+    what document/literal *bare* bodies need — e.g. SEFAZ NF-e's
+    ``<nfeDadosMsg>`` carries a raw ``<consStatServ>`` / ``<enviNFe>`` message.
+    The actual element insertion/extraction is handled by the binding
+    serializer; ``to_xml``/``from_xml`` are identity for string content.
+    """
+
+    name = "any"
+
+    def to_xml(self, value: Any) -> str:
+        if isinstance(value, bytes):
+            return value.decode()
+        return str(value)
+
+    def from_xml(self, s: str) -> str:
+        return s
+
+
 # ---------------------------------------------------------------------------
 # Integer types
 # ---------------------------------------------------------------------------
