@@ -1,0 +1,215 @@
+# Copyright 2026 Hitoshi Yamamoto
+# SPDX-License-Identifier: Apache-2.0
+"""Typed client for SEFAZ NF-e (Brazilian electronic invoice), layout 4.00.
+
+NF-e web services are SOAP 1.2, document/literal *bare*: the body is a single
+``nfeDadosMsg`` element carrying the raw NF-e message XML. Authentication is
+mutual TLS with an ICP-Brasil certificate, and the ``<infNFe>`` element must be
+signed by its ``Id`` with a specific algorithm set. This client wires those
+pieces together:
+
+    from soapbar.contrib.nfe import NfeClient
+
+    nfe = NfeClient(pfx_path="cert.pfx", pfx_password="…")
+    status = nfe.status_servico(
+        "https://nfe.sefaz.uf/ws/NFeStatusServico4", uf="31", tp_amb=2,
+    )
+    if status.operational:          # cStat == 107
+        print(status.x_motivo)
+
+    signed = nfe.sign(nfe_xml)      # enveloped XML-DSig over <infNFe>
+
+Scope: this owns the *protocol* (mTLS transport, the bare ``nfeDadosMsg``
+envelope, `<infNFe>` signing, and `cStat`/`xMotivo` parsing) — not the full
+layout-4 data model. It implements the status and protocol-consult queries and
+the signing step; building/validating full NF-e documents (autorização,
+lotes, eventos) against the official XSDs is left to the caller.
+
+Endpoints differ per UF authorizer; pass the right URL for the service.
+Requires ``soapbar[nfe]`` (httpx, signxml, cryptography).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from soapbar.client.client import SoapClient
+from soapbar.client.transport import HttpTransport, load_pkcs12
+from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
+from soapbar.core.envelope import SoapVersion
+from soapbar.core.types import AnyXmlType
+from soapbar.core.wssecurity import sign_element_by_id
+
+#: NF-e message content namespace (the <consStatServ>, <NFe>, … elements).
+NFE_NS = "http://www.portalfiscal.inf.br/nfe"
+#: Per-service WSDL namespaces (standardised nationally for layout 4.00).
+STATUS_SERVICO_NS = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4"
+CONSULTA_PROTOCOLO_NS = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4"
+
+# SEFAZ-mandated signing parameters for <infNFe>.
+_SIGN = {"signature_method": "rsa-sha1", "digest_method": "sha1", "c14n": "inclusive"}
+
+
+class NfeError(Exception):
+    """An NF-e client error (bad input, missing certificate, etc.)."""
+
+
+def _local(elem_qname: str) -> str:
+    return elem_qname.rsplit("}", 1)[-1]
+
+
+def build_cons_stat_serv(uf: str, tp_amb: int = 2) -> str:
+    """Build a ``consStatServ`` (service-status query) message."""
+    return (
+        f'<consStatServ xmlns="{NFE_NS}" versao="4.00">'
+        f"<tpAmb>{tp_amb}</tpAmb><cUF>{uf}</cUF><xServ>STATUS</xServ>"
+        f"</consStatServ>"
+    )
+
+
+def build_cons_sit_nfe(chave: str, tp_amb: int = 2) -> str:
+    """Build a ``consSitNFe`` (protocol/consult) message for a 44-digit key."""
+    return (
+        f'<consSitNFe xmlns="{NFE_NS}" versao="4.00">'
+        f"<tpAmb>{tp_amb}</tpAmb><xServ>CONSULTAR</xServ><chNFe>{chave}</chNFe>"
+        f"</consSitNFe>"
+    )
+
+
+def extract_infnfe_id(nfe_xml: bytes | str) -> str:
+    """Return the ``Id`` of the ``<infNFe>`` element (``NFe`` + 44-char key)."""
+    from lxml import etree
+
+    data = nfe_xml.encode() if isinstance(nfe_xml, str) else nfe_xml
+    root = etree.fromstring(data)
+    inf = root.find(f".//{{{NFE_NS}}}infNFe")
+    if inf is None or not inf.get("Id"):
+        raise NfeError("document has no <infNFe Id=...> element to sign")
+    return str(inf.get("Id"))
+
+
+def sign_nfe(nfe_xml: bytes | str, cert_pem: bytes, key_pem: bytes) -> bytes:
+    """Sign the ``<infNFe>`` element with the SEFAZ-mandated algorithm set."""
+    data = nfe_xml.encode() if isinstance(nfe_xml, str) else nfe_xml
+    return sign_element_by_id(
+        data,
+        extract_infnfe_id(data),
+        key_pem,
+        cert_pem,
+        end_cert_only=True,
+        **_SIGN,
+    )
+
+
+@dataclass(frozen=True)
+class NfeStatusResult:
+    """Parsed ``retConsStatServ`` (and a usable base for other ``ret*`` replies)."""
+
+    c_stat: int | None
+    x_motivo: str | None
+    tp_amb: str | None = None
+    raw: str = ""
+
+    @property
+    def operational(self) -> bool:
+        """True when ``cStat == 107`` ("Serviço em Operação")."""
+        return self.c_stat == 107
+
+    @classmethod
+    def from_xml(cls, xml: str) -> NfeStatusResult:
+        from lxml import etree
+
+        root = etree.fromstring(xml.encode())
+        values: dict[str, str] = {}
+        for child in root.iter():
+            if isinstance(child.tag, str):
+                values.setdefault(_local(child.tag), (child.text or "").strip())
+        c_stat = values.get("cStat")
+        return cls(
+            c_stat=int(c_stat) if c_stat and c_stat.lstrip("-").isdigit() else None,
+            x_motivo=values.get("xMotivo"),
+            tp_amb=values.get("tpAmb"),
+            raw=xml,
+        )
+
+
+class NfeClient:
+    """Mutual-TLS NF-e client for the layout-4.00 web services."""
+
+    def __init__(
+        self,
+        *,
+        pfx_path: str | None = None,
+        pfx_password: str | None = None,
+        cert_pem: bytes | None = None,
+        key_pem: bytes | None = None,
+        verify_ssl: bool = True,
+        transport: HttpTransport | None = None,
+    ) -> None:
+        if pfx_path is not None:
+            cert_pem, key_pem = load_pkcs12(pfx_path, pfx_password)
+        self._cert_pem = cert_pem
+        self._key_pem = key_pem
+        if transport is not None:
+            self._transport = transport
+        elif cert_pem is not None and key_pem is not None:
+            self._transport = HttpTransport(
+                client_cert=(cert_pem, key_pem), verify_ssl=verify_ssl
+            )
+        else:
+            self._transport = HttpTransport(verify_ssl=verify_ssl)
+
+    def _send(self, endpoint: str, service_ns: str, operation: str, message: str) -> str:
+        client = SoapClient.manual(
+            address=endpoint,
+            binding_style=BindingStyle.DOCUMENT_LITERAL,
+            soap_version=SoapVersion.SOAP_12,
+            transport=self._transport,
+        )
+        client.register_operation(
+            OperationSignature(
+                name=operation,
+                input_params=[
+                    OperationParameter("nfeDadosMsg", AnyXmlType(), namespace=service_ns)
+                ],
+                output_params=[
+                    OperationParameter("nfeDadosMsg", AnyXmlType(), namespace=service_ns,
+                                       required=False)
+                ],
+                soap_action=f"{service_ns}/{operation}",
+                input_namespace=service_ns,
+                output_namespace=service_ns,
+            )
+        )
+        result = client.call(operation, nfeDadosMsg=message)
+        return result if isinstance(result, str) else str(result or "")
+
+    def status_servico(self, endpoint: str, *, uf: str, tp_amb: int = 2) -> NfeStatusResult:
+        """Call ``NFeStatusServico4`` — the health check (``cStat == 107`` is OK)."""
+        body = build_cons_stat_serv(uf, tp_amb)
+        return NfeStatusResult.from_xml(
+            self._send(endpoint, STATUS_SERVICO_NS, "nfeStatusServicoNF", body)
+        )
+
+    def consultar_protocolo(self, endpoint: str, chave: str, *, tp_amb: int = 2) -> NfeStatusResult:
+        """Call ``NFeConsultaProtocolo4`` for a 44-digit access key."""
+        if len(chave) != 44 or not chave.isdigit():
+            raise NfeError(f"chNFe must be 44 digits, got {chave!r}")
+        body = build_cons_sit_nfe(chave, tp_amb)
+        return NfeStatusResult.from_xml(
+            self._send(endpoint, CONSULTA_PROTOCOLO_NS, "nfeConsultaNF", body)
+        )
+
+    def sign(self, nfe_xml: bytes | str) -> bytes:
+        """Sign an NF-e document's ``<infNFe>`` with the configured certificate."""
+        if self._cert_pem is None or self._key_pem is None:
+            raise NfeError("a certificate (pfx_path or cert_pem/key_pem) is required to sign")
+        return sign_nfe(nfe_xml, self._cert_pem, self._key_pem)
+
+    def close(self) -> None:
+        self._transport.close()
+
+    def __enter__(self) -> NfeClient:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
