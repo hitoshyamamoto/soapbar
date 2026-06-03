@@ -255,6 +255,9 @@ class SoapClient:
                 OperationParameter(
                     name=name,
                     xsd_type=self._resolve_xsd_type(type_ref or "xsd:string"),
+                    # minOccurs="0" → optional (e.g. VIES name/address and the
+                    # checkVatApprox trader fields). Default minOccurs is 1.
+                    required=child.get("minOccurs", "1") != "0",
                 )
             )
         return params
