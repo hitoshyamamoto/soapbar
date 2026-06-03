@@ -6,6 +6,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.12.1] — 2026-06-03
+
+### Documentation
+
+- README refreshed for the 0.7.0–0.12.0 integration work: the `soapbar[vies]` /
+  `[witsml]` / `[nfe]` install extras, the Features list (mutual TLS +
+  `load_pkcs12`, session cookies, Id-targeted signing, document/literal *bare* +
+  `xsd:any`, the `soapbar.contrib.*` clients), and the Public API table.
+- The VIES / WITSML / NF-e examples now cross-reference their ready-made
+  `soapbar.contrib.*` clients. No code changes — docs-only, so the PyPI project
+  description reflects the current state.
+
+---
+
 ## [0.12.0] — 2026-06-03
 
 ### Added
