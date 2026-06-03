@@ -1,6 +1,11 @@
 """
 examples/18_witsml/witsml_demo.py — Consume a WITSML 1.4.1.1 STORE server with soapbar.
 
+READY CLIENT
+    For real use, prefer the typed `soapbar.contrib.witsml.WitsmlClient`
+    (`soapbar[witsml]`) — it registers the STORE operations, builds `OptionsIn`,
+    and maps return codes to errors. This script shows the raw mechanics it wraps.
+
 WHAT THIS DEMONSTRATES
     soapbar's headline differentiator: the RPC binding (RPC/Encoded or
     RPC/Literal) that zeep/spyne/fastapi-soap do not fully cover, driving the
