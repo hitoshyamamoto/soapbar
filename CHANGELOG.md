@@ -10,11 +10,24 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`ViesClient.check_vat_approx(...)`** — the approximate-match VIES operation.
+  Returns a `ViesApproxResult` with the `request_identifier` (proof-of-
+  consultation token kept for audit) and per-field `MatchCode`s for the trader
+  details supplied. Optional `trader_*` / `requester_*` arguments are sent only
+  as given.
 - **`SoapClient.from_file(transport=…, endpoint=…)`.** The WSDL-from-disk
   constructor now accepts a custom transport (timeouts, mTLS, or a stub in
   tests) and an endpoint override (e.g. force HTTPS when the WSDL lists a legacy
   HTTP URL). `soapbar.contrib.vies.ViesClient` uses these instead of reaching
   into private attributes.
+
+### Fixed
+
+- **WSDL-driven parameters honour `minOccurs="0"`.** Elements declared optional
+  in the schema are now registered as optional `OperationParameter`s instead of
+  required, so calls that legitimately omit them (and responses that omit
+  optional fields) no longer raise "Missing required parameter". This is what
+  lets `checkVatApprox` be called with only the trader details you have.
 
 ---
 

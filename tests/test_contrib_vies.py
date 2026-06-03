@@ -10,6 +10,8 @@ import pytest
 
 from soapbar.client.transport import HttpTransport
 from soapbar.contrib.vies import (
+    MatchCode,
+    ViesApproxResult,
     ViesClient,
     ViesInputError,
     ViesRateLimitError,
@@ -127,6 +129,45 @@ def test_fault_mapping(faultstring: str, exc: type[Exception]) -> None:
     client, _ = _client(status=500, body=_fault(faultstring))
     with pytest.raises(exc):
         client.check_vat("BE", "0203201340")
+
+
+def _approx_response() -> bytes:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
+        f'<checkVatApproxResponse xmlns="{_NS}">'
+        "<countryCode>BE</countryCode><vatNumber>0203201340</vatNumber>"
+        "<requestDate>2026-06-03+02:00</requestDate><valid>true</valid>"
+        "<traderName>ACME NV</traderName><traderAddress>RUE TEST 1</traderAddress>"
+        "<traderNameMatch>1</traderNameMatch><traderCityMatch>3</traderCityMatch>"
+        "<requestIdentifier>WAPIAAAAX0001</requestIdentifier>"
+        "</checkVatApproxResponse></soap:Body></soap:Envelope>"
+    ).encode()
+
+
+def test_check_vat_approx_returns_identifier_and_matches() -> None:
+    client, transport = _client(body=_approx_response())
+    result = client.check_vat_approx("BE", "0203201340", trader_name="ACME NV")
+    assert isinstance(result, ViesApproxResult)
+    assert result.valid is True
+    assert result.request_identifier == "WAPIAAAAX0001"
+    assert result.trader_name == "ACME NV"
+    assert result.name_match is MatchCode.VALID
+    assert result.city_match is MatchCode.NOT_PROCESSED
+    assert result.postcode_match is None  # absent from the response
+    # The supplied trader detail is sent, and the request wrapper is qualified.
+    # (Unsupplied optionals serialize as empty elements, which VIES tolerates;
+    # the minOccurs=0 fix is what lets the call go through without sending them
+    # all explicitly.)
+    body = transport.sent[1].decode()
+    assert "ACME NV" in body
+    assert _NS in body
+
+
+def test_check_vat_approx_validates_input() -> None:
+    client, _ = _client(body=_approx_response())
+    with pytest.raises(ViesInputError):
+        client.check_vat_approx("XYZ", "123")
 
 
 @pytest.mark.live
