@@ -15,6 +15,18 @@ from soapbar.core.types import XsdType
 from soapbar.core.xml import sub_element
 
 
+def _first_child_by_local_name(parent: _Element, name: str) -> _Element | None:
+    """Return the first direct child whose local name is *name*, ignoring its
+    namespace. RPC/encoded (SOAP §5) accessors are unqualified by convention,
+    but some servers qualify them by letting them inherit the response wrapper's
+    default namespace — match either form so extraction is namespace-agnostic."""
+    for child in parent:
+        tag = child.tag
+        if isinstance(tag, str) and tag.rsplit("}", 1)[-1] == name:
+            return child
+    return None
+
+
 class BindingStyle(Enum):
     RPC_ENCODED = "rpc_encoded"
     RPC_LITERAL = "rpc_literal"
@@ -308,7 +320,7 @@ class RpcEncodedSerializer(BindingSerializer):
         id_map = id_map or {}
         result: dict[str, Any] = {}
         for param in params:
-            child = wrapper.find(param.name)
+            child = _first_child_by_local_name(wrapper, param.name)
             if child is None:
                 continue
             # G06: resolve href references
@@ -393,7 +405,7 @@ class RpcLiteralSerializer(BindingSerializer):
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for param in params:
-            child = wrapper.find(param.name)
+            child = _first_child_by_local_name(wrapper, param.name)
             if child is not None:
                 result[param.name] = self._deserialize_param_value(child, param)
         return result

@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **RPC response accessors are matched namespace-agnostically.** The RPC/encoded
+  and RPC/literal deserializers matched accessor elements by exact (unqualified)
+  name, so a server that qualifies them — by putting a default `xmlns` on the
+  response wrapper — yielded no extracted values. For WITSML this surfaced as a
+  misleading `WitsmlError 0: no Result code` that masked the server's real
+  return code (e.g. `-425`). Matching now ignores the accessor namespace, so
+  both the canonical (unqualified) and qualified forms parse.
+- **`sign_element_by_id` places the signature beside the signed element.**
+  The enveloped `ds:Signature` is now inserted as a sibling of the element it
+  covers (a child of that element's parent) rather than at the document root.
+  For a single `<NFe>` this is unchanged; inside an `<enviNFe>` batch the
+  signature now lands inside the matching `<NFe>` (next to `<infNFe>`) as SEFAZ
+  requires, instead of under `<enviNFe>`. The reference and digest are
+  unaffected, so signatures remain valid.
+
+---
+
 ## [0.9.0] — 2026-06-03
 
 ### Added

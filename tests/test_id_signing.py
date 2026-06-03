@@ -71,6 +71,23 @@ def test_signature_is_sibling_of_target_with_correct_reference(keypair) -> None:
     assert refs[0].get("URI") == f"#{ID_VALUE}"
 
 
+def test_signature_placed_inside_matching_nfe_in_batch(keypair) -> None:
+    # In an enviNFe lote the Signature must sit inside the matching <NFe>
+    # (sibling of <infNFe>), not at the <enviNFe> root — SEFAZ rejects otherwise.
+    key, cert, _ = keypair
+    batch = (
+        f'<enviNFe xmlns="{NFE_NS}" versao="4.00"><idLote>1</idLote>'
+        f'<NFe><infNFe Id="NFe999" versao="4.00"><ide><cUF>31</cUF></ide></infNFe></NFe>'
+        f"</enviNFe>"
+    ).encode()
+    root = etree.fromstring(sign_element_by_id(batch, "NFe999", key, cert))
+    sig = root.find(f".//{{{DS}}}Signature")
+    assert sig is not None
+    parent = sig.getparent()
+    assert etree.QName(parent).localname == "NFe"  # inside the NFe, not enviNFe
+    assert parent.find(f"{{{NFE_NS}}}infNFe") is not None  # truly a sibling of infNFe
+
+
 def test_nfe_algorithm_set(keypair) -> None:
     root = _sign(keypair, signature_method="rsa-sha1", digest_method="sha1", c14n="inclusive")
     sig = root.find(f"{{{DS}}}Signature")

@@ -19,19 +19,27 @@ pytest.importorskip("httpx")
 _NS = "http://www.witsml.org/message/120"
 
 
-def _resp(op: str, fields: dict[str, object]) -> bytes:
-    # RPC/encoded: prefixed wrapper namespace → unqualified accessor elements.
+def _resp(op: str, fields: dict[str, object], *, qualified_accessors: bool = False) -> bytes:
+    # RPC/encoded: by convention a prefixed wrapper namespace leaves the accessor
+    # elements unqualified. Some servers instead put a *default* xmlns on the
+    # wrapper, so accessors inherit it (qualified) — set qualified_accessors to
+    # exercise that form.
     body = "".join(
         f'<{k} xsi:type="xsd:{"int" if isinstance(v, int) else "string"}">'
         f"{v if isinstance(v, int) else escape(str(v))}</{k}>"
         for k, v in fields.items()
+    )
+    wrapper = (
+        f'<{op}Response xmlns="{_NS}">{body}</{op}Response>'
+        if qualified_accessors
+        else f'<q:{op}Response xmlns:q="{_NS}">{body}</q:{op}Response>'
     )
     return (
         '<?xml version="1.0"?>'
         '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" '
         'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
         'xmlns:xsd="http://www.w3.org/2001/XMLSchema"><soap:Body>'
-        f'<q:{op}Response xmlns:q="{_NS}">{body}</q:{op}Response>'
+        f"{wrapper}"
         "</soap:Body></soap:Envelope>"
     ).encode()
 
@@ -148,6 +156,44 @@ def test_context_manager_closes() -> None:
     )
     with client as wits:
         assert wits.get_version() == "1.4.1.1"
+
+
+def test_qualified_accessors_are_extracted() -> None:
+    # A server that qualifies accessors (default xmlns on the wrapper) must
+    # still parse — extraction is namespace-agnostic.
+    client, _ = _client(
+        {
+            "WMLS_GetFromStore": _resp(
+                "WMLS_GetFromStore",
+                {"XMLout": "<wells/>", "SuppMsgOut": "", "Result": 1},
+                qualified_accessors=True,
+            )
+        }
+    )
+    assert client.get_from_store("well", "<wells/>") == "<wells/>"
+
+
+def test_qualified_accessors_surface_real_return_code() -> None:
+    # Regression: with qualified accessors the real negative Result must be
+    # surfaced (with resolved text), not masked as "no Result code".
+    client, _ = _client(
+        {
+            "WMLS_GetFromStore": _resp(
+                "WMLS_GetFromStore",
+                {"XMLout": "", "SuppMsgOut": "", "Result": -425},
+                qualified_accessors=True,
+            ),
+            "WMLS_GetBaseMsg": _resp(
+                "WMLS_GetBaseMsg",
+                {"Result": "The OptionsIn keyword is not recognized."},
+                qualified_accessors=True,
+            ),
+        }
+    )
+    with pytest.raises(WitsmlError) as excinfo:
+        client.get_from_store("well", "<wells/>")
+    assert excinfo.value.code == -425
+    assert "not recognized" in excinfo.value.message
 
 
 @pytest.mark.live
