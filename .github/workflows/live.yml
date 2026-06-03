@@ -1,0 +1,39 @@
+name: Live integration tests
+
+# Runs the `live`-marked tests that reach real external services. These are
+# deselected from the normal suite (addopts `-m 'not live'`), so they only run
+# here — on a weekly schedule and on demand. VIES uses the EC deterministic
+# test service (no secrets); WITSML runs only when its credentials are set.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Live (-m live)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dev + contrib extras
+        run: uv sync --group dev --extra vies --extra witsml
+
+      - name: Run live tests
+        env:
+          # WITSML live test skips automatically when these are absent.
+          WITSML_URL: ${{ secrets.WITSML_URL }}
+          WITSML_USER: ${{ secrets.WITSML_USER }}
+          WITSML_PASSWORD: ${{ secrets.WITSML_PASSWORD }}
+        run: uv run pytest -m live -v --no-cov

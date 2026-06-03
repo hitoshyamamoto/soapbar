@@ -170,10 +170,15 @@ def test_check_vat_approx_validates_input() -> None:
         client.check_vat_approx("XYZ", "123")
 
 
+#: EU VIES deterministic test service — VAT "100" is always VALID, "200" INVALID.
+_VIES_TEST_ENDPOINT = (
+    "https://ec.europa.eu/taxation_customs/vies/services/checkVatTestService"
+)
+
+
 @pytest.mark.live
 def test_live_check_vat() -> None:
-    # Hits the real EC VIES endpoint. Run with: pytest -m live
-    with ViesClient() as client:
-        result = client.check_vat("BE", "0203201340")
-    assert result.country_code == "BE"
-    assert isinstance(result.valid, bool)
+    # Hits the EC VIES *test* service (deterministic). Run with: pytest -m live
+    with ViesClient(endpoint=_VIES_TEST_ENDPOINT) as client:
+        assert client.check_vat("BE", "100").valid is True
+        assert client.check_vat("BE", "200").valid is False
