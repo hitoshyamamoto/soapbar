@@ -12,6 +12,7 @@ import pytest
 
 from soapbar.client.transport import HttpTransport
 from soapbar.contrib.nfe import (
+    CONSULTA_PROTOCOLO_NS,
     NFE_NS,
     STATUS_SERVICO_NS,
     NfeClient,
@@ -35,17 +36,24 @@ from lxml import etree  # noqa: E402
 DS = "http://www.w3.org/2000/09/xmldsig#"
 
 
-def _ret(c_stat: str, x_motivo: str, wrapper_ns: str = STATUS_SERVICO_NS) -> bytes:
+def _result_envelope(inner: str, wrapper_ns: str = STATUS_SERVICO_NS) -> bytes:
+    # SEFAZ returns the result inside <nfeResultMsg> (calibrated to the real
+    # service, not to the implementation — registering <nfeDadosMsg> for the
+    # response makes every call return nothing).
+    return (
+        '<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body>'
+        f'<nfeResultMsg xmlns="{wrapper_ns}">{inner}</nfeResultMsg>'
+        "</soap:Body></soap:Envelope>"
+    ).encode()
+
+
+def _ret(c_stat: str, x_motivo: str) -> bytes:
     inner = (
         f'<retConsStatServ xmlns="{NFE_NS}" versao="4.00">'
         f"<tpAmb>2</tpAmb><cStat>{c_stat}</cStat><xMotivo>{x_motivo}</xMotivo>"
         "</retConsStatServ>"
     )
-    return (
-        '<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body>'
-        f'<nfeDadosMsg xmlns="{wrapper_ns}">{inner}</nfeDadosMsg>'
-        "</soap:Body></soap:Envelope>"
-    ).encode()
+    return _result_envelope(inner)
 
 
 class _FakeTransport(HttpTransport):
@@ -111,6 +119,8 @@ def test_status_servico_sends_bare_body_and_parses_cstat() -> None:
     transport = _FakeTransport(_ret("107", "Servico em Operacao"))
     with NfeClient(transport=transport) as nfe:
         result = nfe.status_servico("https://uf/ws/NFeStatusServico4", uf="31", tp_amb=2)
+    # The cStat is extracted from a real <nfeResultMsg> response (regression: a
+    # <nfeDadosMsg> output mapping returned nothing → "Document is empty").
     assert result.operational
     assert result.c_stat == 107
     # The request body is bare: <nfeDadosMsg> carrying <consStatServ>, SOAP 1.2.
@@ -120,6 +130,32 @@ def test_status_servico_sends_bare_body_and_parses_cstat() -> None:
     assert "nfeDadosMsg" in body and "<consStatServ" in body
     assert "<cUF>31</cUF>" in body
     assert "nfeStatusServicoNF" not in body  # no operation-named wrapper
+    assert "nfeResultMsg" not in body  # response-only element, never in the request
+
+
+def test_consultar_protocolo_returns_query_status() -> None:
+    # retConsSitNFe carries the *query* cStat at the top and the document's
+    # authorization status nested in protNFe/infProt (N2). .c_stat is the former.
+    inner = (
+        f'<retConsSitNFe xmlns="{NFE_NS}" versao="4.00"><tpAmb>2</tpAmb>'
+        "<cStat>138</cStat><xMotivo>Documento localizado</xMotivo>"
+        "<protNFe><infProt><cStat>100</cStat><xMotivo>Autorizado</xMotivo>"
+        "<nProt>131250000000001</nProt></infProt></protNFe></retConsSitNFe>"
+    )
+    transport = _FakeTransport(_result_envelope(inner, wrapper_ns=CONSULTA_PROTOCOLO_NS))
+    with NfeClient(transport=transport) as nfe:
+        result = nfe.consultar_protocolo("https://uf/ws", "3" * 44)
+    assert result.c_stat == 138  # query-envelope status, not the nested 100
+    assert "<cStat>100</cStat>" in result.raw  # the protocol status is in .raw
+    body = transport.sent[1].decode()
+    assert "<consSitNFe" in body and "<chNFe>" in body
+
+
+def test_ca_bundle_is_passed_to_transport(keypair) -> None:
+    cert_pem, key_pem = keypair
+    nfe = NfeClient(cert_pem=cert_pem, key_pem=key_pem, ca_bundle="/etc/icp-brasil.pem")
+    assert nfe._transport.ca_bundle == "/etc/icp-brasil.pem"
+    assert nfe._transport.client_cert == (cert_pem, key_pem)
 
 
 def test_consultar_protocolo_validates_key() -> None:

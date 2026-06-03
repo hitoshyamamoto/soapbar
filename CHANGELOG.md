@@ -6,6 +6,31 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **`NfeClient` now reads the SEFAZ response.** The response parameter was
+  registered as `nfeDadosMsg` (the *request* element), but SEFAZ replies inside
+  `nfeResultMsg` — so `status_servico`/`consultar_protocolo` extracted nothing
+  and raised `XMLSyntaxError: Document is empty` against every real endpoint.
+  Fixed to `nfeResultMsg`; the offline stub is now calibrated to the real
+  response element (it would have caught this).
+
+### Added
+
+- **`NfeClient(ca_bundle=…)`** — pass an ICP-Brasil CA chain for server
+  verification, since the SEFAZ roots may be absent from the default trust
+  store (avoids a TLS failure without hand-building a transport).
+
+### Changed
+
+- `NfeClient.consultar_protocolo` documents that `.c_stat` is the
+  `retConsSitNFe` *query* status; the document's authorization status is nested
+  in `protNFe/infProt` (read it via `.raw`).
+
+---
+
 ## [0.11.0] — 2026-06-03
 
 ### Added

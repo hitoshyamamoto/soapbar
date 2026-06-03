@@ -143,8 +143,17 @@ class NfeClient:
         cert_pem: bytes | None = None,
         key_pem: bytes | None = None,
         verify_ssl: bool = True,
+        ca_bundle: str | None = None,
         transport: HttpTransport | None = None,
     ) -> None:
+        """Build the client.
+
+        ``ca_bundle`` is the path to a CA bundle for server verification — set
+        it to the ICP-Brasil chain when SEFAZ roots are not in the default
+        trust store (otherwise TLS verification may fail). Provide the
+        certificate as ``pfx_path``/``pfx_password`` or ``cert_pem``/``key_pem``,
+        or inject a fully-built ``transport``.
+        """
         if pfx_path is not None:
             cert_pem, key_pem = load_pkcs12(pfx_path, pfx_password)
         self._cert_pem = cert_pem
@@ -153,10 +162,10 @@ class NfeClient:
             self._transport = transport
         elif cert_pem is not None and key_pem is not None:
             self._transport = HttpTransport(
-                client_cert=(cert_pem, key_pem), verify_ssl=verify_ssl
+                client_cert=(cert_pem, key_pem), verify_ssl=verify_ssl, ca_bundle=ca_bundle
             )
         else:
-            self._transport = HttpTransport(verify_ssl=verify_ssl)
+            self._transport = HttpTransport(verify_ssl=verify_ssl, ca_bundle=ca_bundle)
 
     def _send(self, endpoint: str, service_ns: str, operation: str, message: str) -> str:
         client = SoapClient.manual(
@@ -171,8 +180,11 @@ class NfeClient:
                 input_params=[
                     OperationParameter("nfeDadosMsg", AnyXmlType(), namespace=service_ns)
                 ],
+                # SEFAZ returns the result inside <nfeResultMsg> (NOT
+                # <nfeDadosMsg>, which is request-only) — getting this wrong
+                # makes every call return nothing.
                 output_params=[
-                    OperationParameter("nfeDadosMsg", AnyXmlType(), namespace=service_ns,
+                    OperationParameter("nfeResultMsg", AnyXmlType(), namespace=service_ns,
                                        required=False)
                 ],
                 soap_action=f"{service_ns}/{operation}",
@@ -191,7 +203,14 @@ class NfeClient:
         )
 
     def consultar_protocolo(self, endpoint: str, chave: str, *, tp_amb: int = 2) -> NfeStatusResult:
-        """Call ``NFeConsultaProtocolo4`` for a 44-digit access key."""
+        """Call ``NFeConsultaProtocolo4`` for a 44-digit access key.
+
+        Note: ``.c_stat`` here is the *query envelope* status of the
+        ``retConsSitNFe`` reply (e.g. ``138`` "Documento localizado"), **not**
+        the document's authorization status — that lives nested in
+        ``protNFe/infProt/cStat`` (e.g. ``100`` "Autorizado"). Read the full
+        reply via ``.raw`` when you need the protocol-level status.
+        """
         if len(chave) != 44 or not chave.isdigit():
             raise NfeError(f"chNFe must be 44 digits, got {chave!r}")
         body = build_cons_sit_nfe(chave, tp_amb)
