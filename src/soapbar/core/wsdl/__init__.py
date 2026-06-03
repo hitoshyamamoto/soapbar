@@ -17,6 +17,11 @@ class WsdlPart:
     name: str
     element: str | None = None
     type: str | None = None
+    # Namespace URI of the referenced ``element`` (resolved from its QName
+    # prefix at parse time). For document/literal this is the schema namespace
+    # the body wrapper must be qualified with — which often differs from the
+    # WSDL targetNamespace (e.g. EU VIES uses a separate ``…:types`` schema).
+    element_ns: str | None = None
 
 
 @dataclass

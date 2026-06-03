@@ -273,12 +273,21 @@ def _parse_message(elem: _Element) -> WsdlMessage:
     parts: list[WsdlPart] = []
     for child in elem:
         if local_name(child) == "part":
+            element = child.get("element")
             parts.append(WsdlPart(
                 name=child.get("name", ""),
-                element=child.get("element"),
+                element=element,
                 type=child.get("type"),
+                element_ns=_qname_namespace(element, child) if element else None,
             ))
     return WsdlMessage(name=name, parts=parts)
+
+
+def _qname_namespace(qname: str, elem: _Element) -> str | None:
+    """Resolve the namespace URI of a ``prefix:local`` (or unprefixed) QName
+    using the in-scope namespace declarations of *elem*."""
+    prefix = qname.split(":", 1)[0] if ":" in qname else None
+    return elem.nsmap.get(prefix)
 
 
 def _parse_port_type(elem: _Element) -> WsdlPortType:

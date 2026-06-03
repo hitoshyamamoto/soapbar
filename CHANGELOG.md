@@ -6,6 +6,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Document/literal request wrapper is now namespace-qualified correctly.**
+  When a WSDL declares its message elements in a schema namespace different from
+  the WSDL `targetNamespace` (the common real-world case — e.g. EU VIES uses
+  `…:checkVat:types` while the WSDL targets `…:checkVat`), the parser now
+  resolves each part's `element` to that schema namespace
+  (`WsdlPart.element_ns`) and the WSDL-driven client qualifies the request
+  wrapper and its children with it. Previously `input_namespace`/
+  `output_namespace` came back `None` and soapbar emitted an unqualified
+  wrapper, which strict servers — including the live EU VIES service — reject
+  ("Expected `{…:checkVat:types}`…"). This makes
+  `soapbar.contrib.vies.ViesClient` correct against the real endpoint, and fixes
+  WSDL-driven document/literal clients generally.
+
+---
+
 ## [0.8.0] — 2026-06-03
 
 ### Added
