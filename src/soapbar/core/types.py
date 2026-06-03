@@ -17,6 +17,14 @@ _DURATION_RE = _re.compile(
     r'^-?P(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?$'
 )
 
+# XSD date/time values may carry an optional timezone (``Z`` or ``±HH:MM``).
+_XSD_TZ_RE = _re.compile(r"(?:Z|[+-]\d{2}:?\d{2})$")
+
+
+def _strip_xsd_timezone(s: str) -> str:
+    """Drop a trailing XSD timezone designator, leaving the local date/time part."""
+    return _XSD_TZ_RE.sub("", s)
+
 
 class XsdType(ABC):
     name: str
@@ -240,8 +248,11 @@ class _DateType(XsdType):
         return str(value)
 
     def from_xml(self, s: str) -> str:
+        # XSD date allows an optional timezone (e.g. ``2026-06-02+02:00``, as
+        # returned by EU VIES); date.fromisoformat cannot parse it, so validate
+        # only the date part while preserving the original lexical value.
         try:
-            date.fromisoformat(s)
+            date.fromisoformat(_strip_xsd_timezone(s))
         except ValueError as err:
             raise ValueError(f"Invalid {self.name} value: {s!r}") from err
         return s

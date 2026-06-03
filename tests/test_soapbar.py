@@ -1509,6 +1509,18 @@ class TestTypesAdditional:
         assert t.to_xml("2024-01-15T10:30:00") == "2024-01-15T10:30:00"
         assert t.from_xml("2024-01-15T10:30:00") == "2024-01-15T10:30:00"
 
+    def test_date_accepts_timezone_offset(self) -> None:
+        # XSD date permits an optional timezone (e.g. EU VIES sends
+        # "2026-06-02+02:00"); the lexical value is preserved.
+        t = xsd.resolve("date")
+        assert t is not None
+        assert t.from_xml("2026-06-02") == "2026-06-02"
+        assert t.from_xml("2026-06-02Z") == "2026-06-02Z"
+        assert t.from_xml("2026-06-02+02:00") == "2026-06-02+02:00"
+        assert t.from_xml("2026-06-02-05:00") == "2026-06-02-05:00"
+        with pytest.raises(ValueError, match="Invalid date"):
+            t.from_xml("not-a-date")
+
     def test_base64_str_input(self) -> None:
         t = xsd.resolve("base64Binary")
         assert t is not None
