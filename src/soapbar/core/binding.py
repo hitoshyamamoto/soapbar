@@ -103,9 +103,18 @@ class BindingSerializer(ABC):
         parent: _Element, tag: str, ns: str, param: OperationParameter, value: Any
     ) -> None:
         """Serialize a single parameter to an XML element under parent."""
-        from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
+        from soapbar.core.types import AnyXmlType, ArrayXsdType, ChoiceXsdType, ComplexXsdType
         if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
             parent.append(param.xsd_type.to_element(tag, value or {}, ns))
+        elif isinstance(param.xsd_type, AnyXmlType):
+            # xsd:any passthrough: emit the carrier element and graft the
+            # caller's raw XML in as child element(s), verbatim.
+            full_tag = f"{{{ns}}}{tag}" if ns else tag
+            carrier = sub_element(parent, full_tag)
+            if value is not None and value != "":
+                from soapbar.core.xml import parse_xml
+                raw = value.encode() if isinstance(value, str) else bytes(value)
+                carrier.append(parse_xml(raw))
         else:
             text = param.xsd_type.to_xml(value) if value is not None else ""
             full_tag = f"{{{ns}}}{tag}" if ns else tag
@@ -114,9 +123,16 @@ class BindingSerializer(ABC):
     @staticmethod
     def _deserialize_param_value(child: _Element, param: OperationParameter) -> Any:
         """Deserialize a single parameter from an XML element."""
-        from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType
+        from soapbar.core.types import AnyXmlType, ArrayXsdType, ChoiceXsdType, ComplexXsdType
         if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
             return param.xsd_type.from_element(child)
+        if isinstance(param.xsd_type, AnyXmlType):
+            # Return the carrier's inner XML (the wrapped message) as a string.
+            from lxml import etree
+            inner = list(child)
+            if inner:
+                return "".join(etree.tostring(c, encoding="unicode") for c in inner)
+            return child.text or ""
         return param.xsd_type.from_xml(child.text or "")
 
     @abstractmethod

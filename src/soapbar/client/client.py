@@ -130,13 +130,16 @@ class SoapClient:
             return msg.parts[0].element_ns
         return None
 
-    @staticmethod
     def _binding_is_dlw_shaped(
-        defn: WsdlDefinition, operations: list[Any]
+        self, defn: WsdlDefinition, operations: list[Any]
     ) -> bool:
         """Return True if every operation's input/output message looks
         like document-literal-wrapped (one part, element=, element
-        local-name matches the operation name — WS-I BP R2201 + R2204)."""
+        local-name matches the operation name — WS-I BP R2201 + R2204).
+
+        An ``xsd:any`` wildcard body (document/literal *bare*, e.g. NF-e's
+        ``nfeDadosMsg``) is explicitly *not* wrapped — it must keep its own
+        element as the body, not be re-wrapped under the operation name."""
         for bop in operations:
             msg_names = []
             # We only need the message names to inspect shape; reach
@@ -156,6 +159,8 @@ class SoapClient:
                     return False
                 part = msg.parts[0]
                 if not part.element:
+                    return False
+                if self._element_is_any_wildcard(part.element.split(":", 1)[-1]):
                     return False
         return True
 
@@ -186,11 +191,23 @@ class SoapClient:
         params: list[OperationParameter] = []
         for part in msg.parts:
             if part.element:
-                # Document-literal — part.element points at a global
-                # xsd:element whose inline complexType sequence carries
-                # the actual parameters.
                 elem_local = part.element.split(":", 1)[-1]
-                params.extend(self._params_from_global_element(elem_local))
+                if self._element_is_any_wildcard(elem_local):
+                    # Document/literal BARE: the body *is* this element, which
+                    # carries arbitrary XML (xsd:any) passed through verbatim —
+                    # e.g. NF-e's <nfeDadosMsg>. One param named after it.
+                    from soapbar.core.types import AnyXmlType
+                    params.append(
+                        OperationParameter(
+                            name=elem_local,
+                            xsd_type=AnyXmlType(),
+                            namespace=part.element_ns,
+                        )
+                    )
+                else:
+                    # Document-literal wrapped — the element's inline
+                    # complexType sequence carries the actual parameters.
+                    params.extend(self._params_from_global_element(elem_local))
             elif part.type:
                 # RPC-style — one part per parameter.
                 params.append(
@@ -201,38 +218,55 @@ class SoapClient:
                 )
         return params
 
-    def _params_from_global_element(
-        self, element_name: str
-    ) -> list[OperationParameter]:
-        """Find a global <xsd:element name=…> in the parsed WSDL and
-        return its inline complexType's sequence as OperationParameters.
-        Searches ``defn.global_elements`` first (soapbar-generated
-        WSDLs, post-0.6.0) then ``defn.schema_elements`` (externally
-        authored WSDLs)."""
+    def _find_global_element(self, element_name: str) -> Any:
+        """Locate a global ``<xsd:element name=…>`` declaration in the parsed
+        WSDL, or None. Searches ``global_elements`` (soapbar-generated WSDLs)
+        then the ``schema_elements`` blocks (externally authored WSDLs)."""
         if self._wsdl is None:
-            return []
+            return None
         from lxml import etree
 
         xsd_ns = "http://www.w3.org/2001/XMLSchema"
         candidates: list[Any] = list(self._wsdl.global_elements)
-        # schema_elements entries are entire <xsd:schema> blocks; walk
-        # their children for <xsd:element> declarations.
         for schema in self._wsdl.schema_elements:
             if isinstance(schema, etree._Element):
-                for child in schema:
-                    if (
-                        isinstance(child.tag, str)
-                        and child.tag == f"{{{xsd_ns}}}element"
-                    ):
-                        candidates.append(child)
-
-        target = None
+                candidates.extend(
+                    c for c in schema
+                    if isinstance(c.tag, str) and c.tag == f"{{{xsd_ns}}}element"
+                )
         for cand in candidates:
             if isinstance(cand, etree._Element) and cand.get("name") == element_name:
-                target = cand
-                break
+                return cand
+        return None
+
+    def _element_is_any_wildcard(self, element_name: str) -> bool:
+        """True if the global element's content model is an ``xsd:any`` wildcard
+        with no named child elements — i.e. a document/literal *bare* body that
+        carries arbitrary XML (e.g. NF-e's ``nfeDadosMsg``)."""
+        target = self._find_global_element(element_name)
+        if target is None:
+            return False
+        xsd_ns = "http://www.w3.org/2001/XMLSchema"
+        ct = target.find(f"{{{xsd_ns}}}complexType")
+        if ct is None:
+            return False
+        seq = ct.find(f"{{{xsd_ns}}}sequence")
+        container = seq if seq is not None else ct
+        has_any = container.find(f"{{{xsd_ns}}}any") is not None
+        has_named = any(
+            isinstance(c.tag, str) and c.tag == f"{{{xsd_ns}}}element" for c in container
+        )
+        return has_any and not has_named
+
+    def _params_from_global_element(
+        self, element_name: str
+    ) -> list[OperationParameter]:
+        """Find a global <xsd:element name=…> in the parsed WSDL and
+        return its inline complexType's sequence as OperationParameters."""
+        target = self._find_global_element(element_name)
         if target is None:
             return []
+        xsd_ns = "http://www.w3.org/2001/XMLSchema"
 
         # Walk <complexType>/<sequence>/<element> children.
         ct = target.find(f"{{{xsd_ns}}}complexType")

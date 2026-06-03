@@ -8,6 +8,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Document/literal *bare* + `xsd:any` passthrough.** When a WSDL operation's
+  single body part references a global element whose content model is an
+  `xsd:any` wildcard, soapbar now sends that element *as* the body (rather than
+  re-wrapping it under the operation name) and passes the caller's XML through
+  verbatim — and returns the response body's inner XML as a string. This is what
+  document/literal bare services such as SEFAZ NF-e (`nfeDadosMsg` /
+  `nfeResultMsg`) require: `client.call("nfeStatusServicoNF", nfeDadosMsg="<consStatServ…/>")`
+  now reaches the wire correctly instead of dropping the payload. Adds the
+  `AnyXmlType` passthrough type.
+
 ### Fixed
 
 - **RPC response accessors are matched namespace-agnostically.** The RPC/encoded
