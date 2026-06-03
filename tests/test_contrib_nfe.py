@@ -146,9 +146,22 @@ def test_consultar_protocolo_returns_query_status() -> None:
     with NfeClient(transport=transport) as nfe:
         result = nfe.consultar_protocolo("https://uf/ws", "3" * 44)
     assert result.c_stat == 138  # query-envelope status, not the nested 100
-    assert "<cStat>100</cStat>" in result.raw  # the protocol status is in .raw
+    # The nested authorization protocol is exposed directly (no .raw parsing).
+    assert result.prot_c_stat == 100
+    assert result.prot_x_motivo == "Autorizado"
+    assert result.n_prot == "131250000000001"
+    assert result.authorized is True
     body = transport.sent[1].decode()
     assert "<consSitNFe" in body and "<chNFe>" in body
+
+
+def test_status_result_has_no_protocol_fields_when_flat() -> None:
+    # A flat retConsStatServ has no protNFe/infProt → protocol fields stay None.
+    result = NfeStatusResult.from_xml(
+        f'<retConsStatServ xmlns="{NFE_NS}"><cStat>107</cStat></retConsStatServ>'
+    )
+    assert result.prot_c_stat is None and result.n_prot is None
+    assert result.authorized is False
 
 
 def test_ca_bundle_is_passed_to_transport(keypair) -> None:
@@ -210,14 +223,21 @@ def test_sign_requires_certificate() -> None:
 
 @pytest.mark.live
 def test_live_status_servico() -> None:
-    # Real SEFAZ homologação call. Run with: pytest -m live
+    # Real SEFAZ **homologação** call. Run with: pytest -m live
     # Needs NFE_PFX, NFE_PFX_PASSWORD, NFE_STATUS_URL, NFE_UF env vars.
+    #
+    # Safety: this test is hard-pinned to homologação (tpAmb=2) and refuses a
+    # production-looking endpoint, so a real certificate can never drive a
+    # produção transaction by accident. The PFX password is read inline and
+    # never bound to a named local, so it cannot surface in a traceback.
     import os
 
     pfx = os.environ.get("NFE_PFX")
     url = os.environ.get("NFE_STATUS_URL")
     if not pfx or not url:
         pytest.skip("set NFE_PFX / NFE_PFX_PASSWORD / NFE_STATUS_URL / NFE_UF to run")
+    if "producao" in url.lower() or "homologacao" not in url.lower():
+        pytest.skip(f"refusing a non-homologação endpoint: {url}")
     with NfeClient(pfx_path=pfx, pfx_password=os.environ.get("NFE_PFX_PASSWORD")) as nfe:
         result = nfe.status_servico(url, uf=os.environ["NFE_UF"], tp_amb=2)
     assert result.c_stat is not None
