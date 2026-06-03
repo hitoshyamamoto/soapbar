@@ -93,10 +93,8 @@ class ViesClient:
     ) -> None:
         wsdl = resources.files("soapbar.contrib").joinpath("_wsdl/checkVatService.wsdl")
         with resources.as_file(wsdl) as path:
-            self._client = SoapClient.from_file(str(path))
-        if transport is not None:
-            self._client._transport = transport
-        self._client._address = endpoint  # prefer HTTPS over the WSDL's legacy HTTP URL
+            # endpoint overrides the WSDL's legacy HTTP URL with HTTPS.
+            self._client = SoapClient.from_file(str(path), transport=transport, endpoint=endpoint)
 
     def check_vat(self, country_code: str, vat_number: str) -> ViesResult:
         """Validate a single VAT number.

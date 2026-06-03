@@ -281,9 +281,26 @@ class SoapClient:
         return fallback
 
     @classmethod
-    def from_file(cls, path: str | Path, use_wsa: bool = False) -> SoapClient:
+    def from_file(
+        cls,
+        path: str | Path,
+        use_wsa: bool = False,
+        *,
+        transport: HttpTransport | None = None,
+        endpoint: str | None = None,
+    ) -> SoapClient:
+        """Build a client from a WSDL file on disk.
+
+        Args:
+            path: Path to the WSDL document.
+            use_wsa: Enable WS-Addressing request headers.
+            transport: Custom :class:`HttpTransport` (e.g. for timeouts, mTLS,
+                or a stubbed transport in tests). Defaults to a plain one.
+            endpoint: Override the service address parsed from the WSDL — handy
+                when the WSDL lists a legacy/HTTP URL but you want HTTPS.
+        """
         obj: SoapClient = cls.__new__(cls)
-        obj._transport = HttpTransport()
+        obj._transport = transport or HttpTransport()
         obj._wsdl = None
         obj._address = ""
         obj._binding_style = BindingStyle.DOCUMENT_LITERAL_WRAPPED
@@ -296,6 +313,8 @@ class SoapClient:
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl_file(path)
         obj._init_from_wsdl(defn)
+        if endpoint is not None:
+            obj._address = endpoint
         return obj
 
     @classmethod
