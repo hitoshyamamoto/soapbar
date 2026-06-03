@@ -1280,6 +1280,12 @@ security = [
     { name = "cryptography" },
     { name = "signxml" },
 ]
+vies = [
+    { name = "httpx" },
+]
+witsml = [
+    { name = "httpx" },
+]
 
 [package.dev-dependencies]
 crypto-interop = [
@@ -1316,11 +1322,13 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'security'", specifier = ">=41.0" },
     { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'client'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'vies'", specifier = ">=0.27" },
+    { name = "httpx", marker = "extra == 'witsml'", specifier = ">=0.27" },
     { name = "lxml", specifier = ">=5.0" },
     { name = "signxml", marker = "extra == 'all'", specifier = ">=3.0" },
     { name = "signxml", marker = "extra == 'security'", specifier = ">=3.0" },
 ]
-provides-extras = ["core", "server", "client", "security", "all"]
+provides-extras = ["core", "server", "client", "security", "vies", "witsml", "all"]
 
 [package.metadata.requires-dev]
 crypto-interop = [{ name = "xmlsec", specifier = ">=1.3" }]

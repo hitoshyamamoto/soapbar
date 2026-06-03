@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`soapbar.contrib.vies.ViesClient`** — a typed client for the EU VIES VAT
+  validation service. `check_vat(country_code, vat_number)` returns a
+  `ViesResult` (`valid`, `name`, `address`, `request_date`); input is validated
+  against the EC patterns and VIES faults map to typed exceptions
+  (`ViesInputError`, `ViesRateLimitError`, `ViesUnavailableError`). The service
+  WSDL is bundled, so construction needs no network. Installable via
+  `soapbar[vies]`. This is the first of the optional `soapbar.contrib.*`
+  integrations — typed convenience clients built on the core API.
+
+### Fixed
+
+- **`xsd:date` now accepts an optional timezone** (e.g. `2026-06-02+02:00`, as
+  returned by EU VIES), matching the XSD spec; the lexical value is preserved.
+  Previously `date.fromisoformat` rejected the timezone suffix.
+
+---
+
 ## [0.7.0] — 2026-06-01
 
 ### Added

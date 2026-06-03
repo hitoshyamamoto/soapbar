@@ -929,21 +929,27 @@ soapbar is tested against zeep and spyne via integration tests.
 ## Real-world services
 
 soapbar is exercised against actual government/industry SOAP services. Runnable
-demonstrations live under [`examples/`](examples/); maintained, independently
-versioned client packages (depending on soapbar) are planned as separate
-projects.
+demonstrations live under [`examples/`](examples/), and optional typed clients
+ship under `soapbar.contrib.*` (installable via extras).
 
-| Service | Binding | Auth | Example | Client package |
+| Service | Binding | Auth | Example | Client |
 |---|---|---|---|---|
-| EU VIES (VAT validation) | document/literal, SOAP 1.1 | none | [`17_vies/`](examples/17_vies/) | `soapbar-vies` *(planned)* |
-| WITSML 1.4.1.1 STORE | RPC | WS-Security UsernameToken | [`18_witsml/`](examples/18_witsml/) | `soapbar-witsml` *(planned)* |
-| SEFAZ NF-e | document/literal, SOAP 1.2 | mutual TLS (ICP-Brasil) + `<infNFe>` `Id`-signing | [`19_nfe/`](examples/19_nfe/) | `soapbar-nfe` *(planned)* |
-| IRS MeF (A2A) | SOAP/HTTP, session-based | mutual TLS (Strong Auth) + session cookies | [`20_mef/`](examples/20_mef/) | `soapbar-mef` *(planned)* |
+| EU VIES (VAT validation) | document/literal, SOAP 1.1 | none | [`17_vies/`](examples/17_vies/) | `soapbar.contrib.vies` (`soapbar[vies]`) |
+| WITSML 1.4.1.1 STORE | RPC | WS-Security UsernameToken | [`18_witsml/`](examples/18_witsml/) | `soapbar.contrib.witsml` *(planned, `soapbar[witsml]`)* |
+| SEFAZ NF-e | document/literal, SOAP 1.2 | mutual TLS (ICP-Brasil) + `<infNFe>` `Id`-signing | [`19_nfe/`](examples/19_nfe/) | *(use the core APIs directly)* |
+| IRS MeF (A2A) | SOAP/HTTP, session-based | mutual TLS (Strong Auth) + session cookies | [`20_mef/`](examples/20_mef/) | *(use the core APIs directly)* |
 
 The VIES and WITSML examples run against live endpoints; the NF-e and MeF
 examples are faithful references (their `main()` prints guidance without
-network access). The maintained client packages will carry domain models,
-typed faults, and gated live integration tests (`pytest -m live`).
+network access).
+
+```python
+from soapbar.contrib.vies import ViesClient
+
+with ViesClient() as vies:                  # WSDL is bundled — no network to construct
+    result = vies.check_vat("BE", "0203201340")
+    print(result.valid, result.name, result.address)
+```
 
 ---
 
