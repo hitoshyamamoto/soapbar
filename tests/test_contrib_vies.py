@@ -87,6 +87,19 @@ def test_valid_vat_parses_all_fields() -> None:
     assert b"0203201340" in transport.sent[1]
 
 
+def test_request_wrapper_is_namespace_qualified() -> None:
+    # The live EU service rejects an unqualified <checkVat>; the wrapper and its
+    # children must be in the :types schema namespace (elementFormDefault=qualified).
+    client, transport = _client()
+    client.check_vat("BE", "0203201340")
+    assert transport.sent is not None
+    body = transport.sent[1].decode()
+    assert _NS in body  # the :types namespace is declared
+    assert "<checkVat>" not in body and "<checkVat " not in body  # never unqualified
+    # countryCode is qualified too (a prefixed or default-ns child, not bare).
+    assert "<countryCode>" not in body
+
+
 def test_invalid_vat_returns_not_valid() -> None:
     client, _ = _client(body=_response(False))
     result = client.check_vat("BE", "0000000000")

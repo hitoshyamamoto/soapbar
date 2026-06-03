@@ -104,15 +104,31 @@ class SoapClient:
                     stacklevel=2,
                 )
                 continue
+            # For document/literal the soap:body carries no namespace, so the
+            # body wrapper must be qualified with the *schema* namespace of the
+            # referenced element — which often differs from the WSDL
+            # targetNamespace. Fall back to it when the binding has none.
             sig = OperationSignature(
                 name=binding_op.name,
                 input_params=self._resolve_op_params(port_op.input),
                 output_params=self._resolve_op_params(port_op.output),
                 soap_action=binding_op.soap_action or "",
-                input_namespace=binding_op.input_namespace,
-                output_namespace=binding_op.output_namespace,
+                input_namespace=binding_op.input_namespace
+                or self._wrapper_namespace(port_op.input),
+                output_namespace=binding_op.output_namespace
+                or self._wrapper_namespace(port_op.output),
             )
             self.register_operation(sig)
+
+    def _wrapper_namespace(self, op_msg: WsdlOperationMessage | None) -> str | None:
+        """Namespace of an operation's document/literal body wrapper element."""
+        if op_msg is None or self._wsdl is None:
+            return None
+        local = op_msg.message.split(":", 1)[-1]
+        msg = self._wsdl.messages.get(local)
+        if msg is not None and len(msg.parts) == 1 and msg.parts[0].element:
+            return msg.parts[0].element_ns
+        return None
 
     @staticmethod
     def _binding_is_dlw_shaped(
