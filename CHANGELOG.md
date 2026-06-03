@@ -6,6 +6,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`soapbar.contrib.nfe.NfeClient`** — a mutual-TLS client for the SEFAZ NF-e
+  (Brazilian e-invoice) layout-4.00 web services. Builds the ICP-Brasil mTLS
+  transport from a PKCS#12 (`load_pkcs12`), sends the SOAP 1.2 document/literal
+  *bare* `nfeDadosMsg` envelope, and parses `cStat`/`xMotivo`. Implements
+  `status_servico` (the `cStat == 107` health check), `consultar_protocolo`,
+  and `sign()` — an enveloped `<infNFe>` signature with the SEFAZ-mandated
+  algorithm set (RSA-SHA1 / SHA-1 / inclusive C14N / end-entity-only KeyInfo).
+  It owns the protocol, not the full layout-4 data model. Installable via
+  `soapbar[nfe]`.
+
+---
+
 ## [0.10.0] — 2026-06-03
 
 ### Added
