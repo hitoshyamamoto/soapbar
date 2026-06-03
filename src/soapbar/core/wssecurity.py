@@ -525,9 +525,35 @@ def sign_element_by_id(
             id_attribute=id_attr,
             always_add_key_value=not end_cert_only,
         )
+        _place_signature_beside_target(signed, id_attr, id_value)
         return bytes(etree.tostring(signed, xml_declaration=True, encoding="utf-8"))
     except Exception as exc:
         raise XmlSecurityError(f"Id-targeted XML Signature failed: {exc}") from exc
+
+
+def _place_signature_beside_target(signed: Any, id_attr: str, id_value: str) -> None:
+    """Move the ``ds:Signature`` to sit as a sibling of the element it covers.
+
+    signxml appends the enveloped ``Signature`` to the document root. For a
+    single ``<NFe>`` document that already coincides with "sibling of
+    ``<infNFe>``". But inside a batch (``<enviNFe><NFe><infNFe/></NFe></enviNFe>``)
+    the signature must live inside the matching ``<NFe>``, not under
+    ``<enviNFe>`` — SEFAZ rejects it otherwise. The reference is to ``#<id>`` and
+    the signature stays outside the signed element's subtree, so relocating it
+    does not affect the digest or validity.
+    """
+    signature = signed.find(f"{{{_DS_NS}}}Signature")
+    if signature is None:
+        return
+    target = next((el for el in signed.iter() if el.get(id_attr) == id_value), None)
+    if target is None:
+        return
+    parent = target.getparent()
+    # Leave it when the target is the document root (self-signed) or the
+    # signature is already the target's sibling.
+    if parent is None or parent is signature.getparent():
+        return
+    parent.append(signature)
 
 
 def verify_envelope(
