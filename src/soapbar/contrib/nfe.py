@@ -102,17 +102,36 @@ def sign_nfe(nfe_xml: bytes | str, cert_pem: bytes, key_pem: bytes) -> bytes:
 
 @dataclass(frozen=True)
 class NfeStatusResult:
-    """Parsed ``retConsStatServ`` (and a usable base for other ``ret*`` replies)."""
+    """Parsed ``ret*`` reply.
+
+    ``c_stat``/``x_motivo`` are the reply's top-level status (for
+    ``retConsSitNFe`` that is the *query* status). When the reply carries a
+    nested authorization protocol (``protNFe/infProt``, as ``consultar_protocolo``
+    returns), ``prot_c_stat``/``prot_x_motivo``/``n_prot`` expose it directly so
+    callers needn't parse ``.raw``.
+    """
 
     c_stat: int | None
     x_motivo: str | None
     tp_amb: str | None = None
+    prot_c_stat: int | None = None
+    prot_x_motivo: str | None = None
+    n_prot: str | None = None
     raw: str = ""
 
     @property
     def operational(self) -> bool:
         """True when ``cStat == 107`` ("Serviço em Operação")."""
         return self.c_stat == 107
+
+    @property
+    def authorized(self) -> bool:
+        """True when the nested protocol status is ``100`` ("Autorizado o uso")."""
+        return self.prot_c_stat == 100
+
+    @staticmethod
+    def _as_int(value: str | None) -> int | None:
+        return int(value) if value and value.lstrip("-").isdigit() else None
 
     @classmethod
     def from_xml(cls, xml: str) -> NfeStatusResult:
@@ -123,11 +142,25 @@ class NfeStatusResult:
         for child in root.iter():
             if isinstance(child.tag, str):
                 values.setdefault(_local(child.tag), (child.text or "").strip())
-        c_stat = values.get("cStat")
+
+        # Nested authorization protocol, if present (protNFe/infProt).
+        prot: dict[str, str] = {}
+        inf_prot = next(
+            (e for e in root.iter() if isinstance(e.tag, str) and _local(e.tag) == "infProt"),
+            None,
+        )
+        if inf_prot is not None:
+            for c in inf_prot.iter():
+                if isinstance(c.tag, str):
+                    prot.setdefault(_local(c.tag), (c.text or "").strip())
+
         return cls(
-            c_stat=int(c_stat) if c_stat and c_stat.lstrip("-").isdigit() else None,
+            c_stat=cls._as_int(values.get("cStat")),
             x_motivo=values.get("xMotivo"),
             tp_amb=values.get("tpAmb"),
+            prot_c_stat=cls._as_int(prot.get("cStat")),
+            prot_x_motivo=prot.get("xMotivo"),
+            n_prot=prot.get("nProt"),
             raw=xml,
         )
 
@@ -205,11 +238,11 @@ class NfeClient:
     def consultar_protocolo(self, endpoint: str, chave: str, *, tp_amb: int = 2) -> NfeStatusResult:
         """Call ``NFeConsultaProtocolo4`` for a 44-digit access key.
 
-        Note: ``.c_stat`` here is the *query envelope* status of the
-        ``retConsSitNFe`` reply (e.g. ``138`` "Documento localizado"), **not**
-        the document's authorization status — that lives nested in
-        ``protNFe/infProt/cStat`` (e.g. ``100`` "Autorizado"). Read the full
-        reply via ``.raw`` when you need the protocol-level status.
+        ``.c_stat`` here is the *query envelope* status of the ``retConsSitNFe``
+        reply (e.g. ``138`` "Documento localizado"). The document's authorization
+        status is exposed separately as ``.prot_c_stat`` / ``.prot_x_motivo`` /
+        ``.n_prot`` (e.g. ``100`` "Autorizado"), with ``.authorized`` as a
+        shortcut — no need to parse ``.raw``.
         """
         if len(chave) != 44 or not chave.isdigit():
             raise NfeError(f"chNFe must be 44 digits, got {chave!r}")

@@ -6,6 +6,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`NfeStatusResult` exposes the nested authorization protocol.** New
+  `prot_c_stat` / `prot_x_motivo` / `n_prot` fields and an `authorized` shortcut
+  (`prot_c_stat == 100`) surface `protNFe/infProt` directly, so
+  `consultar_protocolo` callers get the document's authorization status without
+  parsing `.raw`.
+
+### Changed
+
+- The NF-e `live` test is hardened: it refuses a non-homologação endpoint
+  (skips on a `producao` URL or one lacking `homologacao`), stays pinned to
+  `tpAmb=2`, and reads the PFX password inline so it cannot surface in a
+  traceback — a real certificate can never drive a produção transaction by
+  accident.
+
+---
+
 ## [0.11.1] — 2026-06-03
 
 ### Fixed
