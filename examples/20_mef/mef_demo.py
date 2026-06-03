@@ -6,8 +6,8 @@ PREREQUISITES (external — cannot be bypassed in code)
     and the A2A Toolkit (SDK) — obtained by emailing the IRS MeF mailbox — which
     ships the actual WSDL and operation names. The two soapbar core features it
     relies on are now available:
-      * mutual TLS — HttpTransport(client_cert=...) for the Strong Auth cert (feature 1.1)
-      * session cookies — HttpTransport(persist_cookies=True) carries JSESSIONID + dc (feature 1.2)
+      * mutual TLS — HttpTransport(client_cert=...) for the Strong Auth cert
+      * session cookies — HttpTransport(persist_cookies=True) carries JSESSIONID + dc
     `main()` does not hit the network; it prints guidance. Provide a real
     certificate + toolkit WSDL + credentials and call `run_session()`.
 

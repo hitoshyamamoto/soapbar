@@ -1,12 +1,18 @@
 """
 examples/19_nfe/nfe_demo.py — Consume a SEFAZ NF-e web service with soapbar.
 
+READY CLIENT
+    For real use, prefer the typed `soapbar.contrib.nfe.NfeClient`
+    (`soapbar[nfe]`) — it wraps mutual TLS, the bare `nfeDadosMsg` envelope,
+    `<infNFe>` signing, and `cStat` parsing. This script shows the raw core
+    APIs that client is built on.
+
 PREREQUISITES (external — cannot be bypassed in code)
     Running this against a live SEFAZ endpoint needs an ICP-Brasil A1 test
     certificate (a `.pfx`) and network access to a homologação authorizer. The
-    two soapbar core features it relies on are now available:
-      * mutual TLS — HttpTransport(client_cert=...) + load_pkcs12 (feature 1.1)
-      * Id-targeted signing — sign_element_by_id (feature 1.3)
+    two soapbar core capabilities it relies on:
+      * mutual TLS — HttpTransport(client_cert=...) + load_pkcs12
+      * Id-targeted signing — sign_element_by_id
     `main()` does not hit the network; it prints guidance. Provide a real
     certificate + endpoint and call `status_servico()` to exercise it.
 
@@ -63,7 +69,7 @@ TP_AMB = "2"  # 2 = homologacao
 def build_transport() -> HttpTransport:
     """Build an mTLS transport from a PKCS#12 (.pfx) ICP-Brasil A1 certificate.
 
-    Uses feature 1.1: load_pkcs12 converts the .pfx to in-memory PEM (the key
+    Uses load_pkcs12: converts the .pfx to in-memory PEM (the key
     never touches the disk), which HttpTransport presents on the handshake.
     """
     cert_pem, key_pem = load_pkcs12(PFX_PATH, PFX_PASSWORD)
@@ -85,7 +91,7 @@ def extract_infnfe_id(nfe_xml: bytes | str) -> str:
 def sign_infnfe(nfe_xml: bytes | str, cert_pem: bytes, key_pem: bytes) -> bytes:
     """Sign the <infNFe> element by its Id, per the SEFAZ-mandated algorithm set.
 
-    Uses feature 1.3: an enveloped signature whose single Reference targets
+    Uses sign_element_by_id: an enveloped signature whose single Reference targets
     #<infNFe Id>, with RSA-SHA1 / SHA-1 / inclusive C14N and an end-entity-only
     KeyInfo — exactly what SEFAZ requires.
     """

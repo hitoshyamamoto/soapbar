@@ -1,6 +1,11 @@
 """
 examples/17_vies/vies_demo.py — Consume the EU VIES VAT-validation SOAP service with soapbar.
 
+READY CLIENT
+    For real use, prefer the typed `soapbar.contrib.vies.ViesClient`
+    (`soapbar[vies]`) — it adds input validation, typed faults, and a bundled
+    WSDL. This script shows the raw mechanics that client wraps.
+
 WHAT THIS DEMONSTRATES
     Pointing soapbar's WSDL-driven client at a real, public government SOAP
     service and getting a typed result back — with no authentication and no
