@@ -1248,6 +1248,18 @@ class TestTypesEdgeCases:
         assert t is not None
         assert t.to_xml(Decimal("3.14")) == "3.14"
 
+    def test_decimal_normalizes_exponent(self) -> None:
+        # xsd:decimal forbids exponent notation; a Decimal carrying an exponent
+        # (common after arithmetic or when built from "1E+3") must serialize to
+        # canonical fixed-point, and must still round-trip.
+        from decimal import Decimal
+        t = xsd.resolve("decimal")
+        assert t is not None
+        assert t.to_xml(Decimal("1E+3")) == "1000"
+        assert t.to_xml(Decimal("1.50E-2")) == "0.0150"
+        assert "E" not in t.to_xml(Decimal("1E+3")).upper()
+        assert t.from_xml(t.to_xml(Decimal("1E+3"))) == Decimal("1000")
+
     def test_decimal_invalid_from_xml(self) -> None:
         t = xsd.resolve("decimal")
         assert t is not None
@@ -1508,6 +1520,19 @@ class TestTypesAdditional:
         assert t is not None
         assert t.to_xml("2024-01-15T10:30:00") == "2024-01-15T10:30:00"
         assert t.from_xml("2024-01-15T10:30:00") == "2024-01-15T10:30:00"
+
+    def test_datetime_from_python_object_uses_t_separator(self) -> None:
+        # A Python datetime must serialize with the ISO-8601 "T" separator, not
+        # the space that str(datetime) produces, which is invalid xsd:dateTime.
+        from datetime import datetime, timezone
+        t = xsd.resolve("dateTime")
+        assert t is not None
+        assert t.to_xml(datetime(2026, 7, 2, 12, 30, 0)) == "2026-07-02T12:30:00"
+        assert " " not in t.to_xml(datetime(2026, 7, 2, 12, 30, 0))
+        # Timezone-aware values keep their offset (still "T"-separated).
+        assert t.to_xml(
+            datetime(2026, 7, 2, 12, 30, 0, tzinfo=timezone.utc)
+        ) == "2026-07-02T12:30:00+00:00"
 
     def test_date_accepts_timezone_offset(self) -> None:
         # XSD date permits an optional timezone (e.g. EU VIES sends

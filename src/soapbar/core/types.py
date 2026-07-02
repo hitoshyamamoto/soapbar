@@ -218,7 +218,14 @@ class _DecimalType(XsdType):
     name = "decimal"
 
     def to_xml(self, value: Any) -> str:
-        return str(Decimal(str(value)))
+        # xsd:decimal's lexical space forbids scientific/exponent notation —
+        # that form (e.g. "1E+3") belongs to xsd:double/xsd:float. Plain
+        # str(Decimal(...)) preserves the exponent a Decimal may carry after
+        # arithmetic or when parsed from "1E+3", producing schema-invalid
+        # output that a validating peer rejects. Format with "f" to force the
+        # canonical fixed-point representation ("1000", "3.14") without
+        # rounding away significant digits.
+        return f"{Decimal(str(value)):f}"
 
     def from_xml(self, s: str) -> Decimal:
         try:
@@ -253,6 +260,13 @@ class _DateTimeType(XsdType):
     name = "dateTime"
 
     def to_xml(self, value: Any) -> str:
+        # A Python datetime stringifies with a space separator
+        # ("2026-07-02 12:30:00"), but xsd:dateTime mandates the ISO-8601 "T"
+        # separator ("2026-07-02T12:30:00"). Emit isoformat() for datetime
+        # objects; strings (the lexical form from_xml round-trips) pass
+        # through unchanged.
+        if isinstance(value, datetime):
+            return value.isoformat()
         return str(value)
 
     def from_xml(self, s: str) -> str:
