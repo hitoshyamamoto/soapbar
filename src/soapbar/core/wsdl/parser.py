@@ -60,6 +60,40 @@ def _fetch_wsdl_source(location: str) -> bytes:
     return Path(location).read_bytes()
 
 
+def _check_import_allowed(
+    resolved: str, allow_remote_imports: bool, allow_local_imports: bool
+) -> None:
+    """Enforce the import-fetch policy for a resolved ``import`` /
+    ``schemaLocation`` target, raising ``ValueError`` when it is not permitted.
+
+    Two distinct SSRF surfaces are gated separately:
+
+    * ``http(s)://`` — an outbound network fetch; permitted only with
+      ``allow_remote_imports=True``.
+    * ``file://`` or a bare filesystem path — a *local file read*; permitted
+      only with ``allow_local_imports=True``. This is enabled by
+      :func:`parse_wsdl_file` (a trusted local WSDL resolving sibling imports)
+      but **not** by :func:`parse_wsdl` on in-memory/remote content, so a
+      hostile ``<import location="file:///etc/passwd">`` or ``location="/etc/…"``
+      in an untrusted WSDL cannot exfiltrate local files. Previously only the
+      ``http(s)`` scheme was checked, leaving the local-read path wide open.
+    """
+    if resolved.startswith(("http://", "https://")):
+        if not allow_remote_imports:
+            raise ValueError(
+                f"Remote import blocked (SSRF guard): {resolved!r}. "
+                "Pass allow_remote_imports=True to permit outbound HTTP fetches."
+            )
+        return
+    if not allow_local_imports:
+        raise ValueError(
+            f"Local file import blocked (SSRF guard): {resolved!r}. "
+            "An in-memory or remote WSDL may not read local files; use "
+            "parse_wsdl_file() for a trusted local WSDL, or pass "
+            "allow_local_imports=True."
+        )
+
+
 def _merge_definition(target: WsdlDefinition, source: WsdlDefinition) -> None:
     target.messages.update(source.messages)
     target.port_types.update(source.port_types)
@@ -78,6 +112,7 @@ def _resolve_schema_imports(
     schema_elem: _Element,
     base_url: str | None,
     allow_remote_imports: bool,
+    allow_local_imports: bool,
     visited: set[str],
     strict: bool,
     depth: int,
@@ -107,11 +142,7 @@ def _resolve_schema_imports(
             # declarations). Nothing to fetch.
             continue
         resolved = _resolve_location(loc, base_url)
-        if resolved.startswith(("http://", "https://")) and not allow_remote_imports:
-            raise ValueError(
-                f"Remote xsd:import blocked (SSRF guard): {resolved!r}. "
-                "Pass allow_remote_imports=True to permit outbound HTTP fetches."
-            )
+        _check_import_allowed(resolved, allow_remote_imports, allow_local_imports)
         if resolved in visited:
             continue  # already fetched (cycle); skip silently
         visited.add(resolved)
@@ -142,6 +173,7 @@ def _resolve_schema_imports(
             sub_root,
             base_url=resolved,
             allow_remote_imports=allow_remote_imports,
+            allow_local_imports=allow_local_imports,
             visited=visited,
             strict=strict,
             depth=depth + 1,
@@ -154,15 +186,24 @@ def parse_wsdl(
     base_url: str | None = None,
     _visited: set[str] | None = None,
     allow_remote_imports: bool = False,
+    allow_local_imports: bool = False,
     strict: bool = True,
 ) -> WsdlDefinition:
     """Parse a WSDL document from *source*.
 
-    *allow_remote_imports* controls whether ``wsdl:import`` elements whose
-    resolved location starts with ``http://`` or ``https://`` are fetched.
-    It defaults to ``False`` to prevent Server-Side Request Forgery (SSRF)
-    when parsing WSDLs from untrusted sources.  Set it to ``True`` only when
-    the WSDL originates from a trusted location and remote imports are expected.
+    *allow_remote_imports* controls whether ``wsdl:import`` /
+    ``xsd:import`` elements whose resolved location starts with ``http://`` or
+    ``https://`` are fetched.  It defaults to ``False`` to prevent Server-Side
+    Request Forgery (SSRF) when parsing WSDLs from untrusted sources.  Set it to
+    ``True`` only when the WSDL originates from a trusted location and remote
+    imports are expected.
+
+    *allow_local_imports* controls whether imports that resolve to a local
+    file (``file://`` or a filesystem path) are read.  It defaults to ``False``
+    so that a hostile ``<import location="file:///etc/passwd">`` in an in-memory
+    or remote WSDL cannot exfiltrate local files.  :func:`parse_wsdl_file`
+    enables it, since a trusted on-disk WSDL legitimately references sibling
+    documents; pass it explicitly only for equally trusted local content.
 
     *strict* (default ``True``) controls error handling for import resolution
     failures.  When ``False``, a failed ``wsdl:import`` emits a
@@ -189,11 +230,7 @@ def parse_wsdl(
             location = child.get("location")
             if location:
                 resolved = _resolve_location(location, base_url)
-                if resolved.startswith(("http://", "https://")) and not allow_remote_imports:
-                    raise ValueError(
-                        f"Remote WSDL import blocked (SSRF guard): {resolved!r}. "
-                        "Pass allow_remote_imports=True to permit outbound HTTP fetches."
-                    )
+                _check_import_allowed(resolved, allow_remote_imports, allow_local_imports)
                 if resolved not in _visited:
                     _visited.add(resolved)
                     try:
@@ -202,6 +239,7 @@ def parse_wsdl(
                             base_url=resolved,
                             _visited=_visited,
                             allow_remote_imports=allow_remote_imports,
+                            allow_local_imports=allow_local_imports,
                             strict=strict,
                         )
                         _merge_definition(defn, imported)
@@ -231,6 +269,7 @@ def parse_wsdl(
                         schema,
                         base_url=base_url,
                         allow_remote_imports=allow_remote_imports,
+                        allow_local_imports=allow_local_imports,
                         visited=xsd_visited,
                         strict=strict,
                         depth=0,
@@ -260,8 +299,16 @@ def parse_wsdl(
 
 
 def parse_wsdl_file(path: str | Path, strict: bool = True) -> WsdlDefinition:
+    # A WSDL loaded from a local file is trusted to reference sibling documents
+    # on disk, so local (file://) imports are permitted here — unlike
+    # parse_wsdl() on in-memory/remote content, where they are blocked (SSRF).
     p = Path(path)
-    return parse_wsdl(p, base_url=p.resolve().parent.as_uri() + "/", strict=strict)
+    return parse_wsdl(
+        p,
+        base_url=p.resolve().parent.as_uri() + "/",
+        allow_local_imports=True,
+        strict=strict,
+    )
 
 
 # ---------------------------------------------------------------------------
