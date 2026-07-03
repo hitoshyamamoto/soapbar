@@ -110,18 +110,19 @@ def main() -> None:
     print("Signed envelope summary:")
     _print_signature_summary(signed)
 
-    # Round-trip verification uses the embedded BinarySecurityToken, so no
-    # caller-provided certificate is required.  ``expected_references=2``
-    # pins the Reference count at verify time: an attacker who strips the
-    # Timestamp reference (signature-wrapping) will fail this check even if
-    # the remaining signature is cryptographically valid.
-    verify_envelope_bsp(signed, expected_references=2)
-    print("\nverify_envelope_bsp() succeeded — signature is intact.")
+    # The BinarySecurityToken certificate comes from the message, so it is NOT a
+    # trust anchor on its own — verifying against it blindly would accept a
+    # forged envelope signed by any attacker-minted certificate. Pin the
+    # expected signer with ``trusted_certs`` (or vet an issuing CA with
+    # ``ca_certs``). ``expected_references=2`` additionally pins the Reference
+    # count so a stripped Timestamp reference (signature-wrapping) also fails.
+    verify_envelope_bsp(signed, expected_references=2, trusted_certs=[cert])
+    print("\nverify_envelope_bsp() succeeded — signature is intact and trusted.")
 
     # Tamper with the Body and confirm verification fails.
     tampered = signed.replace(b"hello", b"HELLO")
     try:
-        verify_envelope_bsp(tampered, expected_references=2)
+        verify_envelope_bsp(tampered, expected_references=2, trusted_certs=[cert])
     except Exception as exc:  # noqa: BLE001 — demo: any error proves the point
         print(f"tampered envelope correctly rejected: {type(exc).__name__}")
     else:

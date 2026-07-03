@@ -5622,7 +5622,7 @@ class TestX509TokenProfile:
         from soapbar.core.wssecurity import sign_envelope_bsp, verify_envelope_bsp
         key, cert = _make_rsa_key_and_cert()
         signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
-        verified = verify_envelope_bsp(signed)
+        verified = verify_envelope_bsp(signed, trusted_certs=[cert])
         assert isinstance(verified, bytes)
         assert b"ping" in verified
 
@@ -5632,7 +5632,7 @@ class TestX509TokenProfile:
         signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert)
         tampered = signed.replace(b"secret", b"hacked")
         with pytest.raises(XmlSecurityError):
-            verify_envelope_bsp(tampered)
+            verify_envelope_bsp(tampered, trusted_certs=[cert])
 
     def test_bsp_symbols_exported_from_top_level(self) -> None:
         import soapbar
@@ -5640,6 +5640,87 @@ class TestX509TokenProfile:
         assert hasattr(soapbar, "extract_certificate_from_security")
         assert hasattr(soapbar, "sign_envelope_bsp")
         assert hasattr(soapbar, "verify_envelope_bsp")
+
+
+class TestBspTrustAnchor:
+    """#46 (GHSA-859w-52fx-hcm6) — verify_envelope_bsp must not trust the
+    certificate carried in the message on its own; a trust anchor is required."""
+
+    def _signed(self):  # type: ignore[no-untyped-def]
+        from soapbar.core.wssecurity import sign_envelope_bsp
+        key, cert = _make_rsa_key_and_cert()
+        return sign_envelope_bsp(_SIMPLE_ENVELOPE, key, cert), cert
+
+    def _make_ca_and_leaf(self):  # type: ignore[no-untyped-def]
+        import datetime
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "soapbar-test-CA")])
+        ca_cert = (
+            x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
+            .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=2))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .sign(ca_key, hashes.SHA256())
+        )
+        leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        leaf_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "soapbar-test-leaf")])
+        leaf_cert = (
+            x509.CertificateBuilder().subject_name(leaf_name).issuer_name(ca_name)
+            .public_key(leaf_key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=2))
+            .sign(ca_key, hashes.SHA256())
+        )
+        return leaf_key, leaf_cert, ca_cert
+
+    def test_no_trust_anchor_raises(self) -> None:
+        from soapbar.core.wssecurity import XmlSecurityError, verify_envelope_bsp
+        signed, _cert = self._signed()
+        with pytest.raises(XmlSecurityError, match="trust anchor"):
+            verify_envelope_bsp(signed)
+
+    def test_forged_cert_rejected_when_not_pinned(self) -> None:
+        # The attack: an attacker signs a valid envelope with their OWN cert and
+        # embeds it. Verification against a DIFFERENT pinned cert must reject it
+        # even though the signature is mathematically valid over that cert.
+        from soapbar.core.wssecurity import XmlSecurityError, verify_envelope_bsp
+        signed, _attacker_cert = self._signed()
+        _k, legit_cert = _make_rsa_key_and_cert()  # the only cert we trust
+        with pytest.raises(XmlSecurityError, match="not trusted"):
+            verify_envelope_bsp(signed, trusted_certs=[legit_cert])
+
+    def test_pinned_cert_accepted(self) -> None:
+        from soapbar.core.wssecurity import verify_envelope_bsp
+        signed, cert = self._signed()
+        assert verify_envelope_bsp(signed, trusted_certs=[cert])
+
+    def test_verify_cert_trust_false_accepts_insecure(self) -> None:
+        from soapbar.core.wssecurity import verify_envelope_bsp
+        signed, _cert = self._signed()
+        # Explicit opt-out restores the (insecure) legacy behaviour.
+        assert verify_envelope_bsp(signed, verify_cert_trust=False)
+
+    def test_ca_issued_accepted_and_foreign_ca_rejected(self) -> None:
+        from soapbar.core.wssecurity import (
+            XmlSecurityError,
+            sign_envelope_bsp,
+            verify_envelope_bsp,
+        )
+        leaf_key, leaf_cert, ca_cert = self._make_ca_and_leaf()
+        signed = sign_envelope_bsp(_SIMPLE_ENVELOPE, leaf_key, leaf_cert)
+        # Accepted: the embedded leaf was directly issued by the trusted CA.
+        assert verify_envelope_bsp(signed, ca_certs=[ca_cert])
+        # Rejected: an unrelated CA did not issue this leaf.
+        _lk, _lc, other_ca = self._make_ca_and_leaf()
+        with pytest.raises(XmlSecurityError, match="not trusted"):
+            verify_envelope_bsp(signed, ca_certs=[other_ca])
 
 
 class TestXmlEncryption:

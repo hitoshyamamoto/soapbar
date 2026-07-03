@@ -1096,6 +1096,57 @@ def extract_certificate_from_security(security_element: _Element) -> Any:
     return cert
 
 
+def _load_x509(cert: Any) -> Any:
+    """Normalize a certificate given as a ``cryptography`` X.509 object or as
+    PEM/DER bytes into an X.509 object."""
+    if isinstance(cert, (bytes, bytearray)):
+        from cryptography import x509
+        data = bytes(cert)
+        try:
+            return x509.load_pem_x509_certificate(data)
+        except ValueError:
+            return x509.load_der_x509_certificate(data)
+    return cert
+
+
+def _validate_bsp_cert_trust(
+    cert: Any, trusted_certs: Any, ca_certs: Any
+) -> None:
+    """Verify that the certificate embedded in a ``BinarySecurityToken`` is
+    trusted, either by pinning (``trusted_certs``) or by issuance from a
+    configured CA (``ca_certs``). Fails closed when no anchor is supplied — a
+    certificate carried *in the message* is not, by itself, a trust anchor.
+    """
+    from cryptography.hazmat.primitives.serialization import Encoding
+
+    if trusted_certs is None and ca_certs is None:
+        raise XmlSecurityError(
+            "verify_envelope_bsp: no trust anchor configured. The certificate "
+            "carried in the message cannot be trusted on its own. Pass "
+            "trusted_certs=[...] to pin the expected signer certificate(s), "
+            "ca_certs=[...] to accept certificates issued by trusted CA(s), or "
+            "verify_cert_trust=False to explicitly accept the embedded "
+            "certificate (INSECURE)."
+        )
+    cert_der = cert.public_bytes(Encoding.DER)
+    # 1. Pinning — the embedded cert must equal one of the trusted certs.
+    for tc in trusted_certs or ():
+        if _load_x509(tc).public_bytes(Encoding.DER) == cert_der:
+            return
+    # 2. Issuance — the embedded cert must be directly issued by a trusted CA
+    #    (verify_directly_issued_by checks issuer name, validity, and signature).
+    for ca in ca_certs or ():
+        try:
+            cert.verify_directly_issued_by(_load_x509(ca))
+            return
+        except Exception:  # noqa: S112 — try the next CA
+            continue
+    raise XmlSecurityError(
+        "BinarySecurityToken certificate is not trusted: it matches no pinned "
+        "certificate and is issued by no configured CA."
+    )
+
+
 def sign_envelope_bsp(
     envelope_bytes: bytes,
     private_key: Any,
@@ -1220,12 +1271,25 @@ def verify_envelope_bsp(
     envelope_bytes: bytes,
     expected_references: int | None = None,
     require_signed_body: bool = True,
+    trusted_certs: Any = None,
+    ca_certs: Any = None,
+    verify_cert_trust: bool = True,
 ) -> bytes:
     """Verify a SOAP envelope signed with the WS-I BSP 1.1 X.509 token profile.
 
     Extracts the ``wsse:BinarySecurityToken`` certificate from the
     ``wsse:Security`` header and uses it to verify the enveloped
     ``ds:Signature``.
+
+    **Trust anchor (GHSA-859w-52fx-hcm6).** The certificate is carried *in the
+    message*, so on its own it proves only that the envelope was signed by
+    *whoever supplied it* — not by a trusted party. Verifying the signature
+    against that certificate without establishing trust is a signature-forgery /
+    authentication bypass. This function therefore **fails closed**: you must
+    anchor trust with ``trusted_certs`` (pin the expected signer certificate(s))
+    and/or ``ca_certs`` (accept certificates issued by trusted CA(s)). Only pass
+    ``verify_cert_trust=False`` to deliberately accept the embedded certificate
+    unconditionally (INSECURE — e.g. tests).
 
     Not wired into :meth:`SoapApplication.handle_request` automatically —
     callers integrating BSP verification MUST invoke this function
@@ -1237,10 +1301,6 @@ def verify_envelope_bsp(
     Like :func:`verify_envelope`, by default (``require_signed_body=True``) it
     fails closed unless the signature covers the SOAP Body, defeating
     reference-stripping / partial-coverage signatures.
-
-    Note: this function's trust anchor is the certificate carried *in the
-    message*; validating that certificate against a trust store is the caller's
-    responsibility (see GHSA-859w-52fx-hcm6).
 
     Envelopes carrying duplicate ``wsu:Id`` values are rejected before
     verification as a signature-wrapping countermeasure (WSS 1.0 §4.3;
@@ -1255,6 +1315,14 @@ def verify_envelope_bsp(
         require_signed_body: If True (default), reject a signature that does not
             cover the SOAP Body. Set False only when a partial-coverage
             signature is deliberately expected.
+        trusted_certs: Iterable of pinned signer certificates (``cryptography``
+            X.509 objects or PEM/DER bytes); the embedded certificate must equal
+            one of them.
+        ca_certs: Iterable of trusted issuer CA certificates; the embedded
+            certificate must be directly issued by one of them.
+        verify_cert_trust: If True (default), enforce the trust anchor above.
+            Set False to accept the embedded certificate unconditionally
+            (INSECURE).
 
     Returns:
         The verified (signed) content as bytes — the subtree the signature
@@ -1297,6 +1365,12 @@ def verify_envelope_bsp(
 
         # Extract certificate from wsse:BinarySecurityToken
         cert = extract_certificate_from_security(security)
+
+        # Anchor trust BEFORE relying on the certificate — the token is
+        # attacker-controlled, so a valid signature over it means nothing until
+        # the certificate itself is trusted (GHSA-859w-52fx-hcm6).
+        if verify_cert_trust:
+            _validate_bsp_cert_trust(cert, trusted_certs, ca_certs)
 
         # Verify using the extracted certificate (bypasses KeyInfo resolution)
         verifier: Any = XMLVerifier()
