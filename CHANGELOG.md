@@ -6,6 +6,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`soapbar.contrib.ana.AnaClient`** — a typed client for ANA ServiceANA, the
+  Brazilian National Water Agency's legacy hydrometeorological telemetry service
+  (`telemetriaws1.ana.gov.br`, a document/literal-*wrapped* ASP.NET `.asmx`,
+  namespace `http://MRCS/`). Covers all 12 operations (telemetric data, the five
+  HIDRO catalogues, the 12-filter `HidroInventario`, `HidroSerieHistorica`, the
+  telemetric-station registry, and the restricted CotaOnline writes), flattening
+  the ADO.NET DataSet (inline schema + Microsoft diffgram) it returns into plain
+  dict rows. Ships enums (`TipoDados`, `TipoEstacao`, `OrigemTelemetrica`) and
+  documents the service's contract quirks (lowercase `origem`, PascalCase
+  CotaOnline elements, plaintext write credentials). Installable via
+  `soapbar[ana]`. The service is announced-legacy (superseded by the REST
+  `Hidro_Webservice`); treat the client as a bridge for existing SOAP consumers.
+
+---
+
 ## [0.13.0] — 2026-07-03
 
 A security and conformance release closing the findings of an internal audit.

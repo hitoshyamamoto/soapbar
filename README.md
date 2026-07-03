@@ -73,7 +73,7 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - **Mutual TLS** — client certificates + custom CA bundle (`HttpTransport(client_cert=…, ca_bundle=…)`), with a PKCS#12 helper (`load_pkcs12`) for ICP-Brasil A1 `.pfx`
 - **Session cookies** — persisted across calls (`HttpTransport(persist_cookies=True)`) for stateful services; read/inject via `transport.cookies`
 - **Document/literal *bare* + `xsd:any`** — passes raw XML through a single body element (e.g. NF-e's `nfeDadosMsg`)
-- **Real-world clients** — optional typed clients under `soapbar.contrib.*`: EU VIES (`ViesClient`), WITSML 1.4.1.1 (`WitsmlClient`), SEFAZ NF-e (`NfeClient`)
+- **Real-world clients** — optional typed clients under `soapbar.contrib.*`: EU VIES (`ViesClient`), WITSML 1.4.1.1 (`WitsmlClient`), SEFAZ NF-e (`NfeClient`), ANA ServiceANA (`AnaClient`)
 - Interoperable with zeep and spyne out-of-the-box (verified by integration tests)
 - **JSON dual-mode** — any SOAP endpoint returns JSON when client sends `Accept: application/json`; no separate endpoint needed
 - **Non-strict WSDL parsing** — `parse_wsdl(..., strict=False)` silently skips unresolvable imports instead of raising
@@ -95,6 +95,7 @@ pip install soapbar[all]         # everything (client + security)
 # Real-world contrib clients (see "Real-world services"):
 pip install soapbar[vies]        # EU VIES VAT validation
 pip install soapbar[witsml]      # WITSML 1.4.1.1 STORE
+pip install soapbar[ana]         # ANA ServiceANA (Brazilian water telemetry)
 pip install soapbar[nfe]         # SEFAZ NF-e (mutual TLS + signing)
 ```
 
@@ -105,7 +106,7 @@ uv add soapbar
 uv add "soapbar[client]"
 uv add "soapbar[security]"
 uv add "soapbar[all]"
-uv add "soapbar[nfe]"            # or [vies] / [witsml]
+uv add "soapbar[nfe]"            # or [vies] / [witsml] / [ana]
 ```
 
 ---
@@ -949,6 +950,7 @@ ship under `soapbar.contrib.*` (installable via extras).
 | WITSML 1.4.1.1 STORE | RPC | WS-Security UsernameToken | [`18_witsml/`](examples/18_witsml/) | `soapbar.contrib.witsml` (`soapbar[witsml]`) |
 | SEFAZ NF-e | document/literal bare, SOAP 1.2 | mutual TLS (ICP-Brasil) + `<infNFe>` `Id`-signing | [`19_nfe/`](examples/19_nfe/) | `soapbar.contrib.nfe` (`soapbar[nfe]`) |
 | IRS MeF (A2A) | SOAP/HTTP, session-based | mutual TLS (Strong Auth) + session cookies | [`20_mef/`](examples/20_mef/) | *(use the core APIs directly)* |
+| ANA ServiceANA (telemetria hidrometeorológica) | document/literal wrapped, SOAP 1.1/1.2 (`.asmx`) | none (CotaOnline writes: body credentials) | — | `soapbar.contrib.ana` (`soapbar[ana]`) |
 
 The VIES and WITSML examples run against live endpoints; the NF-e and MeF
 examples are faithful references (their `main()` prints guidance without
@@ -1075,6 +1077,7 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | `ViesClient` | `from soapbar.contrib.vies import ViesClient` | EU VIES VAT validation (`soapbar[vies]`) |
 | `WitsmlClient` | `from soapbar.contrib.witsml import WitsmlClient` | WITSML 1.4.1.1 STORE API (`soapbar[witsml]`) |
 | `NfeClient` | `from soapbar.contrib.nfe import NfeClient` | SEFAZ NF-e layout 4.00 (`soapbar[nfe]`) |
+| `AnaClient` | `from soapbar.contrib.ana import AnaClient` | ANA ServiceANA telemetry, 12 ops (`soapbar[ana]`) |
 
 ---
 
