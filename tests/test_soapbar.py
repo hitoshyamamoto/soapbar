@@ -2970,6 +2970,60 @@ class TestQualifiedComplexTypeChildren:
         assert 'elementFormDefault="unqualified"' in build_wsdl_string(u, "http://x/")
 
 
+class TestScopedTypeRegistry:
+    """#49 — parsed types live in a per-parse scoped registry, so two documents
+    that define the same type name never clobber each other and parsing is safe
+    under concurrency."""
+
+    def _person_wsdl(self, field_name: str) -> bytes:
+        return (
+            '<?xml version="1.0"?>'
+            '<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            ' xmlns:xsd="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:x">'
+            '<types><xsd:schema targetNamespace="urn:x">'
+            '<xsd:complexType name="Person"><xsd:sequence>'
+            f'<xsd:element name="{field_name}" type="xsd:string"/>'
+            '</xsd:sequence></xsd:complexType></xsd:schema></types></definitions>'
+        ).encode()
+
+    def test_same_named_types_do_not_clobber(self) -> None:
+        from soapbar.core.wsdl.parser import parse_wsdl
+        a = parse_wsdl(self._person_wsdl("emailAddress"))
+        b = parse_wsdl(self._person_wsdl("phoneNumber"))
+        # Parsing B must not have mutated A's Person (the audit's bug).
+        assert [f[0] for f in a.complex_types["Person"].fields] == ["emailAddress"]
+        assert [f[0] for f in b.complex_types["Person"].fields] == ["phoneNumber"]
+        # And each serializes with its OWN shape.
+        ea = a.complex_types["Person"].to_element("Person", {"emailAddress": "x@y"}, "")
+        assert ea.find("emailAddress") is not None and ea.find("phoneNumber") is None
+
+    def test_lazy_ref_resolves_within_same_parse(self) -> None:
+        from soapbar.core.wsdl.parser import parse_wsdl
+        wsdl = (
+            b'<?xml version="1.0"?>'
+            b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+            b' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+            b' xmlns:tns="urn:x" targetNamespace="urn:x">'
+            b'<types><xsd:schema targetNamespace="urn:x">'
+            b'<xsd:complexType name="Order"><xsd:sequence>'
+            b'<xsd:element name="cust" type="tns:Customer"/>'
+            b'</xsd:sequence></xsd:complexType>'
+            b'<xsd:complexType name="Customer"><xsd:sequence>'
+            b'<xsd:element name="name" type="xsd:string"/>'
+            b'</xsd:sequence></xsd:complexType>'
+            b'</xsd:schema></types></definitions>'
+        )
+        order = parse_wsdl(wsdl).complex_types["Order"]
+        # 'cust' (a lazy tns:Customer ref) resolves against this parse's own
+        # registry and round-trips.
+        out = order.to_element("Order", {"cust": {"name": "Bob"}}, "")
+        assert order.from_element(out) == {"cust": {"name": "Bob"}}
+
+    def test_builtins_remain_global(self) -> None:
+        assert xsd.resolve("int") is not None
+        assert xsd.resolve("string") is not None
+
+
 # ---------------------------------------------------------------------------
 # ComplexXsdType — recursive / lazy string resolution
 # ---------------------------------------------------------------------------
@@ -3113,12 +3167,14 @@ class TestSchemaDrivenWsdl:
         assert all(len(c) == 0 for c in addr_children)  # no <address><address>…
         assert ct.from_element(elem) == {"address": ["a", "b"]}
 
-    def test_registered_in_xsd_registry(self) -> None:
+    def test_registered_in_scoped_registry_not_global(self) -> None:
         defn = parse_wsdl(self._WSDL_WITH_COMPLEX)
         assert defn.complex_types  # non-empty
-        # All parsed types should be in xsd registry now
+        # Parsed types live in the definition's OWN scoped registry (#49) —
+        # resolvable there, but NOT leaked into the process-global registry.
         for name in defn.complex_types:
-            assert xsd.resolve(name) is not None
+            assert defn.type_registry.resolve(name) is not None
+            assert xsd.resolve(name) is None  # not global-polluting
 
     def test_inline_array_vs_wrapper_array_distinction(self) -> None:
         # #51 — an inline (repeated-element) array emits flat siblings, while a
@@ -6904,12 +6960,11 @@ class TestParserCoverageRound2:
 
     def test_resolve_xsd_type_strips_prefix_to_bare_name(self) -> None:
         """_resolve_xsd_type tries bare name when full ref not resolved (lines 309-314)."""
-        from soapbar.core.wsdl.parser import _resolve_xsd_type
-
         # "myns:string" — "myns:string" not registered, "string" IS registered
-        result = _resolve_xsd_type("myns:string", {})
-        # Should resolve "string" after stripping prefix
         from soapbar.core.types import xsd as _xsd
+        from soapbar.core.wsdl.parser import _resolve_xsd_type
+        result = _resolve_xsd_type("myns:string", {}, _xsd)
+        # Should resolve "string" after stripping prefix
         assert result is _xsd.resolve("string")
 
     def test_wsdl_unknown_child_element_ignored(self) -> None:

@@ -110,6 +110,10 @@ class WsdlDefinition:
     services: dict[str, WsdlService] = field(default_factory=dict)
     schema_elements: list[Any] = field(default_factory=list)
     complex_types: dict[str, XsdType] = field(default_factory=dict)
+    # The scoped type registry this definition's parsed types resolve against
+    # (a ``_TypeRegistry``; ``Any`` to avoid importing it here). Populated by
+    # parse_wsdl; None for hand-built definitions, which use the global built-ins.
+    type_registry: Any = None
     # Global <xsd:element> declarations synthesized for document/literal
     # operations so <wsdl:part element="tns:…"/> can reference them per
     # WS-I BP 1.1 R2204. Each entry is an already-built lxml Element in
