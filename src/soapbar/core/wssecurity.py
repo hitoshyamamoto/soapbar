@@ -556,19 +556,43 @@ def _place_signature_beside_target(signed: Any, id_attr: str, id_value: str) -> 
     parent.append(signature)
 
 
+def _signature_covers_soap_body(results: list[Any]) -> bool:
+    """Return True if any verified (signed) subtree in *results* is, or
+    contains, a SOAP Body — i.e. the signature actually covers the Body rather
+    than only a header/Timestamp (the reference-stripping attack)."""
+    soap_bodies = {f"{{{NS.SOAP_ENV}}}Body", f"{{{NS.SOAP12_ENV}}}Body"}
+    for r in results:
+        # signxml's VerifyResult.signed_xml is the signed lxml element (or None).
+        signed = getattr(r, "signed_xml", None)
+        if signed is None:
+            continue
+        if getattr(signed, "tag", None) in soap_bodies:
+            return True
+        if any(el.tag in soap_bodies for el in signed.iter()):
+            return True
+    return False
+
+
 def verify_envelope(
     envelope_bytes: bytes,
     certificate: Any,
     expected_references: int | None = None,
+    require_signed_body: bool = True,
 ) -> bytes:
     """Verify the XML Digital Signature on a SOAP envelope.
 
     Not wired into :meth:`SoapApplication.handle_request` automatically —
     callers integrating XML Signature verification MUST invoke this
-    function explicitly. For production use, pass ``expected_references``
+    function explicitly. For production use, also pass ``expected_references``
     matching the number of ``ds:Reference`` elements the signer pinned
     (e.g. ``2`` for Body + Timestamp); this prevents an attacker from
     dropping references and still getting a successful verify.
+
+    By default (``require_signed_body=True``) the function fails closed unless
+    the signature actually covers the SOAP Body. Without this, a signature over
+    only, say, the Timestamp verifies successfully and a caller could then trust
+    an **unsigned** Body — the classic reference-stripping / partial-coverage
+    weakness.
 
     Envelopes carrying duplicate ``wsu:Id`` values are rejected before
     verification as a signature-wrapping countermeasure (WSS 1.0 §4.3;
@@ -581,15 +605,20 @@ def verify_envelope(
         expected_references: If set, the number of ``ds:Reference`` elements
             the verifier must see inside ``ds:SignedInfo``. Mismatch fails
             verification. Default ``None`` preserves pre-0.5.5 behavior.
+        require_signed_body: If True (default), reject a signature that does not
+            cover the SOAP Body. Set False only when a partial-coverage
+            signature is deliberately expected.
 
     Returns:
-        The verified envelope bytes (same content, parsed and re-serialised
-        to confirm the signature covers the body).
+        The verified (signed) content as bytes — the subtree the signature
+        actually covers. Callers MUST act on this returned value, not on the
+        original ``envelope_bytes``, so that only signed data is trusted.
 
     Raises:
         ImportError: If ``signxml`` is not installed.
-        XmlSecurityError: If signature verification fails or the envelope
-            contains duplicate ``wsu:Id`` values.
+        XmlSecurityError: If signature verification fails, the signature does
+            not cover the Body (when required), or the envelope contains
+            duplicate ``wsu:Id`` values.
     """
     try:
         from signxml import XMLVerifier  # type: ignore[attr-defined]
@@ -612,9 +641,14 @@ def verify_envelope(
             verify_kwargs["expect_references"] = expected_references
         verify_result: Any = verifier.verify(root, **verify_kwargs)
         # verify() may return a VerifyResult or list[VerifyResult]
-        if isinstance(verify_result, list):
-            verify_result = verify_result[0]
-        signed_xml: Any = verify_result.signed_xml
+        results = verify_result if isinstance(verify_result, list) else [verify_result]
+        if require_signed_body and not _signature_covers_soap_body(results):
+            raise XmlSecurityError(
+                "Signature does not cover the SOAP Body (possible "
+                "reference-stripping); pass require_signed_body=False only if a "
+                "partial-coverage signature is intended."
+            )
+        signed_xml: Any = results[0].signed_xml
         verified_bytes: bytes = etree.tostring(signed_xml, xml_declaration=True, encoding="utf-8")
         return verified_bytes
     except XmlSecurityError:
@@ -1070,6 +1104,7 @@ def sign_envelope_bsp(
 def verify_envelope_bsp(
     envelope_bytes: bytes,
     expected_references: int | None = None,
+    require_signed_body: bool = True,
 ) -> bytes:
     """Verify a SOAP envelope signed with the WS-I BSP 1.1 X.509 token profile.
 
@@ -1079,10 +1114,18 @@ def verify_envelope_bsp(
 
     Not wired into :meth:`SoapApplication.handle_request` automatically —
     callers integrating BSP verification MUST invoke this function
-    explicitly. For production use, pass ``expected_references`` matching
+    explicitly. For production use, also pass ``expected_references`` matching
     the number of ``ds:Reference`` elements the signer pinned (e.g. ``2``
     for Body + Timestamp); this prevents an attacker from dropping
     references and still getting a successful verify.
+
+    Like :func:`verify_envelope`, by default (``require_signed_body=True``) it
+    fails closed unless the signature covers the SOAP Body, defeating
+    reference-stripping / partial-coverage signatures.
+
+    Note: this function's trust anchor is the certificate carried *in the
+    message*; validating that certificate against a trust store is the caller's
+    responsibility (see GHSA-859w-52fx-hcm6).
 
     Envelopes carrying duplicate ``wsu:Id`` values are rejected before
     verification as a signature-wrapping countermeasure (WSS 1.0 §4.3;
@@ -1094,15 +1137,20 @@ def verify_envelope_bsp(
             elements the verifier must see inside ``ds:SignedInfo``.
             Mismatch fails verification. Default ``None`` preserves
             pre-0.5.5 behavior.
+        require_signed_body: If True (default), reject a signature that does not
+            cover the SOAP Body. Set False only when a partial-coverage
+            signature is deliberately expected.
 
     Returns:
-        The verified envelope bytes (same content, re-serialised after
-        signature verification).
+        The verified (signed) content as bytes — the subtree the signature
+        actually covers. Callers MUST act on this returned value, not on the
+        original ``envelope_bytes``.
 
     Raises:
         ImportError: If ``signxml`` or ``cryptography`` is not installed.
-        XmlSecurityError: If signature verification fails, no token is
-            found, or the envelope contains duplicate ``wsu:Id`` values.
+        XmlSecurityError: If signature verification fails, the signature does
+            not cover the Body (when required), no token is found, or the
+            envelope contains duplicate ``wsu:Id`` values.
     """
     try:
         from signxml import XMLVerifier  # type: ignore[attr-defined]
@@ -1141,9 +1189,14 @@ def verify_envelope_bsp(
         if expected_references is not None:
             verify_kwargs["expect_references"] = expected_references
         verify_result: Any = verifier.verify(root, **verify_kwargs)
-        if isinstance(verify_result, list):
-            verify_result = verify_result[0]
-        signed_xml: Any = verify_result.signed_xml
+        results = verify_result if isinstance(verify_result, list) else [verify_result]
+        if require_signed_body and not _signature_covers_soap_body(results):
+            raise XmlSecurityError(
+                "Signature does not cover the SOAP Body (possible "
+                "reference-stripping); pass require_signed_body=False only if a "
+                "partial-coverage signature is intended."
+            )
+        signed_xml: Any = results[0].signed_xml
         verified_bytes: bytes = etree.tostring(
             signed_xml, xml_declaration=True, encoding="utf-8"
         )

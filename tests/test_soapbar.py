@@ -5307,6 +5307,51 @@ class TestXmlSignature:
         assert hasattr(soapbar, "sign_envelope")
         assert hasattr(soapbar, "verify_envelope")
 
+    # --- #57: require the signature to cover the SOAP Body -------------------
+
+    def test_signature_covers_soap_body_helper(self) -> None:
+        from lxml import etree
+
+        from soapbar.core.wssecurity import _signature_covers_soap_body
+        soap = "http://schemas.xmlsoap.org/soap/envelope/"
+
+        class _R:
+            def __init__(self, x: object) -> None:
+                self.signed_xml = x
+
+        body = etree.fromstring(f'<Body xmlns="{soap}"><ping/></Body>')
+        env = etree.fromstring(f'<Envelope xmlns="{soap}"><Body><p/></Body></Envelope>')
+        timestamp = etree.fromstring("<Timestamp/>")
+        assert _signature_covers_soap_body([_R(body)]) is True        # is the Body
+        assert _signature_covers_soap_body([_R(env)]) is True         # contains a Body
+        assert _signature_covers_soap_body([_R(timestamp)]) is False  # header only
+        assert _signature_covers_soap_body([_R(None)]) is False
+
+    def test_reference_stripping_rejected_by_default(self) -> None:
+        # A valid signature that covers only a header element (not the Body) is
+        # rejected by default, and accepted only with require_signed_body=False.
+        from soapbar.core.wssecurity import (
+            XmlSecurityError,
+            sign_element_by_id,
+            verify_envelope,
+        )
+        key, cert = _make_rsa_key_and_cert()
+        env = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b'<soapenv:Header>'
+            b'<Timestamp xmlns="urn:ts" Id="TS-1">'
+            b'<Created>2026-07-02T00:00:00Z</Created></Timestamp>'
+            b'</soapenv:Header>'
+            b'<soapenv:Body><ping>secret</ping></soapenv:Body>'
+            b'</soapenv:Envelope>'
+        )
+        signed = sign_element_by_id(env, "TS-1", key, cert)
+        with pytest.raises(XmlSecurityError, match="Body"):
+            verify_envelope(signed, cert)
+        # Opt-out: the (partial) signature itself is still cryptographically valid.
+        out = verify_envelope(signed, cert, require_signed_body=False)
+        assert isinstance(out, bytes)
+
 
 class TestX509TokenProfile:
     """Tests for WS-I BSP 1.1 X.509 token profile (S10).
