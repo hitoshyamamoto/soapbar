@@ -352,18 +352,41 @@ class _HexBinaryType(XsdType):
 # Complex types (ComplexXsdType, ArrayXsdType, ChoiceXsdType)
 # ---------------------------------------------------------------------------
 
+def _tag_local_name(tag: Any) -> Any:
+    """Local name of an lxml Clark-notation tag ('{ns}local' → 'local')."""
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) and "}" in tag else tag
+
+
 class ComplexXsdType(XsdType):
     """XSD complexType with a sequence of named sub-elements.
 
     Fields may be XsdType instances or string names to be lazily resolved
     via xsd.resolve() (for forward/recursive references).
+
+    ``qualified`` mirrors the owning schema's ``elementFormDefault``: when True,
+    the type's *local* child elements are emitted in ``target_namespace`` (what
+    a conformant peer — zeep/.NET/Java — expects). Reading is always namespace
+    tolerant (children are matched by local name), so soapbar accepts both
+    qualified and unqualified input regardless of this flag.
     """
 
     namespace: str = ""
 
-    def __init__(self, name: str, fields: list[tuple[str, XsdType | str]]) -> None:
+    def __init__(
+        self,
+        name: str,
+        fields: list[tuple[str, XsdType | str]],
+        target_namespace: str = "",
+        qualified: bool = False,
+    ) -> None:
         self.name = name
         self.fields: list[tuple[str, XsdType | str]] = fields
+        self.target_namespace = target_namespace
+        self.qualified = qualified
+
+    def _child_ns(self) -> str:
+        """Namespace for this type's local child elements (empty if unqualified)."""
+        return self.target_namespace if self.qualified else ""
 
     def _resolve_field_type(self, ftype: XsdType | str) -> XsdType:
         if isinstance(ftype, str):
@@ -385,8 +408,10 @@ class ComplexXsdType(XsdType):
         from lxml import etree
         full_tag = f"{{{ns}}}{tag}" if ns else tag
         elem = etree.Element(full_tag)
+        child_ns = self._child_ns()
         for field_name, field_type_raw in self.fields:
             field_type = self._resolve_field_type(field_type_raw)
+            child_tag = f"{{{child_ns}}}{field_name}" if child_ns else field_name
             if isinstance(field_type, ArrayXsdType):
                 child_val_list: list[Any] = value.get(field_name) or []
                 if field_type.inline:
@@ -394,12 +419,12 @@ class ComplexXsdType(XsdType):
                     # children of this element, each tagged with the field name
                     # — no intermediate wrapper.
                     for item in child_val_list:
-                        elem.append(field_type._item_to_element(field_name, item))
+                        elem.append(field_type._item_to_element(field_name, item, child_ns))
                 else:
-                    elem.append(field_type.to_element(field_name, child_val_list))
+                    elem.append(field_type.to_element(field_name, child_val_list, child_ns))
             elif isinstance(field_type, (ComplexXsdType, ChoiceXsdType)):
                 child_val_dict: dict[str, Any] = value.get(field_name) or {}
-                elem.append(field_type.to_element(field_name, child_val_dict))
+                elem.append(field_type.to_element(field_name, child_val_dict, child_ns))
             else:
                 field_val = value.get(field_name)
                 if field_val is None:
@@ -408,22 +433,27 @@ class ComplexXsdType(XsdType):
                     # without emitting an empty element that would crash
                     # from_xml on read for numeric/date/boolean types.
                     continue
-                child = etree.SubElement(elem, field_name)
+                child = etree.SubElement(elem, child_tag)
                 child.text = field_type.to_xml(field_val)
         return elem
 
     def from_element(self, elem: Any) -> dict[str, Any]:
         result: dict[str, Any] = {}
+        # Read is namespace-tolerant: children are matched by local name so both
+        # qualified (<ns:age>) and unqualified (<age>) inputs deserialize.
         for field_name, field_type_raw in self.fields:
             field_type = self._resolve_field_type(field_type_raw)
             if isinstance(field_type, ArrayXsdType) and field_type.inline:
                 # Collect the repeated sibling elements (maxOccurs>1) into a
                 # list; an absent field yields an empty list.
                 result[field_name] = [
-                    field_type._item_from_element(c) for c in elem.findall(field_name)
+                    field_type._item_from_element(c)
+                    for c in elem if _tag_local_name(c.tag) == field_name
                 ]
                 continue
-            child = elem.find(field_name)
+            child = next(
+                (c for c in elem if _tag_local_name(c.tag) == field_name), None
+            )
             if child is None:
                 result[field_name] = None
             elif isinstance(field_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
@@ -453,6 +483,8 @@ class ArrayXsdType(XsdType):
         element_type: XsdType,
         element_tag: str = "item",
         inline: bool = False,
+        target_namespace: str = "",
+        qualified: bool = False,
     ) -> None:
         self.name = name
         self.element_type = element_type
@@ -463,14 +495,20 @@ class ArrayXsdType(XsdType):
         # *type* (a wrapper element holding repeated item children, e.g. a
         # SOAP-ENC array). Only the wrapper form emits its own element.
         self.inline = inline
+        self.target_namespace = target_namespace
+        self.qualified = qualified
 
-    def _item_to_element(self, tag: str, item: Any) -> Any:
-        """Serialize a single array item as an element tagged *tag*."""
+    def _child_ns(self) -> str:
+        return self.target_namespace if self.qualified else ""
+
+    def _item_to_element(self, tag: str, item: Any, ns: str = "") -> Any:
+        """Serialize a single array item as an element tagged *tag* (optionally
+        namespace-qualified with *ns*)."""
         from lxml import etree
         et = self.element_type
         if isinstance(et, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
-            return et.to_element(tag, item)
-        child = etree.Element(tag)
+            return et.to_element(tag, item, ns)
+        child = etree.Element(f"{{{ns}}}{tag}" if ns else tag)
         child.text = et.to_xml(item)
         return child
 
@@ -509,13 +547,9 @@ class ArrayXsdType(XsdType):
             nsmap["soapenc"] = NS.SOAP_ENC
             nsmap["xsd"] = NS.XSD
         elem = etree.Element(full_tag, attrib=attrib, nsmap=nsmap)
+        item_ns = self._child_ns()
         for item in items:
-            et = self.element_type
-            if isinstance(et, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
-                elem.append(et.to_element(self.element_tag, item))
-            else:
-                child = etree.SubElement(elem, self.element_tag)
-                child.text = et.to_xml(item)
+            elem.append(self._item_to_element(self.element_tag, item, item_ns))
         return elem
 
     def from_element(self, elem: Any) -> list[Any]:
@@ -534,9 +568,20 @@ class ChoiceXsdType(XsdType):
 
     namespace: str = ""
 
-    def __init__(self, name: str, options: list[tuple[str, XsdType]]) -> None:
+    def __init__(
+        self,
+        name: str,
+        options: list[tuple[str, XsdType]],
+        target_namespace: str = "",
+        qualified: bool = False,
+    ) -> None:
         self.name = name
         self.options: list[tuple[str, XsdType]] = options
+        self.target_namespace = target_namespace
+        self.qualified = qualified
+
+    def _child_ns(self) -> str:
+        return self.target_namespace if self.qualified else ""
 
     def to_xml(self, value: Any) -> str:
         raise TypeError(f"ChoiceXsdType '{self.name}' requires element-level serialization")
@@ -552,12 +597,14 @@ class ChoiceXsdType(XsdType):
         elem = etree.Element(full_tag)
         if not isinstance(value, dict):
             return elem
+        child_ns = self._child_ns()
         for opt_name, opt_type in self.options:
             if opt_name in value and value[opt_name] is not None:
+                opt_tag = f"{{{child_ns}}}{opt_name}" if child_ns else opt_name
                 if isinstance(opt_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
-                    elem.append(opt_type.to_element(opt_name, value[opt_name]))
+                    elem.append(opt_type.to_element(opt_name, value[opt_name], child_ns))
                 else:
-                    child = etree.SubElement(elem, opt_name)
+                    child = etree.SubElement(elem, opt_tag)
                     child.text = opt_type.to_xml(value[opt_name])
                 break
         return elem

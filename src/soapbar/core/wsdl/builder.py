@@ -49,14 +49,21 @@ def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
         for schema_elem in defn.schema_elements:
             types_elem.append(copy.deepcopy(schema_elem))
         if defn.complex_types or defn.global_elements:
+            # Declare elementFormDefault to MATCH what the serializer emits, so
+            # the published schema never lies about the wire form. A type is
+            # "qualified" when it carries that flag (e.g. parsed from a
+            # qualified schema); hand-built types default to unqualified, which
+            # is soapbar's serializer default. Mixed sets are rare; if any type
+            # qualifies its children, declare the schema qualified.
+            _qualified = any(
+                getattr(ct, "qualified", False) for ct in defn.complex_types.values()
+            )
             schema_elem2 = sub_element(
                 types_elem,
                 f"{{{NS.XSD}}}schema",
                 attrib={
                     "targetNamespace": tns,
-                    # WS-I BP R2112 / common-sense interop: schema wire format
-                    # is qualified (matches soapbar's serializer output).
-                    "elementFormDefault": "qualified",
+                    "elementFormDefault": "qualified" if _qualified else "unqualified",
                 },
             )
             # Global <xsd:element> declarations (emitted first so they are

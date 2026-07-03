@@ -491,6 +491,11 @@ def _parse_schema_types(schema_elem: _Element, nsmap: dict[str, str]) -> dict[st
     """Parse <xsd:schema> and return a dict of name → XsdType for complex types."""
     result: dict[str, XsdType] = {}
 
+    # A schema's elementFormDefault governs whether its local (child) elements
+    # are namespace-qualified on the wire. Default per XSD is "unqualified".
+    tns = schema_elem.get("targetNamespace", "")
+    qualified = schema_elem.get("elementFormDefault", "unqualified") == "qualified"
+
     for child in schema_elem:
         lname = local_name(child)
         if lname != "complexType":
@@ -498,7 +503,7 @@ def _parse_schema_types(schema_elem: _Element, nsmap: dict[str, str]) -> dict[st
         ct_name = child.get("name", "")
         if not ct_name:
             continue
-        xsd_type = _parse_complex_type_element(ct_name, child, nsmap)
+        xsd_type = _parse_complex_type_element(ct_name, child, nsmap, tns, qualified)
         if xsd_type is not None:
             result[ct_name] = xsd_type
 
@@ -506,7 +511,11 @@ def _parse_schema_types(schema_elem: _Element, nsmap: dict[str, str]) -> dict[st
 
 
 def _parse_complex_type_element(
-    name: str, elem: _Element, nsmap: dict[str, str]
+    name: str,
+    elem: _Element,
+    nsmap: dict[str, str],
+    target_namespace: str = "",
+    qualified: bool = False,
 ) -> XsdType | None:
     """Parse a single <xsd:complexType> element."""
     for child in elem:
@@ -535,9 +544,16 @@ def _parse_complex_type_element(
                         # direct children of the enclosing complexType, not
                         # wrapped in an extra element named after the field.
                         inline=True,
+                        target_namespace=target_namespace,
+                        qualified=qualified,
                     )
                 fields.append((field_name, field_type))
-            return ComplexXsdType(name=name, fields=fields)
+            return ComplexXsdType(
+                name=name,
+                fields=fields,
+                target_namespace=target_namespace,
+                qualified=qualified,
+            )
 
         if lname == "choice":
             options: list[tuple[str, XsdType]] = []
@@ -556,7 +572,12 @@ def _parse_complex_type_element(
                 if opt_type_resolved is None:
                     continue
                 options.append((opt_name, opt_type_resolved))
-            return ChoiceXsdType(name=name, options=options)
+            return ChoiceXsdType(
+                name=name,
+                options=options,
+                target_namespace=target_namespace,
+                qualified=qualified,
+            )
 
         if lname == "complexContent":
             # Check for soapenc:Array restriction
