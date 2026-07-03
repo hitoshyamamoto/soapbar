@@ -68,6 +68,13 @@ from soapbar.server.wsgi import WsgiSoapApp
 # 1. Namespaces
 # =============================================================================
 
+
+def _fresh_ws_created() -> str:
+    """A current UTC wsu:Created value, for tokens that must pass the
+    UsernameTokenValidator freshness check (#56)."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 class TestNamespaces:
     def test_constants(self) -> None:
         assert NS.SOAP_ENV == "http://schemas.xmlsoap.org/soap/envelope/"
@@ -4819,7 +4826,7 @@ class TestWsSecurityUsernameToken:
             password="pass",  # noqa: S106
             use_digest=True,
             nonce=b"\x00" * 16,
-            created="2026-01-01T00:00:00Z",
+            created=_fresh_ws_created(),
         )
         elem = build_security_header(cred)
         wsse_ns = NS.WSSE
@@ -4884,7 +4891,7 @@ class TestWsSecurityUsernameToken:
             password="pass",  # noqa: S106
             use_digest=True,
             nonce=b"\xde\xad\xbe\xef",
-            created="2026-01-01T00:00:00Z",
+            created=_fresh_ws_created(),
         )
         security = build_security_header(cred)
         validated = SimpleValidator().validate(security)
@@ -7412,7 +7419,7 @@ class TestNonceReplayCache:
             password=password,
             use_digest=True,
             nonce=b"fixed-nonce-bytes",
-            created="2026-04-11T10:00:00Z",
+            created=_fresh_ws_created(),
         )
         return build_security_header(cred)
 
@@ -7455,10 +7462,100 @@ class TestNonceReplayCache:
             nonce = f"nonce-{i}".encode()
             cred = UsernameTokenCredential(
                 username="alice", password="pw", use_digest=True,  # noqa: S106
-                nonce=nonce, created="2026-04-11T10:00:00Z",
+                nonce=nonce, created=_fresh_ws_created(),
             )
             sec = build_security_header(cred)
             assert v.validate(sec) == "alice"  # type: ignore[arg-type]
+
+
+class TestUsernameTokenFreshness:
+    """#56 — wsu:Created freshness closes the replay-after-nonce-TTL gap."""
+
+    def _validator(self, **attrs):  # type: ignore[no-untyped-def]
+        from soapbar.core.wssecurity import UsernameTokenValidator
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "pw" if u == "alice" else None
+
+        v = _V()
+        for k, val in attrs.items():
+            setattr(v, k, val)
+        return v
+
+    def _ts(self, seconds_ago: int) -> str:
+        from datetime import datetime, timedelta, timezone
+        t = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
+        return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _digest_sec(self, created: str, nonce: bytes = b"n0"):  # type: ignore[no-untyped-def]
+        from soapbar.core.wssecurity import UsernameTokenCredential, build_security_header
+        return build_security_header(UsernameTokenCredential(
+            username="alice", password="pw", use_digest=True,  # noqa: S106
+            nonce=nonce, created=created,
+        ))
+
+    def test_fresh_created_accepted(self) -> None:
+        assert self._validator().validate(self._digest_sec(self._ts(10))) == "alice"  # type: ignore[arg-type]
+
+    def test_stale_created_rejected_as_replay(self) -> None:
+        from soapbar.core.wssecurity import SecurityValidationError
+        with pytest.raises(SecurityValidationError, match="stale"):
+            self._validator().validate(self._digest_sec(self._ts(3600)))  # type: ignore[arg-type]
+
+    def test_future_created_rejected(self) -> None:
+        from soapbar.core.wssecurity import SecurityValidationError
+        with pytest.raises(SecurityValidationError, match="future"):
+            self._validator().validate(self._digest_sec(self._ts(-3600)))  # type: ignore[arg-type]
+
+    def test_stale_token_with_unseen_nonce_still_rejected(self) -> None:
+        # The replay-after-TTL gap: even a nonce the server has never seen (the
+        # cache would have purged it) is refused because the token is stale.
+        from soapbar.core.wssecurity import SecurityValidationError
+        sec = self._digest_sec(self._ts(3600), nonce=b"never-seen-before")
+        with pytest.raises(SecurityValidationError, match="stale"):
+            self._validator().validate(sec)  # type: ignore[arg-type]
+
+    def test_freshness_can_be_disabled(self) -> None:
+        # Opt-out for a caller that manages freshness elsewhere.
+        sec = self._digest_sec(self._ts(99999))
+        v = self._validator(max_created_age=None, max_clock_skew=None)
+        assert v.validate(sec) == "alice"  # type: ignore[arg-type]
+
+    def test_expires_far_future_rejected(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from lxml import etree
+
+        from soapbar.core.wssecurity import (
+            SecurityValidationError,
+            UsernameTokenCredential,
+            build_security_header,
+        )
+        sec = build_security_header(UsernameTokenCredential(username="alice", password="pw"))  # noqa: S106
+        wsu = NS.WSU
+        now = datetime.now(timezone.utc)
+        ts = etree.SubElement(sec, f"{{{wsu}}}Timestamp")
+        etree.SubElement(ts, f"{{{wsu}}}Created").text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        etree.SubElement(ts, f"{{{wsu}}}Expires").text = (
+            now + timedelta(days=3650)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with pytest.raises(SecurityValidationError, match="future"):
+            self._validator().validate(sec)  # type: ignore[arg-type]
+
+    def test_passwordtext_stale_created_rejected(self) -> None:
+        from lxml import etree
+
+        from soapbar.core.wssecurity import (
+            SecurityValidationError,
+            UsernameTokenCredential,
+            build_security_header,
+        )
+        sec = build_security_header(UsernameTokenCredential(username="alice", password="pw"))  # noqa: S106
+        token = sec.find(f"{{{NS.WSSE}}}UsernameToken")
+        etree.SubElement(token, f"{{{NS.WSU}}}Created").text = self._ts(3600)
+        with pytest.raises(SecurityValidationError, match="stale"):
+            self._validator().validate(sec)  # type: ignore[arg-type]
 
 
 # ===========================================================================
@@ -8164,7 +8261,7 @@ class TestPasswordTextHardGate:
             password="secret",  # noqa: S106
             use_digest=True,
             nonce=b"\x01" * 16,
-            created="2026-01-01T00:00:00Z",
+            created=_fresh_ws_created(),
         )
         sec_elem = build_security_header(cred, soap_ns=NS.SOAP_ENV)
         sec_bytes = etree.tostring(sec_elem)

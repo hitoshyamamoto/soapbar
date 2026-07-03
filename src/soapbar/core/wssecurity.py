@@ -196,9 +196,48 @@ class UsernameTokenValidator(ABC):
     #: Per WSS UsernameToken Profile 1.0 §3.2.1, five minutes is the RECOMMENDED minimum.
     nonce_ttl: int = 300
 
+    #: Reject a ``wsu:Created`` older than this many seconds — a stale token is
+    #: a replay. Defaults to ``nonce_ttl`` so that any token fresh enough to be
+    #: accepted is still inside the nonce cache window: a within-window replay
+    #: is caught by the nonce, an out-of-window one by this freshness check, so
+    #: there is no gap. Set to ``None`` to disable freshness enforcement.
+    max_created_age: int | None = 300
+    #: Tolerated clock skew, in seconds, for a future-dated ``wsu:Created``.
+    max_clock_skew: int | None = 300
+    #: Upper bound (seconds from now) on a ``wsu:Timestamp``/``wsu:Expires`` — a
+    #: far-future expiry would otherwise keep a captured token replayable for
+    #: its whole span. ``None`` disables the bound.
+    max_timestamp_validity: int | None = 3600
+
     def __init__(self) -> None:
         # N07 — nonce replay cache: maps base64-encoded nonce → expiry datetime
         self._seen_nonces: dict[str, datetime] = {}
+
+    @staticmethod
+    def _parse_ws_datetime(text: str) -> datetime:
+        """Parse a WS-Security timestamp (ISO 8601, trailing ``Z``) as UTC."""
+        return datetime.fromisoformat(text.strip().rstrip("Z")).replace(tzinfo=UTC)
+
+    def _check_created_freshness(self, created_text: str, label: str) -> None:
+        """Reject a ``Created`` value that is stale (replay) or implausibly
+        future-dated. Governed by :attr:`max_created_age` / :attr:`max_clock_skew`."""
+        if self.max_created_age is None and self.max_clock_skew is None:
+            return
+        try:
+            created = self._parse_ws_datetime(created_text)
+        except ValueError as exc:
+            raise SecurityValidationError(f"Invalid {label} value: {created_text!r}") from exc
+        now = datetime.now(UTC)
+        if (
+            self.max_clock_skew is not None
+            and created > now + timedelta(seconds=self.max_clock_skew)
+        ):
+            raise SecurityValidationError(f"{label} is in the future (clock skew or forgery)")
+        if (
+            self.max_created_age is not None
+            and created < now - timedelta(seconds=self.max_created_age)
+        ):
+            raise SecurityValidationError(f"{label} is stale — possible replay")
 
     def _check_and_record_nonce(self, nonce_b64: str) -> None:
         """Reject a replayed nonce; record it for *nonce_ttl* seconds (N07).
@@ -246,6 +285,20 @@ class UsernameTokenValidator(ABC):
                     ) from exc
                 if datetime.now(UTC) > expires:
                     raise SecurityValidationError("wsu:Timestamp has expired")
+                # Bound how far Expires may reach — a far-future expiry keeps a
+                # captured token replayable for its whole span.
+                if (
+                    self.max_timestamp_validity is not None
+                    and expires
+                    > datetime.now(UTC) + timedelta(seconds=self.max_timestamp_validity)
+                ):
+                    raise SecurityValidationError(
+                        "wsu:Expires is unreasonably far in the future"
+                    )
+            # Freshness of the Timestamp's own Created (N05 + replay).
+            ts_created = ts_elem.find(f"{{{wsu_ns}}}Created")
+            if ts_created is not None and ts_created.text:
+                self._check_created_freshness(ts_created.text, "wsu:Timestamp/Created")
 
         token = security_element.find(f"{{{wsse_ns}}}UsernameToken")
         if token is None:
@@ -282,6 +335,10 @@ class UsernameTokenValidator(ABC):
             expected_digest = _digest_password(nonce_bytes, created, expected)
             if not secrets.compare_digest(provided, expected_digest):
                 raise SecurityValidationError("PasswordDigest mismatch")
+            # Freshness closes the replay-after-TTL gap: a stale Created is
+            # rejected even once the nonce cache has purged its entry.
+            if created:
+                self._check_created_freshness(created, "wsu:Created")
             # N07 — record nonce after successful auth to prevent replay
             nonce_b64_str = nonce_elem.text or ""
             self._check_and_record_nonce(nonce_b64_str)
@@ -289,6 +346,12 @@ class UsernameTokenValidator(ABC):
             # PasswordText or any other type: compare plaintext
             if not secrets.compare_digest(provided, expected):
                 raise SecurityValidationError("Password mismatch")
+            # A PasswordText token carries no nonce, so it is inherently
+            # replayable; if it does supply a Created, at least bound the window.
+            # (Bare PasswordText must be used only under TLS.)
+            pt_created = token.find(f"{{{wsu_ns}}}Created")
+            if pt_created is not None and pt_created.text:
+                self._check_created_freshness(pt_created.text, "wsu:Created")
 
         return username
 
