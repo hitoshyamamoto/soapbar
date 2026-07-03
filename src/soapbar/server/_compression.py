@@ -10,9 +10,14 @@ parsing); the adapter code decides whether to call them based on
 from __future__ import annotations
 
 import gzip
+import zlib
+
+from soapbar.core.xml import BodyTooLargeError
 
 
-def decompress_if_gzipped(body: bytes, content_encoding: str) -> bytes:
+def decompress_if_gzipped(
+    body: bytes, content_encoding: str, max_size: int | None = None
+) -> bytes:
     """Return ``body`` decompressed if ``content_encoding`` declares gzip.
 
     The caller is expected to gate this on ``soap_app.enable_gzip`` — the
@@ -20,14 +25,38 @@ def decompress_if_gzipped(body: bytes, content_encoding: str) -> bytes:
     header declares. If the header does not declare gzip (or is empty),
     the body is returned unchanged.
 
-    A malformed gzip payload raises ``gzip.BadGzipFile`` which the caller
-    should translate into an HTTP 400 / SOAP ``Client`` fault.
+    When *max_size* is given, decompression is **bounded**: a gzip
+    "decompression bomb" (a few KB that inflates to gigabytes) is refused with
+    :class:`BodyTooLargeError` instead of being fully expanded in memory. The
+    plain ``gzip.decompress`` path (``max_size=None``) is retained only for
+    callers that have already bounded their input.
+
+    A malformed gzip payload raises ``gzip.BadGzipFile`` / ``zlib.error`` which
+    the caller should translate into an HTTP 400 / SOAP ``Client`` fault.
     """
     if not content_encoding:
         return body
     if "gzip" not in content_encoding.lower():
         return body
-    return gzip.decompress(body)
+    if max_size is None:
+        return gzip.decompress(body)
+    # Bounded, single-shot decompression: ``max_length`` caps the output; if the
+    # stream would produce more than ``max_size`` bytes, ``unconsumed_tail`` is
+    # left non-empty, which we treat as a bomb and reject. wbits 16+MAX_WBITS
+    # selects the gzip container format.
+    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    out = decompressor.decompress(body, max_size + 1)
+    if len(out) > max_size or decompressor.unconsumed_tail:
+        raise BodyTooLargeError(
+            f"Decompressed request body exceeds the server limit "
+            f"({max_size} bytes); possible decompression bomb."
+        )
+    out += decompressor.flush()
+    if len(out) > max_size:
+        raise BodyTooLargeError(
+            f"Decompressed request body exceeds the server limit ({max_size} bytes)."
+        )
+    return out
 
 
 def compress_response(
