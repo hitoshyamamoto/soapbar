@@ -6,7 +6,51 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.13.0] — 2026-07-03
+
+A security and conformance release closing the findings of an internal audit.
+Two of the changes alter the wire format / public API (#49, #50) — see the
+**Migration** notes — hence the minor-version bump.
+
+### Security
+
+- **Trust anchor required for BSP signature verification
+  (GHSA-859w-52fx-hcm6).** `verify_envelope_bsp` previously trusted the X.509
+  certificate carried *in the message*, so a valid signature over an
+  attacker-minted certificate passed verification (signature forgery /
+  authentication bypass). It now **fails closed** unless the caller anchors
+  trust with `trusted_certs=[...]` (pin the expected signer) and/or
+  `ca_certs=[...]` (accept certs issued by trusted CAs); the anchor is checked
+  before the signature is trusted. `verify_cert_trust=False` restores the old
+  behaviour explicitly (insecure).
+- **XML Encryption is now authenticated (AES-256-GCM) (#55).** `encrypt_body`
+  emits AES-256-GCM (XML-Enc 1.1) with a fresh 96-bit IV; the GCM tag lets the
+  recipient detect tampering. `decrypt_body` reads the algorithm from
+  `xenc:EncryptionMethod`, verifies GCM, and **refuses the legacy,
+  unauthenticated AES-256-CBC by default** (malleable / padding-oracle prone) —
+  pass `allow_unauthenticated_cbc=True` to accept it for a legacy peer. All
+  decrypt failures collapse to one uniform error (no padding oracle), and the
+  decrypted content is parsed with the hardened XXE-safe parser.
+- **UsernameToken `wsu:Created` freshness enforcement (#56).** The validator now
+  rejects a stale `wsu:Created` (`max_created_age`, default = `nonce_ttl`), a
+  future-dated one (`max_clock_skew`), and an over-long `wsu:Expires`
+  (`max_timestamp_validity`) — closing the replay-after-nonce-TTL window. All
+  limits are configurable; set to `None` to opt out.
+- **Signature verification requires Body coverage (#57).** `verify_envelope` /
+  `verify_envelope_bsp` default `require_signed_body=True`, failing closed
+  unless the signature actually covers the SOAP Body (defeats
+  reference-stripping). Opt out with `require_signed_body=False`.
+- **Ingress size limit enforced before gzip/MTOM decoding (#47).** `max_body_size`
+  is now applied ahead of the amplifying stages: bounded gzip decompression
+  (rejects a decompression bomb), bounded MTOM/XOP resolution (rejects XOP
+  amplification), and a running cap on ASGI streamed bodies. Refuses over-limit
+  bodies with the standard fault and bounded memory.
+- **WSDL local-file imports blocked from untrusted sources (SSRF) (#48).** The
+  import guard now gates `file://` and bare filesystem paths behind a new
+  `allow_local_imports` flag (default `False`), so a hostile
+  `<import location="file:///etc/passwd">` in an in-memory/remote WSDL cannot
+  read local files. `parse_wsdl_file` enables local imports for trusted on-disk
+  documents.
 
 ### Changed
 
@@ -39,7 +83,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
   wire-format change for parsed-qualified types and for the generated schema's
   declared form — a soapbar peer older than this release, reading a qualified
   message from a newer one, will not find the children by their old unqualified
-  names. Warrants a **0.13.0** release.
+  names.
+
+- **SOAP 1.2 sender faults return HTTP 400 (#54).** A SOAP 1.2 fault whose Code
+  Value is `env:Sender` is now reported with HTTP **400** (per SOAP 1.2 Part 2
+  §7.4), not 500. `env:Receiver` and SOAP 1.1 faults are unchanged (500).
+
+### Fixed
+
+- **`maxOccurs>1` elements no longer double-wrapped (#51).** A repeated element
+  in a sequence serializes as flat sibling elements
+  (`<address>a</address><address>b</address>`) instead of an extra nesting
+  level; `ArrayXsdType` gains an `inline` flag distinguishing a repeated element
+  from a genuine (wrapper) array type.
+- **Spec-conformant `xsd:dateTime` and `xsd:decimal` lexical forms (#52).** A
+  Python `datetime` serializes with the ISO-8601 `T` separator (not a space),
+  and `xsd:decimal` emits canonical fixed-point (no exponent notation).
+- **`xsi:nil` honoured; empty XML no longer conflated with `None` (#53).**
+  Optional/`None` scalars are omitted (or emit `xsi:nil` when required) instead
+  of an empty element; inbound `xsi:nil="true"` and empty numeric/date elements
+  deserialize to `None` instead of crashing on `int("")`.
 
 ---
 
