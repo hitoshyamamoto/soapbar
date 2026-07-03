@@ -54,7 +54,13 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install xmlsec system libraries
-        run: sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl pkg-config
+        # `apt-get update` first: the runner image ships a stale package index
+        # that can pin a since-superseded version (e.g. libnss3-dev), which then
+        # 404s at download time and fails the whole job. Refreshing the index
+        # resolves the current versions.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl pkg-config
 
       - name: Install dev dependencies
         run: uv sync --group dev --group crypto-interop
