@@ -2885,7 +2885,19 @@ class TestSchemaDrivenWsdl:
         # The field "address" should be an ArrayXsdType
         field_map = {f[0]: f[1] for f in ct.fields}
         assert "address" in field_map
-        assert isinstance(field_map["address"], ArrayXsdType)
+        address_field = field_map["address"]
+        assert isinstance(address_field, ArrayXsdType)
+        # A repeated element (maxOccurs>1) is modelled as an *inline* array:
+        # the items are direct children of the enclosing element, not wrapped.
+        assert address_field.inline is True
+        # Serialization is flat — <AddressList><address>a</address>
+        # <address>b</address></AddressList>, not double-wrapped under an
+        # extra <address> element.
+        elem = ct.to_element("AddressList", {"address": ["a", "b"]}, "")
+        addr_children = elem.findall("address")
+        assert [c.text for c in addr_children] == ["a", "b"]
+        assert all(len(c) == 0 for c in addr_children)  # no <address><address>…
+        assert ct.from_element(elem) == {"address": ["a", "b"]}
 
     def test_registered_in_xsd_registry(self) -> None:
         defn = parse_wsdl(self._WSDL_WITH_COMPLEX)
@@ -2893,6 +2905,30 @@ class TestSchemaDrivenWsdl:
         # All parsed types should be in xsd registry now
         for name in defn.complex_types:
             assert xsd.resolve(name) is not None
+
+    def test_inline_array_vs_wrapper_array_distinction(self) -> None:
+        # #51 — an inline (repeated-element) array emits flat siblings, while a
+        # non-inline (wrapper/SOAP-ENC) array keeps its enclosing element.
+        st = xsd.resolve("string")
+        assert st is not None
+
+        inline = ComplexXsdType(
+            "People",
+            [("name", ArrayXsdType("People_name", st, element_tag="name", inline=True))],
+        )
+        e1 = inline.to_element("People", {"name": ["a", "b"]}, "")
+        assert [c.tag for c in e1] == ["name", "name"]  # flat, no wrapper
+        assert inline.from_element(e1) == {"name": ["a", "b"]}
+
+        wrapper = ComplexXsdType(
+            "Box",
+            [("items", ArrayXsdType("IntList", st, element_tag="item"))],  # inline=False
+        )
+        e2 = wrapper.to_element("Box", {"items": ["a", "b"]}, "")
+        wrap_el = e2.find("items")
+        assert wrap_el is not None  # wrapper element present
+        assert [c.text for c in wrap_el.findall("item")] == ["a", "b"]
+        assert wrapper.from_element(e2) == {"items": ["a", "b"]}
 
 
 # ---------------------------------------------------------------------------
