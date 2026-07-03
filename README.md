@@ -950,7 +950,7 @@ ship under `soapbar.contrib.*` (installable via extras).
 | WITSML 1.4.1.1 STORE | RPC | WS-Security UsernameToken | [`18_witsml/`](examples/18_witsml/) | `soapbar.contrib.witsml` (`soapbar[witsml]`) |
 | SEFAZ NF-e | document/literal bare, SOAP 1.2 | mutual TLS (ICP-Brasil) + `<infNFe>` `Id`-signing | [`19_nfe/`](examples/19_nfe/) | `soapbar.contrib.nfe` (`soapbar[nfe]`) |
 | IRS MeF (A2A) | SOAP/HTTP, session-based | mutual TLS (Strong Auth) + session cookies | [`20_mef/`](examples/20_mef/) | *(use the core APIs directly)* |
-| ANA ServiceANA (telemetria hidrometeorológica) | document/literal wrapped, SOAP 1.1/1.2 (`.asmx`) | none (CotaOnline writes: body credentials) | — | `soapbar.contrib.ana` (`soapbar[ana]`) |
+| ANA ServiceANA (telemetria hidrometeorológica) | document/literal wrapped, SOAP 1.1/1.2 (`.asmx`) | none (CotaOnline writes: body credentials) | [`21_ana/`](examples/21_ana/) | `soapbar.contrib.ana` (`soapbar[ana]`) |
 
 The VIES and WITSML examples run against live endpoints; the NF-e and MeF
 examples are faithful references (their `main()` prints guidance without
