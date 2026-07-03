@@ -2476,6 +2476,47 @@ class TestApplicationValueErrorFault:
         assert status == 500
         assert b"Fault" in body
 
+    def test_soap12_sender_fault_returns_400(self) -> None:
+        # SOAP 1.2 HTTP binding [SOAP12-P2] §7.4: an env:Sender fault (the
+        # handler's ValueError → "Client"/"Sender") maps to HTTP 400, unlike
+        # SOAP 1.1 which uses 500 for every fault.
+        app = self._make_app_with_raising_handler()
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope">
+  <env:Body><DoIt/></env:Body>
+</env:Envelope>"""
+        status, _ct, body = app.handle_request(
+            req, soap_action="", content_type="application/soap+xml"
+        )
+        assert status == 400
+        assert b"Fault" in body
+        assert b"Sender" in body
+
+    def test_soap12_receiver_fault_returns_500(self) -> None:
+        # An env:Receiver fault (an unexpected server-side error) stays 500
+        # even under SOAP 1.2 — only env:Sender is remapped to 400.
+        class BoomService(SoapService):
+            __service_name__ = "BoomSvc"
+            __tns__ = "http://example.com/"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+            __soap_version__ = SoapVersion.SOAP_12
+
+            @soap_operation(name="Boom", input_params=[], output_params=[])
+            def boom(self) -> None:
+                raise RuntimeError("unexpected server-side failure")
+
+        app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(BoomService())
+        req = b"""<?xml version='1.0' encoding='UTF-8'?>
+<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope">
+  <env:Body><Boom/></env:Body>
+</env:Envelope>"""
+        status, _ct, body = app.handle_request(
+            req, soap_action="", content_type="application/soap+xml"
+        )
+        assert status == 500
+        assert b"Receiver" in body
+
 
 class TestInputParamValidation:
     """F09 — required input parameter validation before service dispatch."""

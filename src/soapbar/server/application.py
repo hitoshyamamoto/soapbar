@@ -405,6 +405,15 @@ class SoapApplication:
             caught_fault = SoapFault("Server", "An internal error occurred.")
             http_status = 500
 
+        # SOAP 1.2 HTTP binding [SOAP12-P2] §7.4: a fault whose Code Value is
+        # env:Sender maps to HTTP 400 (the request was malformed / the client's
+        # fault), while env:Receiver and the other codes stay 500. The internal
+        # faultcode uses the SOAP 1.1 vocabulary ("Client" == 1.2 "Sender"), so
+        # match either spelling. SOAP 1.1 keeps 500 for every fault per WS-I
+        # Basic Profile 1.1 R1126, so this adjustment is scoped to SOAP 1.2.
+        if version == SoapVersion.SOAP_12 and caught_fault.faultcode in ("Client", "Sender"):
+            http_status = 400
+
         # JSON dual-mode: return JSON fault body when client prefers JSON
         if _accepts_json(accept_header):
             import json as _json
