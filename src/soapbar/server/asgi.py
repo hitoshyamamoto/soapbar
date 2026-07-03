@@ -56,40 +56,61 @@ class AsgiSoapApp:
             return
 
         if method == "POST":
-            # Read body
+            from soapbar.core.xml import BodyTooLargeError
+            max_size = self.soap_app.max_body_size
+            # Read body with a running cap: stop buffering as soon as the total
+            # exceeds the limit, so a multi-gigabyte streamed POST cannot exhaust
+            # memory before the size check in handle_request runs.
             body_chunks: list[bytes] = []
+            total = 0
+            oversize = False
             while True:
                 message = await receive()
                 chunk = message.get("body", b"")
                 if chunk:
+                    total += len(chunk)
+                    if total > max_size:
+                        oversize = True
+                        break
                     body_chunks.append(chunk)
                 if not message.get("more_body", False):
                     break
             body_bytes = b"".join(body_chunks)
 
-            # C2 — HTTP-level gzip (opt-in via SoapApplication(enable_gzip=True))
-            if self.soap_app.enable_gzip:
+            # C2 — HTTP-level gzip (opt-in). Bounded to reject a decompression
+            # bomb before it inflates in memory.
+            if not oversize and self.soap_app.enable_gzip:
                 from soapbar.server._compression import decompress_if_gzipped
                 content_encoding = headers.get(b"content-encoding", b"").decode()
-                body_bytes = decompress_if_gzipped(body_bytes, content_encoding)
+                try:
+                    body_bytes = decompress_if_gzipped(
+                        body_bytes, content_encoding, max_size
+                    )
+                except BodyTooLargeError:
+                    oversize = True
 
-            # Decode MTOM/XOP into plain XML before dispatch
-            if _is_mtom(content_type):
+            # Decode MTOM/XOP into plain XML before dispatch (bounded against
+            # XOP amplification).
+            if not oversize and _is_mtom(content_type):
                 from soapbar.core.mtom import parse_mtom
-                mtom_msg = parse_mtom(body_bytes, content_type)
-                body_bytes = mtom_msg.soap_xml
-                # Adjust content_type so handle_request sees plain SOAP
-                content_type = (
-                    "application/soap+xml; charset=utf-8"
-                    if "soap+xml" in content_type
-                    else "text/xml; charset=utf-8"
-                )
+                try:
+                    mtom_msg = parse_mtom(body_bytes, content_type, max_size)
+                    body_bytes = mtom_msg.soap_xml
+                    # Adjust content_type so handle_request sees plain SOAP
+                    content_type = (
+                        "application/soap+xml; charset=utf-8"
+                        if "soap+xml" in content_type
+                        else "text/xml; charset=utf-8"
+                    )
+                except BodyTooLargeError:
+                    oversize = True
 
             status, resp_ct, resp_body = self.soap_app.handle_request(
-                body_bytes,
+                b"" if oversize else body_bytes,
                 soap_action=soap_action,
                 content_type=content_type,
                 accept_header=accept,
+                _force_oversize=oversize,
             )
             # C2 — compress outbound if Accept-Encoding advertised gzip.
             resp_content_encoding: str | None = None

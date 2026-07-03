@@ -52,7 +52,9 @@ def _mime_boundary(content_type: str) -> str | None:
     return m.group(1) if m else None
 
 
-def parse_mtom(raw: bytes, content_type: str) -> MtomMessage:
+def parse_mtom(
+    raw: bytes, content_type: str, max_resolved_size: int | None = None
+) -> MtomMessage:
     """Parse a multipart/related MTOM message.
 
     The first MIME part is expected to be the SOAP envelope (application/xop+xml).
@@ -63,12 +65,19 @@ def parse_mtom(raw: bytes, content_type: str) -> MtomMessage:
     Args:
         raw: The raw HTTP response/request body (all MIME parts concatenated).
         content_type: The value of the ``Content-Type`` header for the whole body.
+        max_resolved_size: If given, cap the size of the XOP-resolved envelope.
+            A message with many ``<xop:Include>`` references to a large
+            attachment can inflate to far more than the raw body (XOP
+            amplification); exceeding this bound raises
+            :class:`~soapbar.core.xml.BodyTooLargeError` instead of expanding it
+            in memory.
 
     Returns:
         An :class:`MtomMessage` with resolved XML and the list of attachments.
 
     Raises:
         ValueError: If the message cannot be parsed as a valid MTOM envelope.
+        BodyTooLargeError: If the resolved envelope exceeds *max_resolved_size*.
     """
     boundary = _mime_boundary(content_type)
     if boundary is None:
@@ -111,7 +120,9 @@ def parse_mtom(raw: bytes, content_type: str) -> MtomMessage:
     soap_bytes: bytes = raw_soap if isinstance(raw_soap, bytes) else b""
 
     # --- Resolve xop:Include inline
-    soap_bytes = _resolve_xop_includes(soap_bytes, attachments, attachment_map)
+    soap_bytes = _resolve_xop_includes(
+        soap_bytes, attachments, attachment_map, max_resolved_size
+    )
 
     return MtomMessage(soap_xml=soap_bytes, attachments=attachments)
 
@@ -120,16 +131,25 @@ def _resolve_xop_includes(
     xml_bytes: bytes,
     attachments: list[MtomAttachment],
     attachment_map: dict[str, int],
+    max_resolved_size: int | None = None,
 ) -> bytes:
     """Replace every ``<xop:Include href="cid:…"/>`` with the base64-encoded
-    attachment data so the result is a self-contained XML document."""
+    attachment data so the result is a self-contained XML document.
+
+    When *max_resolved_size* is set, the cumulative volume of inlined base64 is
+    bounded: because a single small attachment can be referenced by arbitrarily
+    many ``<xop:Include>`` elements, the resolved document can be orders of
+    magnitude larger than the raw body. Exceeding the bound raises
+    :class:`~soapbar.core.xml.BodyTooLargeError`.
+    """
     from lxml import etree
 
-    from soapbar.core.xml import parse_xml
+    from soapbar.core.xml import BodyTooLargeError, parse_xml
 
     root = parse_xml(xml_bytes)
     xop_include_tag = f"{{{NS.XOP}}}Include"
 
+    inlined_total = 0
     for elem in root.iter(xop_include_tag):
         href = elem.get("href", "")
         cid = href[4:] if href.startswith("cid:") else href
@@ -138,6 +158,13 @@ def _resolve_xop_includes(
         if idx is not None:
             data = attachments[idx].data
             encoded = base64.b64encode(data).decode()
+            if max_resolved_size is not None:
+                inlined_total += len(encoded)
+                if inlined_total > max_resolved_size:
+                    raise BodyTooLargeError(
+                        f"MTOM/XOP-resolved body exceeds the server limit "
+                        f"({max_resolved_size} bytes); possible XOP amplification."
+                    )
             parent = elem.getparent()
             if parent is not None:
                 parent.remove(elem)

@@ -220,14 +220,31 @@ class SoapApplication:
             return self._wsdl_auth_hook(headers) if self._wsdl_auth_hook is not None else False
         return True  # "public"
 
+    @property
+    def max_body_size(self) -> int:
+        """The configured maximum request-body size in bytes (G01).
+
+        Exposed so the WSGI/ASGI adapters can enforce the same limit *before*
+        they decompress or MTOM-decode a body — stages that run ahead of
+        :meth:`handle_request` and can amplify a small body into a huge one.
+        """
+        return self._max_body_size
+
     def handle_request(
         self,
         body: bytes,
         soap_action: str = "",
         content_type: str = "text/xml",
         accept_header: str = "",
+        _force_oversize: bool = False,
     ) -> tuple[int, str, bytes]:
-        """Returns (http_status, content_type, response_body)."""
+        """Returns (http_status, content_type, response_body).
+
+        *_force_oversize* lets an adapter report an oversized request through
+        the normal fault path when the breach was detected upstream (a raw body
+        over the limit, a gzip bomb, or MTOM/XOP amplification) without having
+        to materialise the offending bytes here.
+        """
         # Detect SOAP version from content-type
         version = SoapVersion.SOAP_12 if "soap+xml" in content_type else SoapVersion.SOAP_11
         caught_fault: SoapFault = SoapFault("Server", "Unknown internal error")
@@ -236,7 +253,15 @@ class SoapApplication:
         _request_wsa: Any = None  # WsaHeaders | None — captured for fault response (N09)
 
         try:
-            # G01 — reject oversized requests before any XML parsing
+            # G01 — reject oversized requests before any XML parsing. The
+            # adapters enforce the same limit ahead of gzip/MTOM decoding and
+            # signal a detected breach via _force_oversize.
+            if _force_oversize:
+                raise SoapFault(
+                    "Client",
+                    f"Request body exceeds the server limit "
+                    f"({self._max_body_size} bytes).",
+                )
             if len(body) > self._max_body_size:
                 raise SoapFault(
                     "Client",

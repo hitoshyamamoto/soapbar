@@ -5555,6 +5555,129 @@ class TestBodySchemaValidation:
 # Coverage — application.py uncovered branches
 # ===========================================================================
 
+class TestIngressDosLimits:
+    """#47 — the body-size limit is enforced on every ingress path, ahead of
+    the gzip/MTOM stages that can amplify a small body into a huge one."""
+
+    def _make_echo_app(self, **kwargs):  # type: ignore[no-untyped-def]
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class EchoSvc(SoapService):
+            __service_name__ = "Echo"
+            __tns__ = "http://example.com/echo"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation(soap_action="echo")
+            def echo(self, msg: str) -> str:
+                return msg
+
+        app = SoapApplication(**kwargs)
+        app.register(EchoSvc())
+        return app
+
+    # --- unit: bounded gzip decompression -----------------------------------
+
+    def test_decompress_bomb_rejected(self) -> None:
+        import gzip
+
+        from soapbar.core.xml import BodyTooLargeError
+        from soapbar.server._compression import decompress_if_gzipped
+
+        blob = gzip.compress(b"A" * 100_000)  # a few hundred bytes → 100 KB
+        with pytest.raises(BodyTooLargeError):
+            decompress_if_gzipped(blob, "gzip", max_size=1_000)
+        # Within the bound it still decompresses fully.
+        assert decompress_if_gzipped(blob, "gzip", max_size=1_000_000) == b"A" * 100_000
+        # No max_size → unbounded legacy path preserved.
+        assert decompress_if_gzipped(blob, "gzip") == b"A" * 100_000
+
+    # --- unit: bounded MTOM/XOP resolution ----------------------------------
+
+    def _mtom_with_amplification(self, includes: int) -> tuple[bytes, str]:
+        from soapbar.core.mtom import MtomAttachment, build_mtom
+        soap = (
+            b'<?xml version="1.0"?>'
+            b'<Env xmlns:xop="http://www.w3.org/2004/08/xop/include"><B>'
+            + b'<xop:Include href="cid:a"/>' * includes
+            + b"</B></Env>"
+        )
+        att = MtomAttachment(content_id="a", content_type="application/octet-stream",
+                             data=b"X" * 1_000)
+        return build_mtom(soap, [att])
+
+    def test_mtom_xop_amplification_rejected(self) -> None:
+        from soapbar.core.mtom import parse_mtom
+        from soapbar.core.xml import BodyTooLargeError
+
+        body, ct = self._mtom_with_amplification(includes=50)  # ~66 KB resolved
+        with pytest.raises(BodyTooLargeError):
+            parse_mtom(body, ct, max_resolved_size=10_000)
+        # Uncapped resolution still succeeds (behaviour preserved).
+        assert parse_mtom(body, ct).soap_xml
+
+    # --- unit: the force-oversize fault path --------------------------------
+
+    def test_handle_request_force_oversize(self) -> None:
+        app = self._make_echo_app(max_body_size=1000)
+        status, _ct, body = app.handle_request(b"small", _force_oversize=True)
+        assert status == 500
+        assert b"exceeds" in body
+
+    # --- integration: WSGI gzip bomb ----------------------------------------
+
+    def test_wsgi_gzip_bomb_returns_fault(self) -> None:
+        import gzip
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app = WsgiSoapApp(self._make_echo_app(max_body_size=10_000, enable_gzip=True))
+        blob = gzip.compress(b"A" * 100_000)  # compressed < limit, inflates past it
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "QUERY_STRING": "",
+            "CONTENT_TYPE": "text/xml",
+            "CONTENT_LENGTH": str(len(blob)),
+            "HTTP_CONTENT_ENCODING": "gzip",
+            "HTTP_SOAPACTION": "echo",
+            "wsgi.input": io.BytesIO(blob),
+        }
+        status_list: list = []
+        result = app(environ, lambda s, h: status_list.append(s))
+        assert status_list[0].startswith("500")
+        assert b"exceeds" in b"".join(result)
+
+    # --- integration: ASGI streamed body over the cap -----------------------
+
+    async def test_asgi_streamed_oversize_rejected(self) -> None:
+        from soapbar.server.asgi import AsgiSoapApp
+
+        app = AsgiSoapApp(self._make_echo_app(max_body_size=1000))
+        scope = {
+            "type": "http", "method": "POST", "query_string": b"",
+            "headers": [(b"content-type", b"text/xml"), (b"soapaction", b"echo")],
+        }
+        # Three chunks: the running total crosses the limit at the second one,
+        # so buffering stops before the whole (potentially huge) body arrives.
+        chunks = [
+            {"body": b"A" * 600, "more_body": True},
+            {"body": b"A" * 600, "more_body": True},
+            {"body": b"A" * 600, "more_body": False},
+        ]
+        it = iter(chunks)
+        responses: list = []
+
+        async def receive():  # type: ignore[no-untyped-def]
+            return next(it)
+
+        async def send(message):  # type: ignore[no-untyped-def]
+            responses.append(message)
+
+        await app(scope, receive, send)
+        assert responses[0]["status"] == 500
+        assert b"exceeds" in responses[1]["body"]
+
+
 class TestApplicationCoverageBranches:
     """Targeted tests for uncovered branches in SoapApplication."""
 

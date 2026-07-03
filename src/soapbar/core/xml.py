@@ -60,6 +60,18 @@ def sub_element(
 # Parsing
 # ---------------------------------------------------------------------------
 
+class BodyTooLargeError(ValueError):
+    """Raised when a request body (or a decoded/expanded form of it) exceeds
+    the configured size limit.
+
+    Subclasses :class:`ValueError` so existing ``except (ValueError, TypeError)``
+    handlers still treat it as a client error, but the distinct type lets the
+    ingress adapters recognise a size-limit breach specifically (as opposed to a
+    malformed-input ``ValueError``) and translate it into the standard
+    oversized-request fault rather than a generic 500.
+    """
+
+
 def check_xml_depth(data: bytes, max_depth: int = 100) -> None:
     """Raise ValueError if the XML nesting depth exceeds *max_depth*.
 
