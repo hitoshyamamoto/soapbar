@@ -24,8 +24,8 @@ and binds to `127.0.0.1` so it never exposes a socket outside the host.
 
 ### Real-world services
 
-These point soapbar at actual government/industry SOAP services. VIES and
-WITSML run against live endpoints; NF-e and MeF are faithful references whose
+These point soapbar at actual government/industry SOAP services. VIES, WITSML
+and ANA run against live endpoints; NF-e and MeF are faithful references whose
 `main()` prints guidance without touching the network — exercising them needs
 external certificates/enrollment, but the soapbar features they use (mutual
 TLS, session cookies, `Id`-targeted signing) are all shipped.
@@ -36,6 +36,7 @@ TLS, session cookies, `Id`-targeted signing) are all shipped.
 | [`18_witsml/`](18_witsml/) | WITSML 1.4.1.1 STORE API (RPC, manual ops) | WS-Security UsernameToken | ✅ yes (needs a WITSML server) |
 | [`19_nfe/`](19_nfe/) | SEFAZ NF-e (`NFeStatusServico4`) | mutual TLS (ICP-Brasil) + `<infNFe>` Id-signing | reference (needs A1 cert + endpoint) |
 | [`20_mef/`](20_mef/) | IRS MeF A2A | mutual TLS (Strong Auth) + session cookies | reference (needs IRS enrollment) |
+| [`21_ana/`](21_ana/) | ANA ServiceANA water telemetry (`.asmx`, 12 ops) | none (reads) | ✅ yes (needs network) |
 
 ## Running
 

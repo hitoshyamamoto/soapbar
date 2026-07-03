@@ -254,6 +254,7 @@ REAL_WORLD = [
     "18_witsml/witsml_demo.py",
     "19_nfe/nfe_demo.py",
     "20_mef/mef_demo.py",
+    "21_ana/ana_demo.py",
 ]
 
 
