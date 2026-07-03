@@ -952,7 +952,7 @@ ship under `soapbar.contrib.*` (installable via extras).
 | IRS MeF (A2A) | SOAP/HTTP, session-based | mutual TLS (Strong Auth) + session cookies | [`20_mef/`](examples/20_mef/) | *(use the core APIs directly)* |
 | ANA ServiceANA (telemetria hidrometeorológica) | document/literal wrapped, SOAP 1.1/1.2 (`.asmx`) | none (CotaOnline writes: body credentials) | [`21_ana/`](examples/21_ana/) | `soapbar.contrib.ana` (`soapbar[ana]`) |
 
-The VIES and WITSML examples run against live endpoints; the NF-e and MeF
+The VIES, WITSML and ANA examples run against live endpoints; the NF-e and MeF
 examples are faithful references (their `main()` prints guidance without
 network access).
 

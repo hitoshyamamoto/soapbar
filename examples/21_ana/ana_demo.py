@@ -68,6 +68,13 @@ def main() -> None:
         if estacoes:
             print("  first row:", estacoes[0])
 
+        # A catalogue call — always populated (the ~27 Brazilian states, plus
+        # historical/aggregate codes). Empty filters return the whole catalogue.
+        estados = ana.hidro_estado()
+        print(f"\nStates catalogue (HidroEstado): {len(estados)} rows")
+        for uf in estados[:3]:
+            print("  ", uf)
+
         # Historical series (flow rates) for the demo station, first half of 2026.
         try:
             serie = ana.serie_historica(
