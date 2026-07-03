@@ -10,6 +10,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Parsed types are per-parse scoped, not process-global (#49).** Each
+  `parse_wsdl` / `parse_wsdl_file` call now registers the complexTypes it parses
+  into a *scoped* registry seeded with the built-in XSD types (exposed as
+  `WsdlDefinition.type_registry`), instead of the shared module-global `xsd`
+  registry. Two documents that define a same-named type no longer clobber each
+  other, lazy field references resolve against their own document, and parsing
+  is safe under concurrency. **Migration:** the global `xsd` registry still
+  resolves the 27 built-in types (`xsd.resolve("int")` etc.), but a
+  *user-defined* type is no longer discoverable there after parsing —
+  `xsd.resolve("MyParsedType")` returns None; read it from
+  `defn.complex_types` / `defn.type_registry` instead. Hand-built
+  `ComplexXsdType`s are unaffected (they default to the built-in registry).
+
 - **complexType children now honour `elementFormDefault` (#50).** A
   `ComplexXsdType`/`ArrayXsdType`/`ChoiceXsdType` parsed from a schema with
   `elementFormDefault="qualified"` now emits its *local child* elements in the

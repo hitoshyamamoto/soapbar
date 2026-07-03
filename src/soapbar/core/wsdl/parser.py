@@ -9,7 +9,14 @@ from urllib.parse import urljoin
 from lxml.etree import _Element
 
 from soapbar.core.namespaces import NS
-from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType, XsdType, xsd
+from soapbar.core.types import (
+    ArrayXsdType,
+    ChoiceXsdType,
+    ComplexXsdType,
+    XsdType,
+    _TypeRegistry,
+    xsd,
+)
 from soapbar.core.wsdl import (
     WsdlBinding,
     WsdlBindingOperation,
@@ -116,6 +123,7 @@ def _resolve_schema_imports(
     visited: set[str],
     strict: bool,
     depth: int,
+    registry: _TypeRegistry,
 ) -> dict[str, XsdType]:
     """Walk ``<xsd:import>`` and ``<xsd:include>`` children of ``schema_elem``
     and return the merged complex-type dictionary harvested from each
@@ -167,7 +175,7 @@ def _resolve_schema_imports(
         sub_nsmap: dict[str, str] = {
             k: v for k, v in sub_root.nsmap.items() if k is not None
         }
-        result.update(_parse_schema_types(sub_root, sub_nsmap))
+        result.update(_parse_schema_types(sub_root, sub_nsmap, registry))
         # Recurse for transitive imports in the sub-schema.
         result.update(_resolve_schema_imports(
             sub_root,
@@ -177,6 +185,7 @@ def _resolve_schema_imports(
             visited=visited,
             strict=strict,
             depth=depth + 1,
+            registry=registry,
         ))
     return result
 
@@ -188,6 +197,7 @@ def parse_wsdl(
     allow_remote_imports: bool = False,
     allow_local_imports: bool = False,
     strict: bool = True,
+    _registry: _TypeRegistry | None = None,
 ) -> WsdlDefinition:
     """Parse a WSDL document from *source*.
 
@@ -215,12 +225,19 @@ def parse_wsdl(
     """
     if _visited is None:
         _visited = set()
+    # Parsed types live in a per-parse scoped registry (seeded with the global
+    # built-ins) — never the process-global one — so concurrent parses and
+    # documents that reuse a type name cannot corrupt each other's types.
+    # Imported documents share the importer's registry.
+    if _registry is None:
+        _registry = xsd.scoped()
     root = parse_xml_document(source)
     nsmap: dict[str, str] = {k: v for k, v in root.nsmap.items() if k is not None}
 
     defn = WsdlDefinition(
         name=root.get("name", ""),
         target_namespace=root.get("targetNamespace", ""),
+        type_registry=_registry,
     )
 
     for child in root:
@@ -241,6 +258,7 @@ def parse_wsdl(
                             allow_remote_imports=allow_remote_imports,
                             allow_local_imports=allow_local_imports,
                             strict=strict,
+                            _registry=_registry,
                         )
                         _merge_definition(defn, imported)
                     except Exception as exc:
@@ -261,7 +279,7 @@ def parse_wsdl(
             xsd_visited: set[str] = set()
             for schema in child:
                 if local_name(schema) == "schema":
-                    parsed = _parse_schema_types(schema, nsmap)
+                    parsed = _parse_schema_types(schema, nsmap, _registry)
                     # Resolve xsd:import / xsd:include children recursively,
                     # merging the harvested complex types on top of the
                     # inline ones.
@@ -273,10 +291,11 @@ def parse_wsdl(
                         visited=xsd_visited,
                         strict=strict,
                         depth=0,
+                        registry=_registry,
                     ))
                     defn.complex_types.update(parsed)
                     for t in parsed.values():
-                        xsd.register(t)
+                        _registry.register(t)
 
         elif lname == "message":
             msg = _parse_message(child)
@@ -473,21 +492,25 @@ def _parse_service(elem: _Element) -> WsdlService:
 # Schema type parsing
 # ---------------------------------------------------------------------------
 
-def _resolve_xsd_type(type_ref: str, nsmap: dict[str, str]) -> XsdType | str:
+def _resolve_xsd_type(
+    type_ref: str, nsmap: dict[str, str], registry: _TypeRegistry
+) -> XsdType | str:
     """Resolve a type reference to an XsdType or return a string for lazy resolution."""
-    resolved = xsd.resolve(type_ref)
+    resolved = registry.resolve(type_ref)
     if resolved is not None:
         return resolved
     # Try stripping prefix
     bare = _local(type_ref)
-    resolved = xsd.resolve(bare)
+    resolved = registry.resolve(bare)
     if resolved is not None:
         return resolved
     # Return bare name for lazy resolution
     return bare
 
 
-def _parse_schema_types(schema_elem: _Element, nsmap: dict[str, str]) -> dict[str, XsdType]:
+def _parse_schema_types(
+    schema_elem: _Element, nsmap: dict[str, str], registry: _TypeRegistry
+) -> dict[str, XsdType]:
     """Parse <xsd:schema> and return a dict of name → XsdType for complex types."""
     result: dict[str, XsdType] = {}
 
@@ -503,7 +526,9 @@ def _parse_schema_types(schema_elem: _Element, nsmap: dict[str, str]) -> dict[st
         ct_name = child.get("name", "")
         if not ct_name:
             continue
-        xsd_type = _parse_complex_type_element(ct_name, child, nsmap, tns, qualified)
+        xsd_type = _parse_complex_type_element(
+            ct_name, child, nsmap, tns, qualified, registry
+        )
         if xsd_type is not None:
             result[ct_name] = xsd_type
 
@@ -514,8 +539,9 @@ def _parse_complex_type_element(
     name: str,
     elem: _Element,
     nsmap: dict[str, str],
-    target_namespace: str = "",
-    qualified: bool = False,
+    target_namespace: str,
+    qualified: bool,
+    registry: _TypeRegistry,
 ) -> XsdType | None:
     """Parse a single <xsd:complexType> element."""
     for child in elem:
@@ -529,13 +555,13 @@ def _parse_complex_type_element(
                 field_name = sub.get("name", "")
                 type_ref = sub.get("type", "xsd:string")
                 max_occurs = sub.get("maxOccurs", "1")
-                field_type: XsdType | str = _resolve_xsd_type(type_ref, nsmap)
+                field_type: XsdType | str = _resolve_xsd_type(type_ref, nsmap, registry)
                 if max_occurs == "unbounded" or (max_occurs.isdigit() and int(max_occurs) > 1):
                     # Wrap in ArrayXsdType
                     if isinstance(field_type, XsdType):
                         base_type: XsdType = field_type
                     else:
-                        base_type = xsd.resolve(field_type) or xsd.resolve("string")  # type: ignore[assignment]
+                        base_type = registry.resolve(field_type) or registry.resolve("string")  # type: ignore[assignment]
                     field_type = ArrayXsdType(
                         name=f"{name}_{field_name}_array",
                         element_type=base_type,
@@ -553,6 +579,7 @@ def _parse_complex_type_element(
                 fields=fields,
                 target_namespace=target_namespace,
                 qualified=qualified,
+                registry=registry,
             )
 
         if lname == "choice":
@@ -562,10 +589,10 @@ def _parse_complex_type_element(
                     continue
                 opt_name = sub.get("name", "")
                 type_ref = sub.get("type", "xsd:string")
-                opt_type_raw = _resolve_xsd_type(type_ref, nsmap)
+                opt_type_raw = _resolve_xsd_type(type_ref, nsmap, registry)
                 if isinstance(opt_type_raw, str):
                     opt_type_resolved: XsdType | None = (
-                        xsd.resolve(opt_type_raw) or xsd.resolve("string")
+                        registry.resolve(opt_type_raw) or registry.resolve("string")
                     )
                 else:
                     opt_type_resolved = opt_type_raw
@@ -600,10 +627,10 @@ def _parse_complex_type_element(
                     if array_type_attr is not None:
                         # Strip [] suffix if present
                         item_type_ref = array_type_attr.rstrip("[]").rstrip("[ ]")
-                        item_type_raw2 = _resolve_xsd_type(item_type_ref, nsmap)
+                        item_type_raw2 = _resolve_xsd_type(item_type_ref, nsmap, registry)
                         if isinstance(item_type_raw2, str):
                             item_type2: XsdType | None = (
-                                xsd.resolve(item_type_raw2) or xsd.resolve("string")
+                                registry.resolve(item_type_raw2) or registry.resolve("string")
                             )
                         else:
                             item_type2 = item_type_raw2

@@ -378,11 +378,18 @@ class ComplexXsdType(XsdType):
         fields: list[tuple[str, XsdType | str]],
         target_namespace: str = "",
         qualified: bool = False,
+        registry: _TypeRegistry | None = None,
     ) -> None:
         self.name = name
         self.fields: list[tuple[str, XsdType | str]] = fields
         self.target_namespace = target_namespace
         self.qualified = qualified
+        # The registry to resolve lazy (string) field references against. Types
+        # parsed from a WSDL carry their parse's scoped registry so they resolve
+        # against sibling types from the *same* document, not a process-global
+        # one that another parse could have clobbered. Hand-built types leave
+        # this None and fall back to the built-in ``xsd`` registry.
+        self.registry = registry
 
     def _child_ns(self) -> str:
         """Namespace for this type's local child elements (empty if unqualified)."""
@@ -390,7 +397,7 @@ class ComplexXsdType(XsdType):
 
     def _resolve_field_type(self, ftype: XsdType | str) -> XsdType:
         if isinstance(ftype, str):
-            resolved = xsd.resolve(ftype)
+            resolved = (self.registry or xsd).resolve(ftype)
             if resolved is None:
                 raise ValueError(f"Cannot resolve XSD type: {ftype!r}")
             return resolved
@@ -626,8 +633,24 @@ class ChoiceXsdType(XsdType):
 # ---------------------------------------------------------------------------
 
 class _TypeRegistry:
-    def __init__(self) -> None:
+    """A name → XsdType map.
+
+    The module-level :data:`xsd` registry holds only the immutable built-in
+    XSD types and is safe to share globally. Parsed user types are NOT stored
+    here; each ``parse_wsdl`` call gets its own :meth:`scoped` child registry so
+    two documents that define a same-named type cannot clobber each other and
+    parsing is safe under concurrency. A child resolves its own types first and
+    falls back to the parent (the built-ins) for everything else.
+    """
+
+    def __init__(self, parent: _TypeRegistry | None = None) -> None:
         self._by_name: dict[str, XsdType] = {}
+        self._parent = parent
+
+    def scoped(self) -> _TypeRegistry:
+        """Return a fresh child registry that inherits this registry's types
+        (e.g. the built-ins) but keeps its own registrations isolated."""
+        return _TypeRegistry(parent=self)
 
     def register(self, t: XsdType) -> None:
         self._by_name[t.name] = t
@@ -638,11 +661,14 @@ class _TypeRegistry:
             # Clark notation
             close = name.index("}")
             local = name[close + 1:]
-            return self._by_name.get(local)
-        if ":" in name:
+        elif ":" in name:
             local = name.split(":", 1)[1]
-            return self._by_name.get(local)
-        return self._by_name.get(name)
+        else:
+            local = name
+        found = self._by_name.get(local)
+        if found is None and self._parent is not None:
+            return self._parent.resolve(local)
+        return found
 
     def python_to_xsd(self, py_type: type) -> XsdType | None:
         # bool must be checked before int (bool is subclass of int)
