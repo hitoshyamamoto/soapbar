@@ -4357,14 +4357,16 @@ class TestWsdlStrictMode:
     def test_strict_true_raises_on_bad_import(self) -> None:
         """Default strict=True raises on unresolvable import."""
         with pytest.raises(FileNotFoundError):
-            parse_wsdl(self._WSDL_WITH_BAD_IMPORT)
+            parse_wsdl(self._WSDL_WITH_BAD_IMPORT, allow_local_imports=True)
 
     def test_strict_false_warns_and_continues(self) -> None:
         """strict=False emits a UserWarning and returns a partial definition."""
         import warnings
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            defn = parse_wsdl(self._WSDL_WITH_BAD_IMPORT, strict=False)
+            defn = parse_wsdl(
+                self._WSDL_WITH_BAD_IMPORT, allow_local_imports=True, strict=False
+            )
         assert any("WSDL import failed" in str(warning.message) for warning in w)
         assert defn.name == "Test"
 
@@ -4373,13 +4375,15 @@ class TestWsdlStrictMode:
         import warnings
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
-            defn = parse_wsdl(self._WSDL_WITH_BAD_IMPORT, strict=False)
+            defn = parse_wsdl(
+                self._WSDL_WITH_BAD_IMPORT, allow_local_imports=True, strict=False
+            )
         assert defn.target_namespace == "urn:test"
 
     def test_strict_true_is_default(self) -> None:
         """Calling without strict= behaves as strict=True."""
         with pytest.raises(FileNotFoundError):
-            parse_wsdl(self._WSDL_WITH_BAD_IMPORT)
+            parse_wsdl(self._WSDL_WITH_BAD_IMPORT, allow_local_imports=True)
 
     def test_parse_wsdl_file_strict_false(self, tmp_path: pytest.TempPathFactory) -> None:  # type: ignore[override]
         """parse_wsdl_file(strict=False) passes strict flag through."""
@@ -4406,6 +4410,51 @@ class TestWsdlStrictMode:
             # any network call, so strict=False must NOT suppress it.
             with pytest.raises(ValueError, match="SSRF"):
                 parse_wsdl(wsdl, strict=False)
+
+    def test_ssrf_local_file_import_blocked(self) -> None:
+        """#48 — a file:// wsdl:import in an in-memory WSDL is blocked, so an
+        untrusted WSDL cannot read local files. The guard fires before any
+        filesystem access, even under strict=False."""
+        wsdl = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             targetNamespace="urn:test" name="Test">
+  <import location="file:///etc/passwd" namespace="urn:evil"/>
+</definitions>"""
+        with pytest.raises(ValueError, match="SSRF"):
+            parse_wsdl(wsdl)
+        with pytest.raises(ValueError, match="SSRF"):
+            parse_wsdl(wsdl, strict=False)
+
+    def test_ssrf_bare_path_import_blocked(self) -> None:
+        """#48 — a bare local filesystem path is blocked too (not just file://)."""
+        wsdl = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             targetNamespace="urn:test" name="Test">
+  <import location="/etc/passwd" namespace="urn:evil"/>
+</definitions>"""
+        with pytest.raises(ValueError, match="SSRF"):
+            parse_wsdl(wsdl)
+
+    def test_ssrf_local_schema_import_blocked(self) -> None:
+        """#48 — the same guard applies to xsd:import schemaLocation."""
+        wsdl = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             targetNamespace="urn:test" name="Test">
+  <types>
+    <xsd:schema targetNamespace="urn:test">
+      <xsd:import schemaLocation="file:///etc/passwd" namespace="urn:evil"/>
+    </xsd:schema>
+  </types>
+</definitions>"""
+        with pytest.raises(ValueError, match="SSRF"):
+            parse_wsdl(wsdl)
+
+    def test_local_import_allowed_with_opt_in(self) -> None:
+        """A trusted caller can still opt into local imports; the guard then
+        steps aside and an unresolvable path fails at fetch time (strict)."""
+        with pytest.raises(FileNotFoundError):
+            parse_wsdl(self._WSDL_WITH_BAD_IMPORT, allow_local_imports=True)
 
 
 class TestAsyncTransportMtomCheck:

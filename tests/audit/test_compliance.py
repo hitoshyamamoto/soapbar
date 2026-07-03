@@ -531,7 +531,7 @@ class TestWsdl11Compliance:
                   location="http://attacker.example.com/evil.wsdl"/>
           <portType name="PT"/>
         </definitions>"""
-        with pytest.raises(ValueError, match="Remote WSDL import blocked"):
+        with pytest.raises(ValueError, match="Remote import blocked"):
             parse_wsdl(wsdl_with_remote_import)
 
     def test_wsdl_remote_import_allowed_when_opt_in(self, monkeypatch):
