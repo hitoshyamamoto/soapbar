@@ -394,8 +394,15 @@ class ComplexXsdType(XsdType):
                 child_val_dict: dict[str, Any] = value.get(field_name) or {}
                 elem.append(field_type.to_element(field_name, child_val_dict))
             else:
+                field_val = value.get(field_name)
+                if field_val is None:
+                    # A missing/None field is omitted; from_element maps an
+                    # absent child back to None, so it round-trips cleanly
+                    # without emitting an empty element that would crash
+                    # from_xml on read for numeric/date/boolean types.
+                    continue
                 child = etree.SubElement(elem, field_name)
-                child.text = field_type.to_xml(value.get(field_name, ""))
+                child.text = field_type.to_xml(field_val)
         return elem
 
     def from_element(self, elem: Any) -> dict[str, Any]:
@@ -407,8 +414,17 @@ class ComplexXsdType(XsdType):
                 result[field_name] = None
             elif isinstance(field_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
                 result[field_name] = field_type.from_element(child)
+            elif child.get(f"{{{NS.XSI}}}nil") == "true":
+                result[field_name] = None
+            elif not child.text:
+                # Empty element: "" for string types, None for numeric/date/
+                # boolean where "" is not a valid lexical value.
+                try:
+                    result[field_name] = field_type.from_xml("")
+                except ValueError:
+                    result[field_name] = None
             else:
-                result[field_name] = field_type.from_xml(child.text or "")
+                result[field_name] = field_type.from_xml(child.text)
         return result
 
 

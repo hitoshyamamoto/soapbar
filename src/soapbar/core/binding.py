@@ -116,9 +116,19 @@ class BindingSerializer(ABC):
                 raw = value.encode() if isinstance(value, str) else bytes(value)
                 carrier.append(parse_xml(raw))
         else:
-            text = param.xsd_type.to_xml(value) if value is not None else ""
+            if value is None:
+                # An absent optional value (minOccurs=0) is omitted rather than
+                # emitted as an empty element: "" is not a valid lexical value
+                # for numeric/boolean/date types and would crash from_xml on
+                # read. A None for a *required* param cannot reach here
+                # (validation raises first); emit xsi:nil defensively if it does.
+                if param.required:
+                    full_tag = f"{{{ns}}}{tag}" if ns else tag
+                    nil_el = sub_element(parent, full_tag)
+                    nil_el.set(f"{{{NS.XSI}}}nil", "true")
+                return
             full_tag = f"{{{ns}}}{tag}" if ns else tag
-            sub_element(parent, full_tag, text=text)
+            sub_element(parent, full_tag, text=param.xsd_type.to_xml(value))
 
     @staticmethod
     def _deserialize_param_value(child: _Element, param: OperationParameter) -> Any:
@@ -133,7 +143,19 @@ class BindingSerializer(ABC):
             if inner:
                 return "".join(etree.tostring(c, encoding="unicode") for c in inner)
             return child.text or ""
-        return param.xsd_type.from_xml(child.text or "")
+        # Honour xsi:nil ("this element is explicitly null") → None, and treat
+        # an empty element as absent for types where "" is not a lexical value
+        # (numeric/date/boolean), instead of crashing on from_xml(""). Strings
+        # keep their empty-string semantics.
+        if child.get(f"{{{NS.XSI}}}nil") == "true":
+            return None
+        text = child.text
+        if not text:
+            try:
+                return param.xsd_type.from_xml("")
+            except ValueError:
+                return None
+        return param.xsd_type.from_xml(text)
 
     @abstractmethod
     def serialize_request(

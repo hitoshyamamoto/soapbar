@@ -2302,6 +2302,63 @@ class TestRequiredFieldValidation:
             serializer.serialize_request(sig, {"required_field": 42}, container)
 
 
+class TestNilAndOptionalNone:
+    """#53 — xsi:nil handling and empty-vs-None conflation for numeric types."""
+
+    def _sig(self) -> OperationSignature:
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        return OperationSignature(
+            name="Op",
+            input_params=[OperationParameter("count", int_type, required=False)],
+            output_params=[],
+        )
+
+    def test_optional_none_param_is_omitted(self) -> None:
+        # An optional numeric param left None must NOT be emitted as an empty
+        # element (which is not a valid xsd:int lexical value); it is omitted.
+        sig = self._sig()
+        s = DocumentLiteralWrappedSerializer()
+        container = etree.Element("_body")
+        s.serialize_request(sig, {"count": None}, container)
+        assert container.find(".//count") is None
+        # ... and round-trips back to None rather than crashing on read.
+        assert s.deserialize_request(sig, container).get("count") is None
+
+    def test_inbound_xsi_nil_deserializes_to_none(self) -> None:
+        sig = self._sig()
+        s = DocumentLiteralWrappedSerializer()
+        wrapper = etree.SubElement(etree.Element("_body"), "Op")
+        nil = etree.SubElement(wrapper, "count")
+        nil.set(f"{{{NS.XSI}}}nil", "true")
+        body = wrapper.getparent()
+        assert s.deserialize_request(sig, body).get("count") is None
+
+    def test_inbound_empty_numeric_element_is_none_not_crash(self) -> None:
+        # A non-conformant peer sending <count/> must not crash int("").
+        sig = self._sig()
+        s = DocumentLiteralWrappedSerializer()
+        body = etree.Element("_body")
+        wrapper = etree.SubElement(body, "Op")
+        etree.SubElement(wrapper, "count")  # empty, no xsi:nil
+        assert s.deserialize_request(sig, body).get("count") is None
+
+    def test_complex_type_missing_numeric_field_round_trips(self) -> None:
+        # A complexType with an absent/None numeric field is serializable
+        # (no int("") crash) and round-trips the field back to None.
+        ct = ComplexXsdType("Rec", [("count", "int"), ("label", "string")])
+        elem = ct.to_element("rec", {"label": "hello"}, "")
+        assert elem.find("count") is None  # omitted, not emitted empty
+        assert elem.find("label").text == "hello"
+        restored = ct.from_element(elem)
+        assert restored == {"count": None, "label": "hello"}
+
+    def test_complex_type_all_fields_none_does_not_crash(self) -> None:
+        ct = ComplexXsdType("Rec", [("count", "int"), ("label", "string")])
+        elem = ct.to_element("rec", {}, "")
+        assert ct.from_element(elem) == {"count": None, "label": None}
+
+
 # =============================================================================
 # 29. Validation — integer XSD type range bounds
 # =============================================================================
