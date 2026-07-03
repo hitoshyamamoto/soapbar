@@ -5549,6 +5549,95 @@ class TestXmlEncryption:
         assert key_method is not None
         assert "rsa-oaep" in (key_method.get("Algorithm") or "")
 
+    # --- #55: authenticated AES-GCM, and refusal of unauthenticated CBC ------
+
+    _XENC = "http://www.w3.org/2001/04/xmlenc#"
+    _SOAP = "http://schemas.xmlsoap.org/soap/envelope/"
+
+    def test_body_cipher_is_aes_gcm(self) -> None:
+        from lxml import etree
+
+        from soapbar.core.wssecurity import encrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        root = etree.fromstring(encrypt_body(_SIMPLE_ENVELOPE, key.public_key()))
+        body = root.find(f"{{{self._SOAP}}}Body")
+        method = body.find(f"{{{self._XENC}}}EncryptedData/{{{self._XENC}}}EncryptionMethod")
+        assert method.get("Algorithm") == "http://www.w3.org/2009/xmlenc11#aes256-gcm"
+
+    def test_tampered_gcm_ciphertext_rejected(self) -> None:
+        import base64
+
+        from lxml import etree
+
+        from soapbar.core.wssecurity import XmlSecurityError, decrypt_body, encrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        root = etree.fromstring(encrypt_body(_SIMPLE_ENVELOPE, key.public_key()))
+        body = root.find(f"{{{self._SOAP}}}Body")
+        cv = body.find(
+            f"{{{self._XENC}}}EncryptedData/{{{self._XENC}}}CipherData/{{{self._XENC}}}CipherValue"
+        )
+        raw = bytearray(base64.b64decode(cv.text))
+        raw[-1] ^= 0x01  # flip a bit in the GCM tag
+        cv.text = base64.b64encode(bytes(raw)).decode()
+        with pytest.raises(XmlSecurityError):
+            decrypt_body(etree.tostring(root), key)
+
+    def _encrypt_body_cbc(self, envelope: bytes, pubkey) -> bytes:  # type: ignore[no-untyped-def]
+        """Produce a legacy AES-256-CBC EncryptedData (pre-#55 format)."""
+        import base64
+        import os
+
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives import padding as sp
+        from cryptography.hazmat.primitives.asymmetric import padding as ap
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from lxml import etree
+        root = etree.fromstring(envelope)
+        body = root.find(f"{{{self._SOAP}}}Body")
+        content = b"".join(etree.tostring(c) for c in body)
+        sk, iv = os.urandom(32), os.urandom(16)
+        padder = sp.PKCS7(128).padder()
+        padded = padder.update(content) + padder.finalize()
+        enc = Cipher(algorithms.AES(sk), modes.CBC(iv)).encryptor()
+        ct = enc.update(padded) + enc.finalize()
+        wrapped = pubkey.encrypt(
+            sk, ap.OAEP(mgf=ap.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+        )
+        ed = etree.SubElement(body, f"{{{self._XENC}}}EncryptedData", nsmap={"xenc": self._XENC})
+        ed.set("Type", "http://www.w3.org/2001/04/xmlenc#Content")
+        m = etree.SubElement(ed, f"{{{self._XENC}}}EncryptionMethod")
+        m.set("Algorithm", "http://www.w3.org/2001/04/xmlenc#aes256-cbc")
+        ki = etree.SubElement(ed, f"{{{self._XENC}}}KeyInfo")
+        ek = etree.SubElement(ki, f"{{{self._XENC}}}EncryptedKey")
+        km = etree.SubElement(ek, f"{{{self._XENC}}}EncryptionMethod")
+        km.set("Algorithm", "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p")
+        cdk = etree.SubElement(ek, f"{{{self._XENC}}}CipherData")
+        etree.SubElement(cdk, f"{{{self._XENC}}}CipherValue").text = base64.b64encode(
+            wrapped
+        ).decode()
+        cd = etree.SubElement(ed, f"{{{self._XENC}}}CipherData")
+        etree.SubElement(cd, f"{{{self._XENC}}}CipherValue").text = base64.b64encode(
+            iv + ct
+        ).decode()
+        for c in list(body):
+            if c is not ed:
+                body.remove(c)
+        return etree.tostring(root)
+
+    def test_cbc_refused_by_default(self) -> None:
+        from soapbar.core.wssecurity import XmlSecurityError, decrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        cbc = self._encrypt_body_cbc(_SIMPLE_ENVELOPE, key.public_key())
+        with pytest.raises(XmlSecurityError, match="CBC"):
+            decrypt_body(cbc, key)
+
+    def test_cbc_allowed_with_opt_in(self) -> None:
+        from soapbar.core.wssecurity import decrypt_body
+        key, _ = _make_rsa_key_and_cert()
+        cbc = self._encrypt_body_cbc(_SIMPLE_ENVELOPE, key.public_key())
+        out = decrypt_body(cbc, key, allow_unauthenticated_cbc=True)
+        assert b"<ping>secret</ping>" in out
+
 
 # ---------------------------------------------------------------------------
 # X07 — WSDL schema validation of SOAP Body

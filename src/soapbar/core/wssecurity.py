@@ -631,18 +631,29 @@ def verify_envelope(
 _XENC_NS = "http://www.w3.org/2001/04/xmlenc#"
 #: Algorithm URIs
 _AES256_CBC = "http://www.w3.org/2001/04/xmlenc#aes256-cbc"
+#: AES-256-GCM (XML Encryption 1.1) — authenticated encryption, used by default.
+_AES256_GCM = "http://www.w3.org/2009/xmlenc11#aes256-gcm"
 _RSA_OAEP = "http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p"
+#: XML-Enc 1.1 mandates a 96-bit IV for AES-GCM; the 16-byte auth tag is
+#: appended to the ciphertext (as ``cryptography``'s AESGCM already does).
+_GCM_IV_LEN = 12
+_GCM_TAG_LEN = 16
 
 
 def encrypt_body(
     envelope_bytes: bytes,
     recipient_public_key: Any,
 ) -> bytes:
-    """Encrypt the SOAP Body content using XML Encryption (AES-256-CBC + RSA-OAEP).
+    """Encrypt the SOAP Body content using XML Encryption (AES-256-GCM + RSA-OAEP).
 
     The Body's child elements are replaced with an ``xenc:EncryptedData``
     element.  The AES-256 session key is wrapped with RSA-OAEP (SHA-256)
     using *recipient_public_key*.
+
+    The body cipher is **AES-256-GCM** (XML-Enc 1.1), an authenticated mode:
+    the 16-byte GCM tag lets the recipient detect any tampering of the
+    ciphertext.  The previous AES-256-CBC output was unauthenticated, which
+    exposed both ciphertext malleability and a padding oracle; GCM closes both.
 
     Args:
         envelope_bytes: The SOAP envelope XML as bytes.
@@ -659,9 +670,8 @@ def encrypt_body(
         import os
 
         from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives import padding as sym_padding
         from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     except ImportError as exc:
         raise ImportError(
             "cryptography is required for XML Encryption support. "
@@ -690,16 +700,13 @@ def encrypt_body(
         if not body_content:
             return envelope_bytes  # nothing to encrypt
 
-        # Generate AES-256 session key and IV
+        # Generate AES-256 session key and a fresh 96-bit GCM IV.
         session_key = os.urandom(32)
-        iv = os.urandom(16)
+        iv = os.urandom(_GCM_IV_LEN)
 
-        # Encrypt body content with AES-256-CBC
-        padder = sym_padding.PKCS7(128).padder()
-        padded = padder.update(body_content) + padder.finalize()
-        cipher = Cipher(algorithms.AES(session_key), modes.CBC(iv))
-        enc = cipher.encryptor()
-        ciphertext = enc.update(padded) + enc.finalize()
+        # Encrypt body content with AES-256-GCM (authenticated). AESGCM.encrypt
+        # returns ciphertext || 16-byte tag, so no separate padding is needed.
+        ciphertext = AESGCM(session_key).encrypt(iv, body_content, None)
 
         # Wrap session key with RSA-OAEP (SHA-256)
         wrapped_key = recipient_public_key.encrypt(
@@ -719,7 +726,7 @@ def encrypt_body(
         encrypted_data.set("Type", "http://www.w3.org/2001/04/xmlenc#Content")
 
         enc_method = etree.SubElement(encrypted_data, f"{{{_XENC_NS}}}EncryptionMethod")
-        enc_method.set("Algorithm", _AES256_CBC)
+        enc_method.set("Algorithm", _AES256_GCM)
 
         key_info = etree.SubElement(encrypted_data, f"{{{_XENC_NS}}}KeyInfo")
         enc_key = etree.SubElement(key_info, f"{{{_XENC_NS}}}EncryptedKey")
@@ -750,27 +757,42 @@ def encrypt_body(
 def decrypt_body(
     envelope_bytes: bytes,
     private_key: Any,
+    allow_unauthenticated_cbc: bool = False,
 ) -> bytes:
     """Decrypt the SOAP Body content encrypted by :func:`encrypt_body`.
+
+    The body cipher is read from the ``xenc:EncryptionMethod`` algorithm.
+    **AES-256-GCM** (the default produced by :func:`encrypt_body`) is
+    authenticated: a tampered ciphertext fails the tag check and is rejected.
+
+    Legacy **AES-256-CBC** is *unauthenticated* — it is malleable and, because
+    a distinguishable unpadding error is a padding oracle, unsafe to decrypt
+    for an attacker who can observe outcomes. It is therefore **refused by
+    default**; pass ``allow_unauthenticated_cbc=True`` only to interoperate with
+    a peer that still emits CBC and only when you accept that risk.
 
     Args:
         envelope_bytes: The SOAP envelope with an encrypted Body as bytes.
         private_key: The recipient's ``cryptography`` RSA private key.
+        allow_unauthenticated_cbc: Permit decrypting legacy AES-256-CBC.
 
     Returns:
         The envelope with the decrypted Body content as bytes.
 
     Raises:
         ImportError: If ``cryptography`` is not installed.
-        XmlSecurityError: If decryption fails.
+        XmlSecurityError: If decryption fails, the ciphertext is tampered, or an
+            unauthenticated CBC body is refused.
     """
     try:
         import base64 as _b64
 
+        from cryptography.exceptions import InvalidTag
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives import padding as sym_padding
         from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     except ImportError as exc:
         raise ImportError(
             "cryptography is required for XML Encryption support. "
@@ -820,6 +842,12 @@ def decrypt_body(
             ),
         )
 
+        # Determine the body cipher from EncryptionMethod (default: GCM).
+        algorithm = _AES256_GCM
+        enc_method = enc_data.find(f"{{{_XENC_NS}}}EncryptionMethod")
+        if enc_method is not None:
+            algorithm = enc_method.get("Algorithm", _AES256_GCM)
+
         # Extract IV + ciphertext
         cipher_val_b64 = enc_data.findtext(
             f"{{{_XENC_NS}}}CipherData/{{{_XENC_NS}}}CipherValue"
@@ -827,18 +855,42 @@ def decrypt_body(
         if cipher_val_b64 is None:
             raise XmlSecurityError("Missing xenc:CipherData/CipherValue")
         iv_and_ct = _b64.b64decode(cipher_val_b64)
-        iv, ciphertext = iv_and_ct[:16], iv_and_ct[16:]
 
-        # Decrypt AES-256-CBC
-        cipher = Cipher(algorithms.AES(session_key), modes.CBC(iv))
-        dec = cipher.decryptor()
-        padded_plain = dec.update(ciphertext) + dec.finalize()
-        unpadder = sym_padding.PKCS7(128).unpadder()
-        plain_bytes = unpadder.update(padded_plain) + unpadder.finalize()
+        if algorithm == _AES256_GCM:
+            # IV(12) || ciphertext || tag(16). AESGCM verifies the tag and
+            # rejects any tampering with InvalidTag.
+            iv, ct = iv_and_ct[:_GCM_IV_LEN], iv_and_ct[_GCM_IV_LEN:]
+            try:
+                plain_bytes = AESGCM(session_key).decrypt(iv, ct, None)
+            except InvalidTag as exc:
+                raise XmlSecurityError("XML Decryption failed") from exc
+        elif algorithm == _AES256_CBC:
+            if not allow_unauthenticated_cbc:
+                raise XmlSecurityError(
+                    "Refusing to decrypt unauthenticated AES-256-CBC content "
+                    "(malleable / padding-oracle prone). Re-encrypt with "
+                    "AES-256-GCM, or pass allow_unauthenticated_cbc=True to "
+                    "accept the risk for a legacy peer."
+                )
+            iv, ciphertext = iv_and_ct[:16], iv_and_ct[16:]
+            cipher = Cipher(algorithms.AES(session_key), modes.CBC(iv))
+            dec = cipher.decryptor()
+            try:
+                padded_plain = dec.update(ciphertext) + dec.finalize()
+                unpadder = sym_padding.PKCS7(128).unpadder()
+                plain_bytes = unpadder.update(padded_plain) + unpadder.finalize()
+            except Exception as exc:
+                # Uniform error: never leak whether unpadding specifically failed
+                # (that distinction is the padding oracle).
+                raise XmlSecurityError("XML Decryption failed") from exc
+        else:
+            raise XmlSecurityError(f"Unsupported encryption algorithm: {algorithm!r}")
 
-        # Replace EncryptedData with parsed children
+        # Replace EncryptedData with the decrypted children, parsed through the
+        # hardened parser (XXE-safe) rather than lxml's permissive default.
+        from soapbar.core.xml import parse_xml as _parse_hardened
         body.remove(enc_data)
-        wrapper = etree.fromstring(b"<_w>" + plain_bytes + b"</_w>")
+        wrapper = _parse_hardened(b"<_w>" + plain_bytes + b"</_w>")
         for child in wrapper:
             body.append(child)
 
