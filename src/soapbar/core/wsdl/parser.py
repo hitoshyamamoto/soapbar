@@ -531,6 +531,10 @@ def _parse_complex_type_element(
                         name=f"{name}_{field_name}_array",
                         element_type=base_type,
                         element_tag=field_name,
+                        # A repeated element inside a sequence: the items are
+                        # direct children of the enclosing complexType, not
+                        # wrapped in an extra element named after the field.
+                        inline=True,
                     )
                 fields.append((field_name, field_type))
             return ComplexXsdType(name=name, fields=fields)

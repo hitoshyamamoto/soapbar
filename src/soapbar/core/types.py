@@ -389,7 +389,14 @@ class ComplexXsdType(XsdType):
             field_type = self._resolve_field_type(field_type_raw)
             if isinstance(field_type, ArrayXsdType):
                 child_val_list: list[Any] = value.get(field_name) or []
-                elem.append(field_type.to_element(field_name, child_val_list))
+                if field_type.inline:
+                    # Repeated element (maxOccurs>1): the items are direct
+                    # children of this element, each tagged with the field name
+                    # — no intermediate wrapper.
+                    for item in child_val_list:
+                        elem.append(field_type._item_to_element(field_name, item))
+                else:
+                    elem.append(field_type.to_element(field_name, child_val_list))
             elif isinstance(field_type, (ComplexXsdType, ChoiceXsdType)):
                 child_val_dict: dict[str, Any] = value.get(field_name) or {}
                 elem.append(field_type.to_element(field_name, child_val_dict))
@@ -409,6 +416,13 @@ class ComplexXsdType(XsdType):
         result: dict[str, Any] = {}
         for field_name, field_type_raw in self.fields:
             field_type = self._resolve_field_type(field_type_raw)
+            if isinstance(field_type, ArrayXsdType) and field_type.inline:
+                # Collect the repeated sibling elements (maxOccurs>1) into a
+                # list; an absent field yields an empty list.
+                result[field_name] = [
+                    field_type._item_from_element(c) for c in elem.findall(field_name)
+                ]
+                continue
             child = elem.find(field_name)
             if child is None:
                 result[field_name] = None
@@ -438,10 +452,34 @@ class ArrayXsdType(XsdType):
         name: str,
         element_type: XsdType,
         element_tag: str = "item",
+        inline: bool = False,
     ) -> None:
         self.name = name
         self.element_type = element_type
         self.element_tag = element_tag
+        # ``inline`` distinguishes a *repeated element* (an ``element`` with
+        # maxOccurs>1 inside a complexType sequence — the items are direct
+        # children of the enclosing element, no wrapper) from a genuine array
+        # *type* (a wrapper element holding repeated item children, e.g. a
+        # SOAP-ENC array). Only the wrapper form emits its own element.
+        self.inline = inline
+
+    def _item_to_element(self, tag: str, item: Any) -> Any:
+        """Serialize a single array item as an element tagged *tag*."""
+        from lxml import etree
+        et = self.element_type
+        if isinstance(et, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
+            return et.to_element(tag, item)
+        child = etree.Element(tag)
+        child.text = et.to_xml(item)
+        return child
+
+    def _item_from_element(self, child: Any) -> Any:
+        """Deserialize a single array item element."""
+        et = self.element_type
+        if isinstance(et, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
+            return et.from_element(child)
+        return et.from_xml(child.text or "")
 
     def to_xml(self, value: Any) -> str:
         raise TypeError(f"ArrayXsdType '{self.name}' requires element-level serialization")
