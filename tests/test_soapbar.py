@@ -2886,6 +2886,90 @@ class TestChoiceXsdType:
             ch.from_xml("v")
 
 
+class TestQualifiedComplexTypeChildren:
+    """#50 — complexType children honour elementFormDefault, and reading
+    tolerates both qualified and unqualified input."""
+
+    _NS = "urn:ex"
+
+    def _qualified_person(self) -> ComplexXsdType:
+        return ComplexXsdType(
+            "Person", [("name", "string"), ("age", "int")],
+            target_namespace=self._NS, qualified=True,
+        )
+
+    def test_qualified_type_emits_qualified_children(self) -> None:
+        elem = self._qualified_person().to_element(
+            "Person", {"name": "bob", "age": 5}, self._NS
+        )
+        assert elem.find(f"{{{self._NS}}}name").text == "bob"
+        assert elem.find(f"{{{self._NS}}}age").text == "5"
+        assert elem.find("name") is None  # never unqualified
+
+    def test_unqualified_type_emits_unqualified_children(self) -> None:
+        # Hand-built types default to unqualified — unchanged wire behaviour.
+        ct = ComplexXsdType("Person", [("name", "string")])
+        elem = ct.to_element("Person", {"name": "bob"}, "")
+        assert elem.find("name").text == "bob"
+
+    def test_read_tolerates_qualified_and_unqualified(self) -> None:
+        from lxml import etree
+        ct = self._qualified_person()
+        q = etree.fromstring(
+            f'<Person xmlns="{self._NS}"><name>bob</name><age>5</age></Person>'.encode()
+        )
+        u = etree.fromstring((
+            f'<Person xmlns="{self._NS}">'
+            '<name xmlns="">bob</name><age xmlns="">5</age></Person>'
+        ).encode())
+        assert ct.from_element(q) == {"name": "bob", "age": 5}
+        assert ct.from_element(u) == {"name": "bob", "age": 5}
+
+    def test_qualified_round_trip(self) -> None:
+        ct = self._qualified_person()
+        elem = ct.to_element("Person", {"name": "bob", "age": 5}, self._NS)
+        assert ct.from_element(elem) == {"name": "bob", "age": 5}
+
+    _QUALIFIED_WSDL = (
+        b'<?xml version="1.0"?>'
+        b'<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"'
+        b' xmlns:xsd="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:ex">'
+        b'<types><xsd:schema targetNamespace="urn:ex" elementFormDefault="qualified">'
+        b'<xsd:complexType name="Person"><xsd:sequence>'
+        b'<xsd:element name="name" type="xsd:string"/>'
+        b'<xsd:element name="age" type="xsd:int"/>'
+        b'</xsd:sequence></xsd:complexType></xsd:schema></types></definitions>'
+    )
+    _UNQUALIFIED_WSDL = _QUALIFIED_WSDL.replace(b' elementFormDefault="qualified"', b"")
+
+    def test_parser_sets_qualified_from_schema(self) -> None:
+        from soapbar.core.wsdl.parser import parse_wsdl
+        person = parse_wsdl(self._QUALIFIED_WSDL).complex_types["Person"]
+        assert person.qualified is True
+        assert person.target_namespace == "urn:ex"
+        elem = person.to_element("Person", {"name": "bob", "age": 5}, "urn:ex")
+        assert elem.find("{urn:ex}name").text == "bob"
+
+    def test_parser_defaults_unqualified(self) -> None:
+        from soapbar.core.wsdl.parser import parse_wsdl
+        person = parse_wsdl(self._UNQUALIFIED_WSDL).complex_types["Person"]
+        assert person.qualified is False
+        elem = person.to_element("Person", {"name": "bob", "age": 5}, "urn:ex")
+        assert elem.find("name").text == "bob"  # unqualified per XSD default
+
+    def test_builder_declares_form_matching_emission(self) -> None:
+        from soapbar.core.wsdl import WsdlDefinition
+        from soapbar.core.wsdl.builder import build_wsdl_string
+        q = WsdlDefinition(name="T", target_namespace="urn:ex")
+        q.complex_types["Q"] = ComplexXsdType(
+            "Q", [("x", "string")], target_namespace="urn:ex", qualified=True
+        )
+        assert 'elementFormDefault="qualified"' in build_wsdl_string(q, "http://x/")
+        u = WsdlDefinition(name="T", target_namespace="urn:ex")
+        u.complex_types["U"] = ComplexXsdType("U", [("x", "string")])
+        assert 'elementFormDefault="unqualified"' in build_wsdl_string(u, "http://x/")
+
+
 # ---------------------------------------------------------------------------
 # ComplexXsdType — recursive / lazy string resolution
 # ---------------------------------------------------------------------------

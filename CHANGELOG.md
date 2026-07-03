@@ -6,6 +6,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **complexType children now honour `elementFormDefault` (#50).** A
+  `ComplexXsdType`/`ArrayXsdType`/`ChoiceXsdType` parsed from a schema with
+  `elementFormDefault="qualified"` now emits its *local child* elements in the
+  schema's target namespace (`<ns:age>` instead of `<age>`), matching what a
+  conformant peer (zeep/.NET/Java) sends and expects. The generated WSDL's
+  `elementFormDefault` is emitted to match what the serializer produces, so the
+  published schema no longer disagrees with the wire. Deserialization is now
+  **namespace-tolerant** (children matched by local name), so soapbar reads both
+  qualified and unqualified input regardless of the declared form.
+
+  **Migration:** hand-built `ComplexXsdType`s default to *unqualified* (the XSD
+  default and soapbar's prior wire form), so existing code is unchanged; pass
+  `qualified=True, target_namespace=...` to emit qualified children. This is a
+  wire-format change for parsed-qualified types and for the generated schema's
+  declared form — a soapbar peer older than this release, reading a qualified
+  message from a newer one, will not find the children by their old unqualified
+  names. Warrants a **0.13.0** release.
+
+---
+
 ## [0.12.1] — 2026-06-03
 
 ### Documentation
