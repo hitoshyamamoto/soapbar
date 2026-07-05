@@ -13,6 +13,15 @@ backwards compatible unless noted.
 
 ### Added
 
+- **Public-API snapshot test** (`tests/test_public_api.py`) — freezes the exact
+  set of top-level exports (`soapbar.__all__`) and the signatures (parameter
+  names *and* keyword-only vs positional kind) of the security-critical
+  functions. Any addition, removal, rename, or signature change to the public
+  surface now fails CI until the snapshot is updated deliberately, turning the
+  public contract into an enforced, reviewed artifact. Also guards the contrib
+  client classes and their exception hierarchies against accidental removal.
+
+
 - **`SoapbarError`** — a common base class for every exception soapbar raises
   deliberately (`from soapbar import SoapbarError`). Callers can now
   `except SoapbarError` to catch any library-originated failure. All existing
