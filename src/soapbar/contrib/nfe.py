@@ -36,6 +36,7 @@ from soapbar.client.client import SoapClient
 from soapbar.client.transport import HttpTransport, load_pkcs12
 from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
 from soapbar.core.envelope import SoapVersion
+from soapbar.core.exceptions import SoapbarError
 from soapbar.core.types import AnyXmlType
 from soapbar.core.wssecurity import sign_element_by_id
 
@@ -49,8 +50,15 @@ CONSULTA_PROTOCOLO_NS = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProt
 _SIGN = {"signature_method": "rsa-sha1", "digest_method": "sha1", "c14n": "inclusive"}
 
 
-class NfeError(Exception):
-    """An NF-e client error (bad input, missing certificate, etc.)."""
+class NfeError(SoapbarError):
+    """Base class for NF-e client errors."""
+
+
+class NfeInputError(NfeError):
+    """A caller-side precondition failed: a malformed argument (``cUF``,
+    ``tpAmb``, ``chNFe``), a document with no signable ``<infNFe Id=...>``, or a
+    missing certificate. Distinct from a fault the SEFAZ web service returns,
+    which surfaces as a :class:`~soapbar.core.fault.SoapFault`."""
 
 
 def _local(elem_qname: str) -> str:
@@ -61,7 +69,7 @@ def _check_tp_amb(tp_amb: int) -> None:
     # tpAmb is interpolated into the message body; only 1 (produção) / 2
     # (homologação) are valid, so reject anything else rather than emit it.
     if tp_amb not in (1, 2):
-        raise NfeError(f"tpAmb must be 1 (produção) or 2 (homologação), got {tp_amb!r}")
+        raise NfeInputError(f"tpAmb must be 1 (produção) or 2 (homologação), got {tp_amb!r}")
 
 
 def build_cons_stat_serv(uf: str, tp_amb: int = 2) -> str:
@@ -69,7 +77,7 @@ def build_cons_stat_serv(uf: str, tp_amb: int = 2) -> str:
     # cUF is a 2-digit IBGE state code; validate before interpolating it into
     # the body (an unchecked value is an XML-injection vector).
     if not (len(uf) == 2 and uf.isdigit()):
-        raise NfeError(f"cUF (uf) must be a 2-digit IBGE code, got {uf!r}")
+        raise NfeInputError(f"cUF (uf) must be a 2-digit IBGE code, got {uf!r}")
     _check_tp_amb(tp_amb)
     return (
         f'<consStatServ xmlns="{NFE_NS}" versao="4.00">'
@@ -96,7 +104,7 @@ def extract_infnfe_id(nfe_xml: bytes | str) -> str:
     root = etree.fromstring(data)
     inf = root.find(f".//{{{NFE_NS}}}infNFe")
     if inf is None or not inf.get("Id"):
-        raise NfeError("document has no <infNFe Id=...> element to sign")
+        raise NfeInputError("document has no <infNFe Id=...> element to sign")
     return str(inf.get("Id"))
 
 
@@ -258,7 +266,7 @@ class NfeClient:
         shortcut — no need to parse ``.raw``.
         """
         if len(chave) != 44 or not chave.isdigit():
-            raise NfeError(f"chNFe must be 44 digits, got {chave!r}")
+            raise NfeInputError(f"chNFe must be 44 digits, got {chave!r}")
         body = build_cons_sit_nfe(chave, tp_amb)
         return NfeStatusResult.from_xml(
             self._send(endpoint, CONSULTA_PROTOCOLO_NS, "nfeConsultaNF", body)
@@ -267,7 +275,7 @@ class NfeClient:
     def sign(self, nfe_xml: bytes | str) -> bytes:
         """Sign an NF-e document's ``<infNFe>`` with the configured certificate."""
         if self._cert_pem is None or self._key_pem is None:
-            raise NfeError("a certificate (pfx_path or cert_pem/key_pem) is required to sign")
+            raise NfeInputError("a certificate (pfx_path or cert_pem/key_pem) is required to sign")
         return sign_nfe(nfe_xml, self._cert_pem, self._key_pem)
 
     def close(self) -> None:

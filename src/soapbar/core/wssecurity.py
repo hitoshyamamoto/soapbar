@@ -23,6 +23,7 @@ from typing import Any
 
 from lxml.etree import _Element
 
+from soapbar.core.exceptions import SoapbarError
 from soapbar.core.namespaces import NS
 from soapbar.core.xml import make_element, sub_element
 
@@ -177,7 +178,7 @@ def build_security_header(
 # Validation interface
 # ---------------------------------------------------------------------------
 
-class SecurityValidationError(Exception):
+class SecurityValidationError(SoapbarError):
     """Raised by UsernameTokenValidator when authentication fails."""
 
 
@@ -360,7 +361,7 @@ class UsernameTokenValidator(ABC):
 # XML-DSIG — sign and verify SOAP envelopes
 # ---------------------------------------------------------------------------
 
-class XmlSecurityError(Exception):
+class XmlSecurityError(SoapbarError):
     """Raised when XML Signature verification or XML Encryption fails."""
 
 

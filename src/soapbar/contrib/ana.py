@@ -50,7 +50,7 @@ Contract quirks worth knowing (all observed on live envelopes):
 * ``DadosHidrometeorologicos`` / ``…Gerais`` report "no data for this
   station/period" (or a rejected filter) not as an empty DataSet or a fault but
   as a single row with an ``<Error>`` column; this client raises
-  :class:`AnaError` carrying that message.
+  :class:`AnaServiceError` carrying that message.
 
 The row *column names* inside the DataSet vary per operation and are returned
 verbatim in each row dict (and in ``SerieHistoricaRegistro.raw``); the two
@@ -86,6 +86,7 @@ from soapbar.client.client import SoapClient
 from soapbar.client.transport import HttpTransport
 from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
 from soapbar.core.envelope import SoapVersion
+from soapbar.core.exceptions import SoapbarError
 from soapbar.core.types import AnyXmlType, xsd
 from soapbar.core.xml import local_name, parse_xml
 
@@ -94,8 +95,15 @@ ANA_NS = "http://MRCS/"
 DEFAULT_ENDPOINT = "https://telemetriaws1.ana.gov.br/ServiceANA.asmx"
 
 
-class AnaError(Exception):
-    """An ANA client error (bad input, empty result, transport failure)."""
+class AnaError(SoapbarError):
+    """Base class for ANA client errors."""
+
+
+class AnaServiceError(AnaError):
+    """The ServiceANA endpoint returned no usable data: an empty result, or a
+    single-``<Error>``-column DataSet carrying the service's own "no data for
+    this station/period" (or rejected-filter) message. Distinct from a SOAP
+    fault, which surfaces as a :class:`~soapbar.core.fault.SoapFault`."""
 
 
 class TipoDados(IntEnum):
@@ -262,7 +270,7 @@ class AnaClient:
         # string directly (not a dict).
         frag = getattr(self._client.service, op)(**kwargs)
         if frag is None or frag == "":
-            raise AnaError(f"{op}: empty result from service")
+            raise AnaServiceError(f"{op}: empty result from service")
         return str(frag)
 
     def _call_rows(self, op: str, **kwargs: Any) -> list[dict[str, str | None]]:
@@ -273,7 +281,7 @@ class AnaClient:
         # column is <Error>. Surface the service's own message as AnaError so a
         # caller never mistakes it for a data row.
         if len(rows) == 1 and set(rows[0]) == {"Error"}:
-            raise AnaError(f"{op}: {rows[0]['Error']}")
+            raise AnaServiceError(f"{op}: {rows[0]['Error']}")
         return rows
 
     # -- public API: telemetric data --------------------------------------------

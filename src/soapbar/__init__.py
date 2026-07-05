@@ -32,6 +32,7 @@ from soapbar.core.envelope import (
     build_wsa_response_headers,
     http_headers,
 )
+from soapbar.core.exceptions import SoapbarError
 from soapbar.core.fault import SoapFault
 from soapbar.core.mtom import MtomAttachment, MtomMessage, build_mtom, parse_mtom
 from soapbar.core.namespaces import NS
@@ -87,6 +88,7 @@ __all__ = [  # noqa: RUF022
     "ComplexXsdType",
     "ArrayXsdType",
     "ChoiceXsdType",
+    "SoapbarError",
     "SoapFault",
     "BindingStyle",
     "OperationSignature",

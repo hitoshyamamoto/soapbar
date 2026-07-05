@@ -29,6 +29,7 @@ from typing import Any
 
 from soapbar.client.client import SoapClient
 from soapbar.client.transport import HttpTransport
+from soapbar.core.exceptions import SoapbarError
 from soapbar.core.fault import SoapFault
 
 #: Live VIES SOAP endpoint (HTTPS; the bundled WSDL lists the legacy HTTP URL).
@@ -44,7 +45,7 @@ _RATE_LIMIT_FAULTS = {"GLOBAL_MAX_CONCURRENT_REQ", "MS_MAX_CONCURRENT_REQ"}
 _UNAVAILABLE_FAULTS = {"SERVICE_UNAVAILABLE", "MS_UNAVAILABLE", "TIMEOUT"}
 
 
-class ViesError(Exception):
+class ViesError(SoapbarError):
     """Base class for VIES-specific errors."""
 
 

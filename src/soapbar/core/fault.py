@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from lxml.etree import _Element
 
+from soapbar.core.exceptions import SoapbarError
 from soapbar.core.namespaces import NS
 from soapbar.core.xml import (
     local_name,
@@ -70,7 +71,7 @@ def build_not_understood_header_block(clark_tag: str) -> _Element:
     )
 
 
-class SoapFault(Exception):  # noqa: N818
+class SoapFault(SoapbarError):  # noqa: N818
     def __init__(
         self,
         faultcode: str,
