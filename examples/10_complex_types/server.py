@@ -19,7 +19,6 @@ from soapbar.server.application import SoapApplication
 from soapbar.server.asgi import AsgiSoapApp
 from soapbar.server.service import SoapService, soap_operation
 
-
 # Reusable XSD types
 _string = xsd.resolve("string")
 _int = xsd.resolve("int")

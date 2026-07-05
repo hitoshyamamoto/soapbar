@@ -24,7 +24,6 @@ from soapbar.server.application import SoapApplication
 from soapbar.server.asgi import AsgiSoapApp
 from soapbar.server.service import SoapService, soap_operation
 
-
 _USERS = {"alice": "wonderland", "bob": "builder"}
 
 

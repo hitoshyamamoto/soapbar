@@ -69,6 +69,11 @@ select = ["E","F","W","I","N","UP","B","SIM","S","RUF"]
 # The example smoke harness runs our own scripts (S603) and fetches localhost
 # WSDLs over http (S310) — both are intentional in a controlled test.
 "tests/test_examples.py" = ["S310", "S603"]
+# Runnable demos intentionally use didactic asserts (S101) and placeholder
+# credentials in-line (S105/S106) to be self-contained; these are demo idioms,
+# not production code. Real lint nits (imports, f-strings, line length) are
+# still enforced so the examples stay clean.
+"examples/**" = ["S101", "S105", "S106"]
 
 [tool.mypy]
 strict           = true

@@ -25,8 +25,7 @@ from soapbar.server.application import SoapApplication
 from soapbar.server.asgi import AsgiSoapApp
 from soapbar.server.service import SoapService, soap_operation
 
-
-_SECRET = "s3cret"  # noqa: S105 — demo value; never hard-code secrets in production.
+_SECRET = "s3cret"
 
 
 def bearer_auth(headers: dict[str, str]) -> bool:

@@ -80,7 +80,7 @@ def main() -> None:
 
     try:
         decrypt_body(tampered, private_key=private_key)
-    except Exception as exc:  # noqa: BLE001 — any failure here is the point
+    except Exception as exc:
         print(f"\ntampered ciphertext rejected: {type(exc).__name__}")
 
 

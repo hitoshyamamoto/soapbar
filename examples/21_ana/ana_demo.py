@@ -60,7 +60,7 @@ def main() -> None:
         except AnaError as exc:
             print(f"ListaEstacoesTelemetricas failed: {exc}")
             return
-        except Exception as exc:  # noqa: BLE001 — demo: surface any transport error
+        except Exception as exc:
             print(f"Could not reach ServiceANA ({type(exc).__name__}): {exc}")
             return
 
