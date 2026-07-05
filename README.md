@@ -60,7 +60,7 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - **WS-Security UsernameToken** — PasswordText and PasswordDigest (SHA-1) on both client and server
 - **XML Signature** — enveloped XML-DSIG signing and verification (`sign_envelope` / `verify_envelope`, requires `signxml`)
 - **Id-targeted signing** — sign an inner element selected by its `Id`/Reference URI (`sign_element_by_id`), with a configurable algorithm set (incl. the SEFAZ NF-e RSA-SHA1 / inclusive-C14N / EndCertOnly profile)
-- **XML Encryption** — AES-256-CBC body encryption with RSA-OAEP session-key wrapping (`encrypt_body` / `decrypt_body`, requires `cryptography`)
+- **XML Encryption** — AES-256-GCM authenticated body encryption with RSA-OAEP session-key wrapping (`encrypt_body` / `decrypt_body`, requires `cryptography`)
 - **MTOM/XOP** — send and receive SOAP messages with binary attachments; `SoapClient(use_mtom=True)` + `add_attachment()`; server decodes inbound MTOM automatically
 - **WSDL schema validation** — opt-in Body validation against WSDL-embedded XSD types (`SoapApplication(validate_body_schema=True)`)
 - **One-way MEP** — `@soap_operation(one_way=True)` returns HTTP 202 with empty body
@@ -793,19 +793,19 @@ signed = sign_element_by_id(
 )
 ```
 
-### XML Encryption (AES-256-CBC + RSA-OAEP)
+### XML Encryption (AES-256-GCM + RSA-OAEP)
 
 ```python
 from soapbar.core.wssecurity import encrypt_body, decrypt_body, XmlSecurityError
 
-# Encrypt SOAP Body — AES-256-CBC session key wrapped with recipient's RSA public key
+# Encrypt SOAP Body — AES-256-GCM session key wrapped with recipient's RSA public key
 encrypted_bytes = encrypt_body(envelope_bytes, recipient_public_key)
 
 # Decrypt — extracts and unwraps the session key, restores Body children
 decrypted_bytes = decrypt_body(encrypted_bytes, recipient_private_key)
 ```
 
-The `xenc:EncryptedData` element is placed as the sole child of `<soap:Body>`. The AES-256-CBC session key is wrapped with RSA-OAEP (SHA-256) in an `xenc:EncryptedKey` element inside `xenc:KeyInfo`.
+The `xenc:EncryptedData` element is placed as the sole child of `<soap:Body>`. The body is encrypted with **AES-256-GCM** (XML-Enc 1.1, authenticated: the 16-byte GCM tag detects tampering), and the AES-256 session key is wrapped with RSA-OAEP (SHA-256) in an `xenc:EncryptedKey` element inside `xenc:KeyInfo`. Decryption accepts GCM by default; legacy unauthenticated AES-256-CBC ciphertext is rejected unless explicitly opted in via `decrypt_body(..., allow_unauthenticated_cbc=True)`.
 
 ### WS-I BSP X.509 Token Profile (S10)
 
@@ -1058,7 +1058,7 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | `sign_envelope` | `from soapbar.core.wssecurity import sign_envelope` | Enveloped XML-DSIG signature (RSA-SHA256) |
 | `sign_element_by_id` | `from soapbar import sign_element_by_id` | Sign an inner element by its `Id` (configurable algorithms; e.g. SEFAZ NF-e) |
 | `verify_envelope` | `from soapbar.core.wssecurity import verify_envelope` | Verify and return signed envelope bytes |
-| `encrypt_body` | `from soapbar.core.wssecurity import encrypt_body` | AES-256-CBC body encryption + RSA-OAEP key wrap |
+| `encrypt_body` | `from soapbar.core.wssecurity import encrypt_body` | AES-256-GCM authenticated body encryption + RSA-OAEP key wrap |
 | `decrypt_body` | `from soapbar.core.wssecurity import decrypt_body` | Decrypt `xenc:EncryptedData` body and restore children |
 | `XmlSecurityError` | `from soapbar.core.wssecurity import XmlSecurityError` | Raised on XML signature/encryption failure |
 | `build_binary_security_token` | `from soapbar.core.wssecurity import build_binary_security_token` | Build WS-I BSP `wsse:BinarySecurityToken` from X.509 cert |
@@ -1172,7 +1172,7 @@ The following features are intentionally out-of-scope for the current release.  
 | Area | Status | Notes |
 |------|--------|-------|
 | **MTOM/XOP** | Fully implemented | `parse_mtom` / `build_mtom` handle `multipart/related` MIME packaging and XOP Include resolution. `AsgiSoapApp` and `WsgiSoapApp` decode inbound MTOM automatically. `SoapClient` sends MTOM when `use_mtom=True`. |
-| **WS-Security** | Fully implemented | `UsernameTokenCredential` / `UsernameTokenValidator` for PasswordText and PasswordDigest. `sign_envelope` / `verify_envelope` for XML-DSIG. `encrypt_body` / `decrypt_body` for XML Encryption (AES-256-CBC + RSA-OAEP). `sign_envelope_bsp` / `verify_envelope_bsp` + `build_binary_security_token` for WS-I BSP X.509 token profile (S10). All require `soapbar[security]`. |
+| **WS-Security** | Fully implemented | `UsernameTokenCredential` / `UsernameTokenValidator` for PasswordText and PasswordDigest. `sign_envelope` / `verify_envelope` for XML-DSIG. `encrypt_body` / `decrypt_body` for XML Encryption (AES-256-GCM authenticated + RSA-OAEP). `sign_envelope_bsp` / `verify_envelope_bsp` + `build_binary_security_token` for WS-I BSP X.509 token profile (S10). All require `soapbar[security]`. |
 | **WS-Addressing** | Fully parsed + response headers generated | Inbound headers (`MessageID`, `To`, `Action`, `ReplyTo`, `FaultTo`, `ReferenceParameters`) are parsed into `WsaHeaders`. Response headers (`MessageID`, `RelatesTo`, `Action`, ReferenceParameters) are generated automatically when `use_wsa=True`. |
 | **SOAP 1.2 `relay` attribute** | Parsed and exposed on `SoapHeaderBlock` | The `relay` boolean is available on each `SoapHeaderBlock` instance. Full SOAP intermediary forwarding (actually relaying the message) is not implemented. |
 | **`xsd:complexType` / `xsd:array` / `xsd:choice`** | Fully supported for round-trip serialization | Recursive (`self-referencing`) complex types are resolved lazily. `xsd:complexContent/restriction` for SOAP-encoded arrays is also parsed from WSDL. |
