@@ -17,6 +17,7 @@ ClientCert = Union[str, "tuple[str, str]", "tuple[str, str, str]", "tuple[bytes,
 class HttpTransport:
     def __init__(
         self,
+        *,
         timeout: float = 30.0,
         verify_ssl: bool = True,
         client_cert: ClientCert = None,

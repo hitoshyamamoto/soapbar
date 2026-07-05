@@ -183,6 +183,7 @@ class AnaClient:
 
     def __init__(
         self,
+        *,
         endpoint: str = DEFAULT_ENDPOINT,
         transport: HttpTransport | None = None,
         soap_version: SoapVersion = SoapVersion.SOAP_11,
@@ -334,6 +335,7 @@ class AnaClient:
 
     def inventario(
         self,
+        *,
         cod_est_de: str = "", cod_est_ate: str = "",
         tp_est: TipoEstacao | int | str = "",
         nm_est: str = "", nm_rio: str = "",
@@ -369,6 +371,7 @@ class AnaClient:
         self,
         cod_estacao: str,
         data_inicio: str,
+        *,
         data_fim: str = "",
         tipo_dados: TipoDados | int = TipoDados.VAZOES,
         nivel_consistencia: int = 1,
@@ -394,6 +397,7 @@ class AnaClient:
     def incluir_cota_online(
         self,
         login: str, senha: str, cod_estacao: str, data_hora: str,
+        *,
         chuva: str = "", cota: str = "", vazao: str = "",
     ) -> str:
         """Insert CotaOnline data (restricted to registered partners).

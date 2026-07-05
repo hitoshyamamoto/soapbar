@@ -39,6 +39,7 @@ class SoapClient:
     def __init__(
         self,
         wsdl_url: str | None = None,
+        *,
         transport: HttpTransport | None = None,
         use_wsa: bool = False,
         wss_credential: Any = None,
@@ -324,8 +325,8 @@ class SoapClient:
     def from_file(
         cls,
         path: str | Path,
-        use_wsa: bool = False,
         *,
+        use_wsa: bool = False,
         transport: HttpTransport | None = None,
         endpoint: str | None = None,
     ) -> SoapClient:
@@ -358,7 +359,7 @@ class SoapClient:
         return obj
 
     @classmethod
-    def from_wsdl_string(cls, wsdl: str | bytes, use_wsa: bool = False) -> SoapClient:
+    def from_wsdl_string(cls, wsdl: str | bytes, *, use_wsa: bool = False) -> SoapClient:
         obj: SoapClient = cls.__new__(cls)
         obj._transport = HttpTransport()
         obj._wsdl = None
@@ -379,6 +380,7 @@ class SoapClient:
     def manual(
         cls,
         address: str,
+        *,
         binding_style: BindingStyle = BindingStyle.DOCUMENT_LITERAL_WRAPPED,
         soap_version: SoapVersion = SoapVersion.SOAP_11,
         transport: HttpTransport | None = None,

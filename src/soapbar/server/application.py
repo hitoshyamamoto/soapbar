@@ -95,6 +95,7 @@ class SoapApplication:
         self,
         custom_wsdl: bytes | None = None,
         service_url: str = "http://localhost:8000/soap",
+        *,
         max_body_size: int = 10 * 1024 * 1024,  # 10 MB — G01
         security_validator: Any = None,
         validate_body_schema: bool = False,
