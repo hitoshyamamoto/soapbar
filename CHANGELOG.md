@@ -6,7 +6,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.14.0] — 2026-07-05
+
+Adds a fourth real-world contrib client. No changes to the core SOAP API.
 
 ### Added
 
@@ -18,10 +20,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   telemetric-station registry, and the restricted CotaOnline writes), flattening
   the ADO.NET DataSet (inline schema + Microsoft diffgram) it returns into plain
   dict rows. Ships enums (`TipoDados`, `TipoEstacao`, `OrigemTelemetrica`) and
-  documents the service's contract quirks (lowercase `origem`, PascalCase
-  CotaOnline elements, plaintext write credentials). Installable via
-  `soapbar[ana]`. The service is announced-legacy (superseded by the REST
-  `Hidro_Webservice`); treat the client as a bridge for existing SOAP consumers.
+  handles the service's contract quirks: the lowercase `origem` element, the
+  PascalCase CotaOnline write elements, per-operation (and misspelled) DataSet
+  row names, and the single-`<Error>`-column "no data" signal (raised as
+  `AnaError`). All ten read operations were verified end-to-end against the live
+  endpoint. Installable via `soapbar[ana]`; runnable demo in
+  [`examples/21_ana/`](examples/21_ana/). The service is announced-legacy
+  (superseded by the REST `Hidro_Webservice`); treat the client as a bridge for
+  existing SOAP consumers.
 
 ---
 
