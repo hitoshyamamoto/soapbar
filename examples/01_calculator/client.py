@@ -33,7 +33,7 @@ def main(wsdl_url: str) -> int:
     try:
         client.call("divide", a=1, b=0)
     except SoapFault as fault:
-        print(f"\ndivide(1, 0) raised SoapFault as expected:")
+        print("\ndivide(1, 0) raised SoapFault as expected:")
         print(f"  faultcode   = {fault.faultcode}")
         print(f"  faultstring = {fault.faultstring}")
         return 0

@@ -123,7 +123,7 @@ def main() -> None:
     tampered = signed.replace(b"hello", b"HELLO")
     try:
         verify_envelope_bsp(tampered, expected_references=2, trusted_certs=[cert])
-    except Exception as exc:  # noqa: BLE001 — demo: any error proves the point
+    except Exception as exc:
         print(f"tampered envelope correctly rejected: {type(exc).__name__}")
     else:
         raise AssertionError("tampered envelope unexpectedly verified")

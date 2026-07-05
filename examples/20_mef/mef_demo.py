@@ -40,6 +40,8 @@ Run:
 
 from __future__ import annotations
 
+import contextlib
+
 from soapbar import HttpTransport, SoapClient, SoapFault
 
 # --- configuration (edit these; never commit real credentials/certs) -------
@@ -87,11 +89,9 @@ def run_session() -> None:
         print(f"SOAP fault: {fault.faultcode} / {fault.faultstring}")
         return
     finally:
-        # 4) Always log out to release the session.
-        try:
+        # 4) Always log out to release the session (best-effort cleanup).
+        with contextlib.suppress(Exception):
             client.call("Logout")
-        except Exception:
-            pass
 
 
 def main() -> None:

@@ -59,7 +59,7 @@ from soapbar.core.wssecurity import sign_element_by_id
 # --- configuration (edit these) --------------------------------------------
 # Use a HOMOLOGACAO (test) endpoint and a TEST certificate. Never commit real certs.
 PFX_PATH = "/path/to/icp-brasil-a1-test.pfx"  # PKCS#12 (A1)
-PFX_PASSWORD = "changeit"  # noqa: S105 - placeholder, not a real secret
+PFX_PASSWORD = "changeit"
 STATUS_WSDL = "https://homologacao.example-sefaz/ws/NFeStatusServico4.asmx?wsdl"  # replace per UF
 NFE_NS = "http://www.portalfiscal.inf.br/nfe"
 C_UF = "31"  # IBGE code for the UF (example: 31 = MG)

@@ -21,7 +21,7 @@ the WMLS.WSDL, and the PDS reference implementation IWitsmlStore.cs)
     Wrapper ns     : http://www.witsml.org/message/120
     No <types>     : domain XML travels as a string in XMLin / QueryIn / XMLout
     Operations and parameter order:
-        WMLS_GetCap(OptionsIn)                                   -> CapabilitiesOut, SuppMsgOut, Result
+        WMLS_GetCap(OptionsIn) -> CapabilitiesOut, SuppMsgOut, Result
         WMLS_GetFromStore(WMLtypeIn, QueryIn, OptionsIn, CapabilitiesIn)
                                                                  -> XMLout, SuppMsgOut, Result
         WMLS_AddToStore(WMLtypeIn, XMLin, OptionsIn, CapabilitiesIn)
