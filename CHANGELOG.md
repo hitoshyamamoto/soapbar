@@ -11,6 +11,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 Public-API stabilization toward a future 1.0 contract. Changes are additive and
 backwards compatible unless noted.
 
+### Changed
+
+- **Optional arguments are now keyword-only** across the public API, so their
+  order is no longer part of the frozen contract and new options can be inserted
+  without breaking callers. Required "leader" arguments stay positional-or-keyword
+  (`envelope_bytes`, `certificate`, `address`, `service_url`, `wsdl_url`, the ANA
+  station/date leaders, …); everything after them must now be passed by keyword.
+  This is a **breaking change for callers that passed these optionals
+  positionally** — the fix is to name them. Most affected are the security
+  functions, where it also closes a footgun: a switch like `require_signed_body`
+  or a `verify_envelope_bsp` trust anchor can no longer be bound by position.
+  Affected: `verify_envelope`, `verify_envelope_bsp`, `decrypt_body`,
+  `sign_envelope_bsp`, `build_security_header`, `build_binary_security_token`,
+  `build_fault`, `SoapFault`, `HttpTransport`, `SoapClient` /
+  `SoapClient.manual` / `.from_file` / `.from_wsdl_string`, `SoapApplication`,
+  and `AnaClient` (`__init__`, `inventario`, `serie_historica`,
+  `incluir_cota_online`). The snapshot test pins these signatures so the
+  keyword-only kind cannot silently regress.
+
 ### Added
 
 - **Public-API snapshot test** (`tests/test_public_api.py`) — freezes the exact

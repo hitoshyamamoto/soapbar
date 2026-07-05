@@ -76,6 +76,7 @@ class SoapFault(SoapbarError):  # noqa: N818
         self,
         faultcode: str,
         faultstring: str,
+        *,
         faultactor: str | None = None,
         detail: str | _Element | None = None,
         subcodes: list[tuple[str, str]] | None = None,

@@ -155,22 +155,22 @@ EXPECTED_SECURITY_SIGNATURES = {
     "verify_envelope": [
         "envelope_bytes:POSITIONAL_OR_KEYWORD",
         "certificate:POSITIONAL_OR_KEYWORD",
-        "expected_references:POSITIONAL_OR_KEYWORD",
-        "require_signed_body:POSITIONAL_OR_KEYWORD",
+        "expected_references:KEYWORD_ONLY",
+        "require_signed_body:KEYWORD_ONLY",
     ],
     "sign_envelope_bsp": [
         "envelope_bytes:POSITIONAL_OR_KEYWORD",
         "private_key:POSITIONAL_OR_KEYWORD",
         "certificate:POSITIONAL_OR_KEYWORD",
-        "token_id:POSITIONAL_OR_KEYWORD",
+        "token_id:KEYWORD_ONLY",
     ],
     "verify_envelope_bsp": [
         "envelope_bytes:POSITIONAL_OR_KEYWORD",
-        "expected_references:POSITIONAL_OR_KEYWORD",
-        "require_signed_body:POSITIONAL_OR_KEYWORD",
-        "trusted_certs:POSITIONAL_OR_KEYWORD",
-        "ca_certs:POSITIONAL_OR_KEYWORD",
-        "verify_cert_trust:POSITIONAL_OR_KEYWORD",
+        "expected_references:KEYWORD_ONLY",
+        "require_signed_body:KEYWORD_ONLY",
+        "trusted_certs:KEYWORD_ONLY",
+        "ca_certs:KEYWORD_ONLY",
+        "verify_cert_trust:KEYWORD_ONLY",
     ],
     "encrypt_body": [
         "envelope_bytes:POSITIONAL_OR_KEYWORD",
@@ -179,7 +179,7 @@ EXPECTED_SECURITY_SIGNATURES = {
     "decrypt_body": [
         "envelope_bytes:POSITIONAL_OR_KEYWORD",
         "private_key:POSITIONAL_OR_KEYWORD",
-        "allow_unauthenticated_cbc:POSITIONAL_OR_KEYWORD",
+        "allow_unauthenticated_cbc:KEYWORD_ONLY",
     ],
     "sign_element_by_id": [
         "doc_bytes:POSITIONAL_OR_KEYWORD",
@@ -191,6 +191,15 @@ EXPECTED_SECURITY_SIGNATURES = {
         "digest_method:KEYWORD_ONLY",
         "c14n:KEYWORD_ONLY",
         "end_cert_only:KEYWORD_ONLY",
+    ],
+    "build_security_header": [
+        "credential:POSITIONAL_OR_KEYWORD",
+        "soap_ns:KEYWORD_ONLY",
+        "timestamp_ttl:KEYWORD_ONLY",
+    ],
+    "build_binary_security_token": [
+        "certificate:POSITIONAL_OR_KEYWORD",
+        "token_id:KEYWORD_ONLY",
     ],
 }
 

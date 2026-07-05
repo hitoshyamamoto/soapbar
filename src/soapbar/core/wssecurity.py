@@ -97,6 +97,7 @@ def _digest_password(nonce_bytes: bytes, created: str, password: str) -> str:
 
 def build_security_header(
     credential: UsernameTokenCredential,
+    *,
     soap_ns: str | None = None,
     timestamp_ttl: int | None = None,
 ) -> _Element:
@@ -640,6 +641,7 @@ def _signature_covers_soap_body(results: list[Any]) -> bool:
 def verify_envelope(
     envelope_bytes: bytes,
     certificate: Any,
+    *,
     expected_references: int | None = None,
     require_signed_body: bool = True,
 ) -> bytes:
@@ -855,6 +857,7 @@ def encrypt_body(
 def decrypt_body(
     envelope_bytes: bytes,
     private_key: Any,
+    *,
     allow_unauthenticated_cbc: bool = False,
 ) -> bytes:
     """Decrypt the SOAP Body content encrypted by :func:`encrypt_body`.
@@ -1006,6 +1009,7 @@ def decrypt_body(
 
 def build_binary_security_token(
     certificate: Any,
+    *,
     token_id: str = "X509Token-1",  # noqa: S107
 ) -> _Element:
     """Build a ``wsse:BinarySecurityToken`` from an X.509 certificate.
@@ -1152,6 +1156,7 @@ def sign_envelope_bsp(
     envelope_bytes: bytes,
     private_key: Any,
     certificate: Any,
+    *,
     token_id: str = "X509Token-1",  # noqa: S107
 ) -> bytes:
     """Sign a SOAP envelope using the WS-I BSP 1.1 X.509 token profile.
@@ -1270,6 +1275,7 @@ def sign_envelope_bsp(
 
 def verify_envelope_bsp(
     envelope_bytes: bytes,
+    *,
     expected_references: int | None = None,
     require_signed_body: bool = True,
     trusted_certs: Any = None,

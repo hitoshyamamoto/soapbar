@@ -421,6 +421,7 @@ def build_fault(
     version: SoapVersion,
     faultcode: str,
     faultstring: str,
+    *,
     faultactor: str | None = None,
     detail: str | _Element | None = None,
 ) -> _Element:
