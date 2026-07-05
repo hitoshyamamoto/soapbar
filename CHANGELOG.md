@@ -6,10 +6,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.15.0] — 2026-07-05
 
-Public-API stabilization toward a future 1.0 contract. Changes are additive and
-backwards compatible unless noted.
+The public-API stabilization release, and the project's move to **Beta**
+(`Development Status :: 4`). The public surface is now rooted at a common
+exception base, fully exported and frozen by a snapshot test, keyword-only for
+all optional arguments, immutable where it should be, and governed by a written
+stability policy ([`STABILITY.md`](STABILITY.md)).
+
+Most changes are additive and backwards compatible. The exceptions — done now,
+deliberately, while the cost is low — are the two breaking items under
+**Changed**: optional arguments are now keyword-only, and two value-object
+sequence fields changed from `list` to `tuple`. Hence the minor-version bump.
+
+**Migration.** If you passed an *optional* argument positionally to a public
+function or constructor (most relevantly the `verify_*` / `decrypt_body` /
+`HttpTransport` / `SoapClient` / `SoapApplication` / `AnaClient` APIs), name it
+instead. If you mutated `MtomMessage.attachments` or
+`WsaEndpointReference.reference_parameters` in place, build a new value instead
+(they are now immutable tuples). Required leader arguments are unchanged.
 
 ### Changed
 
