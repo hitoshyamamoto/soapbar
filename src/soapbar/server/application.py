@@ -37,7 +37,7 @@ from soapbar.core.wsdl.builder import (
     build_wsdl_bytes,
 )
 from soapbar.core.xml import check_xml_depth, compile_schema, to_bytes, validate_schema
-from soapbar.server.service import SoapService, _SoapMethod
+from soapbar.server.service import SoapMethod, SoapService
 
 _log = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class SoapApplication:
         self._compiled_schema: Any = None  # etree.XMLSchema | None; lazy-built
         self._services: list[SoapService] = []
         # operation_name → (service, method)
-        self._dispatch: dict[str, tuple[SoapService, _SoapMethod]] = {}
+        self._dispatch: dict[str, tuple[SoapService, SoapMethod]] = {}
         # soap_action → operation_name
         self._action_map: dict[str, str] = {}
         # G11 — warn if service_url is plain HTTP (not HTTPS)

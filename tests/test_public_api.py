@@ -40,11 +40,15 @@ EXPECTED_ALL = {
     "parse_xml_document",
     "to_string",
     "to_bytes",
+    "local_name",
+    "namespace_uri",
+    "BodyTooLargeError",
     "xsd",
     "XsdType",
     "ComplexXsdType",
     "ArrayXsdType",
     "ChoiceXsdType",
+    "AnyXmlType",
     "SoapbarError",
     "SoapFault",
     "BindingStyle",
@@ -56,6 +60,8 @@ EXPECTED_ALL = {
     "SoapVersion",
     "WsaHeaders",
     "WsaEndpointReference",
+    "WSA_ANONYMOUS",
+    "WSA_NONE",
     "build_request",
     "build_response",
     "build_fault",
@@ -80,6 +86,7 @@ EXPECTED_ALL = {
     "MtomMessage",
     "parse_mtom",
     "build_mtom",
+    "extract_xop_elements",
     "UsernameTokenCredential",
     "UsernameTokenValidator",
     "SecurityValidationError",
@@ -96,6 +103,7 @@ EXPECTED_ALL = {
     "decrypt_body",
     # server
     "SoapService",
+    "SoapMethod",
     "SoapApplication",
     "soap_operation",
     "AsgiSoapApp",
@@ -215,33 +223,53 @@ def test_security_function_signatures_frozen(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Contrib client public names (importable-surface guard)
+# 3. Contrib module export surfaces (each a lower stability tier than core,
+#    but still frozen — see STABILITY.md)
 # ---------------------------------------------------------------------------
 
-#: The key public names each contrib client module must keep exporting. Not a
-#: full set-equality (the contrib modules gain a curated ``__all__`` in a later
-#: workstream); this guards the client class and its typed exception hierarchy.
-CONTRIB_PUBLIC_NAMES = {
-    "soapbar.contrib.vies": [
+#: The exact ``__all__`` of each contrib client module.
+CONTRIB_EXPECTED_ALL = {
+    "soapbar.contrib.vies": {
         "ViesClient", "ViesResult", "ViesApproxResult", "MatchCode",
         "ViesError", "ViesInputError", "ViesRateLimitError", "ViesUnavailableError",
-    ],
-    "soapbar.contrib.nfe": [
+        "VIES_ENDPOINT",
+    },
+    "soapbar.contrib.nfe": {
         "NfeClient", "NfeStatusResult", "NfeError", "NfeInputError",
-    ],
-    "soapbar.contrib.ana": [
-        "AnaClient", "AnaError", "AnaServiceError", "TipoDados",
-    ],
-    "soapbar.contrib.witsml": [
-        "WitsmlClient", "WitsmlError", "WitsmlServerError",
-    ],
+        "build_cons_stat_serv", "build_cons_sit_nfe", "extract_infnfe_id", "sign_nfe",
+        "NFE_NS", "STATUS_SERVICO_NS", "CONSULTA_PROTOCOLO_NS",
+    },
+    "soapbar.contrib.ana": {
+        "AnaClient", "SerieHistoricaRegistro", "AnaError", "AnaServiceError",
+        "TipoDados", "TipoEstacao", "OrigemTelemetrica", "ANA_NS", "DEFAULT_ENDPOINT",
+    },
+    "soapbar.contrib.witsml": {
+        "WitsmlClient", "WitsmlError", "WitsmlServerError", "options_in",
+        "STORE_NS", "ACTION_BASE",
+    },
 }
 
 
-@pytest.mark.parametrize("module_name", sorted(CONTRIB_PUBLIC_NAMES))
-def test_contrib_public_names_importable(module_name: str) -> None:
+@pytest.mark.parametrize("module_name", sorted(CONTRIB_EXPECTED_ALL))
+def test_contrib_all_matches_frozen_set(module_name: str) -> None:
     import importlib
 
     module = importlib.import_module(module_name)
-    for name in CONTRIB_PUBLIC_NAMES[module_name]:
-        assert hasattr(module, name), f"{module_name}.{name} is no longer importable"
+    actual = set(module.__all__)
+    expected = CONTRIB_EXPECTED_ALL[module_name]
+    removed = expected - actual
+    added = actual - expected
+    assert not removed, f"{module_name}: public names removed: {sorted(removed)}"
+    assert not added, (
+        f"{module_name}: new public names {sorted(added)} — update "
+        "CONTRIB_EXPECTED_ALL and the CHANGELOG."
+    )
+
+
+@pytest.mark.parametrize("module_name", sorted(CONTRIB_EXPECTED_ALL))
+def test_contrib_all_names_importable(module_name: str) -> None:
+    import importlib
+
+    module = importlib.import_module(module_name)
+    for name in module.__all__:
+        assert hasattr(module, name), f"{module_name}.{name} is listed in __all__ but missing"

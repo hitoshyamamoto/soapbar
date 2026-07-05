@@ -32,6 +32,18 @@ from soapbar.client.transport import HttpTransport
 from soapbar.core.exceptions import SoapbarError
 from soapbar.core.fault import SoapFault
 
+__all__ = [
+    "VIES_ENDPOINT",
+    "MatchCode",
+    "ViesApproxResult",
+    "ViesClient",
+    "ViesError",
+    "ViesInputError",
+    "ViesRateLimitError",
+    "ViesResult",
+    "ViesUnavailableError",
+]
+
 #: Live VIES SOAP endpoint (HTTPS; the bundled WSDL lists the legacy HTTP URL).
 VIES_ENDPOINT = "https://ec.europa.eu/taxation_customs/vies/services/checkVatService"
 
