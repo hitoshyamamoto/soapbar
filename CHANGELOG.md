@@ -51,6 +51,12 @@ backwards compatible unless noted.
 
 ### Added
 
+- **`STABILITY.md`** — a formal API-stability and versioning policy: the exact
+  definition of the public surface (top-level `soapbar` + `soapbar.contrib.*`
+  `__all__`, everything else internal), the SemVer commitment, the deprecation
+  process (`DeprecationWarning` for at least one minor before removal), and the
+  two-tier model (core vs the lower-stability contrib clients, which track
+  externally-owned services). Linked from the README.
 - **Promoted to the top-level namespace** several names that were already used
   as API from deep import paths (documentation pointed users at them, examples
   and tests imported them): `BodyTooLargeError`, `AnyXmlType`,
@@ -68,8 +74,6 @@ backwards compatible unless noted.
   surface now fails CI until the snapshot is updated deliberately, turning the
   public contract into an enforced, reviewed artifact. Also guards the contrib
   client classes and their exception hierarchies against accidental removal.
-
-
 - **`SoapbarError`** — a common base class for every exception soapbar raises
   deliberately (`from soapbar import SoapbarError`). Callers can now
   `except SoapbarError` to catch any library-originated failure. All existing
