@@ -158,9 +158,10 @@ class TestBillionLaughsPrevention:
           <!ENTITY b "&a;">
         ]>
         <root>&a;</root>"""
-        with contextlib.suppress(etree.XMLSyntaxError):
+        # The mutually-recursive entity is rejected (loop detected) rather than
+        # expanded infinitely — a hang would be the failure mode this guards.
+        with pytest.raises(etree.XMLSyntaxError, match="loop"):
             parse_xml(recursive)
-            # Should parse without crash
 
 
 # ---------------------------------------------------------------------------
@@ -171,25 +172,32 @@ class TestSsrfPrevention:
     """SSRF prevention via no_network=True in lxml parser."""
 
     def test_external_dtd_blocked(self):
-        """External DTD references must not trigger network requests."""
+        """An external DTD must not be fetched (SSRF). With no_network=True and
+        load_dtd=False the external subset is never loaded, so the document
+        parses to its literal content — no network access, no external subset
+        applied. (A parser that fetched the DTD would raise a network error or
+        hang here, not return the literal content.)"""
         external_dtd = b"""<?xml version="1.0"?>
         <!DOCTYPE root SYSTEM "http://attacker.example.com/evil.dtd">
         <root>data</root>"""
-        # Should either parse without fetching or raise XMLSyntaxError
-        with contextlib.suppress(etree.XMLSyntaxError):
-            parse_xml(external_dtd)
-            # Parsed successfully without network access — good
+        elem = parse_xml(external_dtd)
+        assert elem.tag == "root"
+        assert elem.text == "data"        # literal content; external DTD ignored
 
     def test_ssrf_via_parameter_entity_url(self):
-        """Parameter entity with URL must not trigger SSRF."""
+        """A parameter entity pointing at a cloud-metadata URL must not be
+        resolved (classic SSRF). The entity is not fetched, so the document
+        parses to an empty <root/> with nothing pulled from the endpoint."""
         ssrf_xml = b"""<?xml version="1.0"?>
         <!DOCTYPE root [
           <!ENTITY % remote SYSTEM "http://169.254.169.254/latest/meta-data/">
           %remote;
         ]>
         <root/>"""
-        with contextlib.suppress(etree.XMLSyntaxError):
-            parse_xml(ssrf_xml)
+        elem = parse_xml(ssrf_xml)
+        assert elem.tag == "root"
+        assert list(elem) == []           # no children injected from the endpoint
+        assert (elem.text or "") == ""    # no metadata content pulled in
 
 
 # ---------------------------------------------------------------------------
