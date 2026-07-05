@@ -66,8 +66,10 @@ class BindingStyle(Enum):
         return self not in (BindingStyle.RPC_ENCODED, BindingStyle.DOCUMENT_ENCODED)
 
 
-@dataclass
+@dataclass(frozen=True)
 class OperationParameter:
+    """An operation's input/output parameter descriptor (an immutable value object)."""
+
     name: str
     xsd_type: XsdType
     required: bool = True
@@ -76,6 +78,10 @@ class OperationParameter:
 
 @dataclass
 class OperationSignature:
+    # Intentionally mutable (not frozen): ``soap_action`` is lazily filled in at
+    # service-registration time (see SoapService.get_operations), and the
+    # parameter lists are built incrementally by the decorator. It is a
+    # configuration object bound during setup, not an immutable value object.
     name: str
     input_params: list[OperationParameter] = field(default_factory=list)
     output_params: list[OperationParameter] = field(default_factory=list)

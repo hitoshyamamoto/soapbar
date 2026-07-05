@@ -273,3 +273,64 @@ def test_contrib_all_names_importable(module_name: str) -> None:
     module = importlib.import_module(module_name)
     for name in module.__all__:
         assert hasattr(module, name), f"{module_name}.{name} is listed in __all__ but missing"
+
+
+# ---------------------------------------------------------------------------
+# 4. Value-object immutability (frozen dataclasses)
+# ---------------------------------------------------------------------------
+
+#: Public value objects that must stay frozen (immutable). Freezing is part of
+#: the contract: callers may rely on these not mutating under them, and on being
+#: hashable. The two intentionally-mutable config objects (OperationSignature,
+#: WsaHeaders — both assembled incrementally) are asserted mutable below so the
+#: distinction is deliberate, not accidental.
+def _frozen_instances() -> dict[str, object]:
+    from lxml import etree
+
+    from soapbar import (
+        MtomAttachment,
+        MtomMessage,
+        OperationParameter,
+        SoapHeaderBlock,
+        WsaEndpointReference,
+        xsd,
+    )
+
+    return {
+        "MtomAttachment": MtomAttachment("part1", "image/png", b"\x89PNG"),
+        "MtomMessage": MtomMessage(b"<e/>"),
+        "SoapHeaderBlock": SoapHeaderBlock(etree.Element("h")),
+        "WsaEndpointReference": WsaEndpointReference("http://example.com/ep"),
+        "OperationParameter": OperationParameter("p", xsd.resolve("string")),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_frozen_instances()))
+def test_value_objects_are_immutable(name: str) -> None:
+    import dataclasses
+
+    obj = _frozen_instances()[name]
+    field_name = next(f.name for f in dataclasses.fields(obj))  # type: ignore[arg-type]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(obj, field_name, getattr(obj, field_name))
+
+
+def test_frozen_value_objects_are_hashable() -> None:
+    # A frozen dataclass with all-hashable fields is hashable; a list field would
+    # break this (hence attachments / reference_parameters are tuples).
+    for obj in _frozen_instances().values():
+        assert isinstance(hash(obj), int)
+
+
+def test_config_objects_stay_mutable() -> None:
+    # These are assembled field-by-field (soap_action patched at registration;
+    # WsaHeaders filled by the header parser), so they are deliberately NOT frozen.
+    from soapbar import OperationSignature, WsaHeaders
+
+    sig = OperationSignature(name="op")
+    sig.soap_action = "urn:action"          # must not raise
+    assert sig.soap_action == "urn:action"
+
+    wsa = WsaHeaders()
+    wsa.action = "urn:x"                     # must not raise
+    assert wsa.action == "urn:x"

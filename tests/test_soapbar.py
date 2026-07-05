@@ -5193,7 +5193,7 @@ class TestMtomCore:
         body, ct = build_mtom(self._SOAP_XML, [])
         msg = parse_mtom(body, ct)
         assert b"<ping>pong</ping>" in msg.soap_xml
-        assert msg.attachments == []
+        assert msg.attachments == ()
 
     def test_build_with_attachment_round_trip(self) -> None:
         from soapbar.core.mtom import MtomAttachment, build_mtom, parse_mtom

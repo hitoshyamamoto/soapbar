@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -26,9 +26,9 @@ from soapbar.core.xml import (
 # SOAP Header Block
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class SoapHeaderBlock:
-    """A single SOAP header block with parsed attributes.
+    """A single SOAP header block with parsed attributes (an immutable value object).
 
     ``relay`` is parsed from the SOAP 1.2 ``env:relay`` attribute ([SOAP12-P1] §5.2.4)
     and exposed for inspection by intermediary implementations.  soapbar acts as an
@@ -57,16 +57,24 @@ WSA_NONE      = "http://www.w3.org/2005/08/addressing/none"
 # WS-Addressing dataclasses
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class WsaEndpointReference:
-    """WS-Addressing endpoint reference."""
+    """WS-Addressing endpoint reference (an immutable value object).
+
+    ``reference_parameters`` is a ``tuple`` (not a list) so the reference is
+    hashable and immutable.
+    """
     address: str
-    reference_parameters: list[_Element] = field(default_factory=list)
+    reference_parameters: tuple[_Element, ...] = ()
 
 
 @dataclass
 class WsaHeaders:
-    """Parsed WS-Addressing headers from a SOAP envelope."""
+    """Parsed WS-Addressing headers from a SOAP envelope.
+
+    Intentionally mutable (not frozen): the header parser fills these fields in
+    incrementally as it walks the SOAP header blocks (see ``parse_wsa_headers``).
+    """
     message_id: str | None = None
     to: str | None = None
     action: str | None = None
@@ -98,7 +106,7 @@ def _parse_endpoint_reference(elem: _Element) -> WsaEndpointReference:
     # semantics (WS-Addressing 1.0 §2.1); callers should test address against those
     # constants before attempting to dispatch to the address as a real endpoint.
     rp_elem = elem.find(f"{{{NS.WSA}}}ReferenceParameters")
-    ref_params = list(rp_elem) if rp_elem is not None else []
+    ref_params = tuple(rp_elem) if rp_elem is not None else ()
     return WsaEndpointReference(address=address, reference_parameters=ref_params)
 
 
