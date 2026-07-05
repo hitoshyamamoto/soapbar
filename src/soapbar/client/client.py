@@ -460,6 +460,22 @@ class SoapClient:
         return [msg_id, action]
 
     def call(self, operation: str, **kwargs: Any) -> Any:
+        """Invoke *operation* with keyword arguments and return the parsed result.
+
+        The return shape depends on how many output parameters the operation
+        declares — this arity-based contract is stable:
+
+        * **No output** (or an empty body) → ``None``.
+        * **Exactly one output parameter** → that value, unwrapped (e.g. an
+          ``int``, ``str``, ``Decimal``, or a parsed complex/``AnyXmlType``
+          value) — *not* wrapped in a dict.
+        * **Two or more output parameters** → a ``dict`` keyed by parameter name.
+
+        A SOAP fault in the response is raised as :class:`~soapbar.core.fault.SoapFault`.
+        (The single-output unwrapping is a deliberate ergonomic choice; callers
+        that want a uniform mapping can read the operation's output parameter
+        names from its :class:`~soapbar.core.binding.OperationSignature`.)
+        """
         sig = self._get_sig(operation)
         serializer = get_serializer(self._binding_style, self._soap_version)
 

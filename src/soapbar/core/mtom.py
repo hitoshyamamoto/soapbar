@@ -14,27 +14,31 @@ import email.parser
 import email.policy
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from soapbar.core.namespaces import NS
 
 
-@dataclass
+@dataclass(frozen=True)
 class MtomAttachment:
-    """A single MIME part / XOP attachment."""
+    """A single MIME part / XOP attachment (an immutable value object)."""
 
     content_id: str          # bare Content-ID (without angle brackets)
     content_type: str
     data: bytes
 
 
-@dataclass
+@dataclass(frozen=True)
 class MtomMessage:
-    """Parsed MTOM multipart message."""
+    """Parsed MTOM multipart message (an immutable value object).
+
+    ``attachments`` is a ``tuple`` (not a list) so the message is hashable and
+    cannot be mutated in place after parsing.
+    """
 
     soap_xml: bytes                            # XOP-include-resolved SOAP envelope bytes
-    attachments: list[MtomAttachment] = field(default_factory=list)
+    attachments: tuple[MtomAttachment, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +77,7 @@ def parse_mtom(
             in memory.
 
     Returns:
-        An :class:`MtomMessage` with resolved XML and the list of attachments.
+        An :class:`MtomMessage` with resolved XML and the tuple of attachments.
 
     Raises:
         ValueError: If the message cannot be parsed as a valid MTOM envelope.
@@ -124,7 +128,7 @@ def parse_mtom(
         soap_bytes, attachments, attachment_map, max_resolved_size
     )
 
-    return MtomMessage(soap_xml=soap_bytes, attachments=attachments)
+    return MtomMessage(soap_xml=soap_bytes, attachments=tuple(attachments))
 
 
 def _resolve_xop_includes(

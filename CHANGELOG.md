@@ -13,6 +13,19 @@ backwards compatible unless noted.
 
 ### Changed
 
+- **Value-object dataclasses are now frozen (immutable).** `MtomAttachment`,
+  `MtomMessage`, `SoapHeaderBlock`, `WsaEndpointReference`, and
+  `OperationParameter` are `frozen=True`, so they are hashable and cannot be
+  mutated after construction. To make the collection-bearing ones hashable,
+  their sequence fields are now **tuples**: `MtomMessage.attachments` and
+  `WsaEndpointReference.reference_parameters` changed from `list` to `tuple`
+  (a breaking change only for callers that mutated them in place — none did
+  internally). `OperationSignature` and `WsaHeaders` stay mutable by design
+  (they are assembled field-by-field — `soap_action` is patched at service
+  registration, `WsaHeaders` is filled by the header parser).
+- **`SoapClient.call` return contract is now documented** (behaviour unchanged):
+  no output → `None`; exactly one output parameter → that value unwrapped;
+  two or more → a `dict` keyed by parameter name.
 - **`soap_operation` arguments are now keyword-only** (completing the freeze
   above): `@soap_operation(name=..., one_way=..., …)`. Decorators are
   conventionally called by keyword, so this is expected to affect no callers.
