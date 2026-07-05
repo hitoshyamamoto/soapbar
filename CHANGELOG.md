@@ -6,6 +6,40 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.14.1] — 2026-07-05
+
+A hardening and documentation patch closing the deferred P2 items from the
+internal audit. No API, wire-format, or runtime behavior change for existing
+callers; existing valid input is unaffected.
+
+### Security
+
+- **NF-e input validation** (`soapbar.contrib.nfe`) — `build_cons_stat_serv`
+  and `build_cons_sit_nfe` now validate their inputs before interpolating them
+  into the message body: `cUF` must be a two-digit IBGE code and `tpAmb` must be
+  `1` (produção) or `2` (homologação), otherwise `NfeError` is raised. This
+  closes an XML-injection vector where a crafted `uf` (e.g.
+  `"31</cUF><evil/>"`) could inject markup into the SEFAZ request. Well-formed
+  callers are unaffected.
+
+### Fixed
+
+- **Conformance-suite test assertions** (`tests/audit/test_security.py`) — the
+  SSRF, external-DTD, and recursive-entity hardening tests now assert the
+  parser's actual behavior (entities are not expanded, external resources are
+  not fetched, entity loops raise) instead of swallowing the exception, so a
+  regression that re-enabled expansion would fail the suite rather than pass
+  silently.
+
+### Documentation
+
+- Corrected the advertised conformance-suite size in `README.md` from
+  "135 tests across 10 spec-mapped classes" to the actual **116 tests across
+  11 classes** (`tests/audit/test_compliance.py`). The "46 spec-derived
+  checkpoints" figure is unchanged and remains accurate.
+
+---
+
 ## [0.14.0] — 2026-07-05
 
 Adds a fourth real-world contrib client. No changes to the core SOAP API.
