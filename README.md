@@ -1079,6 +1079,12 @@ The most-used symbols are all importable from the top-level `soapbar` namespace:
 | `NfeClient` | `from soapbar.contrib.nfe import NfeClient` | SEFAZ NF-e layout 4.00 (`soapbar[nfe]`) |
 | `AnaClient` | `from soapbar.contrib.ana import AnaClient` | ANA ServiceANA telemetry, 12 ops (`soapbar[ana]`) |
 
+**What's public and what you can rely on** — the public API is exactly the
+top-level `soapbar` namespace plus the `soapbar.contrib.*` clients, pinned by a
+snapshot test in CI. The contrib clients are a separate, lower stability tier
+(they track externally-owned services). See [`STABILITY.md`](STABILITY.md) for
+the full surface definition, the SemVer policy, and the deprecation process.
+
 ---
 
 ## Comparison with alternatives
