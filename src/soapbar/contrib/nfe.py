@@ -57,8 +57,20 @@ def _local(elem_qname: str) -> str:
     return elem_qname.rsplit("}", 1)[-1]
 
 
+def _check_tp_amb(tp_amb: int) -> None:
+    # tpAmb is interpolated into the message body; only 1 (produção) / 2
+    # (homologação) are valid, so reject anything else rather than emit it.
+    if tp_amb not in (1, 2):
+        raise NfeError(f"tpAmb must be 1 (produção) or 2 (homologação), got {tp_amb!r}")
+
+
 def build_cons_stat_serv(uf: str, tp_amb: int = 2) -> str:
     """Build a ``consStatServ`` (service-status query) message."""
+    # cUF is a 2-digit IBGE state code; validate before interpolating it into
+    # the body (an unchecked value is an XML-injection vector).
+    if not (len(uf) == 2 and uf.isdigit()):
+        raise NfeError(f"cUF (uf) must be a 2-digit IBGE code, got {uf!r}")
+    _check_tp_amb(tp_amb)
     return (
         f'<consStatServ xmlns="{NFE_NS}" versao="4.00">'
         f"<tpAmb>{tp_amb}</tpAmb><cUF>{uf}</cUF><xServ>STATUS</xServ>"
@@ -68,6 +80,7 @@ def build_cons_stat_serv(uf: str, tp_amb: int = 2) -> str:
 
 def build_cons_sit_nfe(chave: str, tp_amb: int = 2) -> str:
     """Build a ``consSitNFe`` (protocol/consult) message for a 44-digit key."""
+    _check_tp_amb(tp_amb)
     return (
         f'<consSitNFe xmlns="{NFE_NS}" versao="4.00">'
         f"<tpAmb>{tp_amb}</tpAmb><xServ>CONSULTAR</xServ><chNFe>{chave}</chNFe>"

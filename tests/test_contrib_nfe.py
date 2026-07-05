@@ -101,6 +101,29 @@ def test_build_cons_stat_serv() -> None:
     assert "<cUF>31</cUF>" in msg and "<xServ>STATUS</xServ>" in msg
 
 
+@pytest.mark.parametrize("bad_uf", ["3", "311", "3A", "", "31</cUF><evil/>"])
+def test_build_cons_stat_serv_rejects_bad_uf(bad_uf: str) -> None:
+    # cUF is interpolated into the body; a non-2-digit value (incl. an XML
+    # injection attempt) is rejected, not emitted.
+    with pytest.raises(NfeError, match="cUF"):
+        build_cons_stat_serv(bad_uf, 2)
+
+
+@pytest.mark.parametrize("bad_amb", [0, 3, -1])
+def test_builders_reject_bad_tp_amb(bad_amb: int) -> None:
+    from soapbar.contrib.nfe import build_cons_sit_nfe
+    with pytest.raises(NfeError, match="tpAmb"):
+        build_cons_stat_serv("31", bad_amb)
+    with pytest.raises(NfeError, match="tpAmb"):
+        build_cons_sit_nfe("1" * 44, bad_amb)
+
+
+def test_status_servico_rejects_bad_uf() -> None:
+    nfe = NfeClient(cert_pem=b"x", key_pem=b"y")
+    with pytest.raises(NfeError, match="cUF"):
+        nfe.status_servico("https://uf/ws", uf="XX", tp_amb=2)
+
+
 def test_status_result_parsing_and_operational() -> None:
     result = NfeStatusResult.from_xml(
         f'<retConsStatServ xmlns="{NFE_NS}"><cStat>107</cStat>'
