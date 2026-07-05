@@ -199,3 +199,49 @@ def test_live_fault_map(vat: str, exc: type[Exception]) -> None:
     # so the fault→typed-exception mapping gets real (no-secret) coverage.
     with ViesClient(endpoint=_VIES_TEST_ENDPOINT) as client, pytest.raises(exc):
         client.check_vat("BE", vat)
+
+
+#: A real, long-lived VAT number: the National Bank of Belgium. Belgium is one
+#: of the member states that *discloses* trader name/address (unlike DE/ES,
+#: which return "---"), so it exercises the full result parsing end-to-end.
+_STABLE_VALID_VAT = ("BE", "0203201340")
+
+
+@pytest.mark.live
+def test_live_check_vat_production() -> None:
+    # Real *production* endpoint (the default), not the deterministic test
+    # service: proves the integration against the live world — real trader
+    # name/address parsing and the xsd:date-with-offset requestDate. Transient
+    # service conditions (rate limiting / member-state downtime) skip rather
+    # than fail, so a flaky node never breaks the suite.
+    with ViesClient() as client:
+        try:
+            valid = client.check_vat(*_STABLE_VALID_VAT)
+            invalid = client.check_vat("BE", "0000000000")
+        except (ViesRateLimitError, ViesUnavailableError) as exc:  # pragma: no cover
+            pytest.skip(f"VIES transient condition: {exc}")
+    # A disclosing member state returns a real name and address (not "---").
+    assert valid.valid is True
+    assert valid.name and valid.name != "---"
+    assert valid.address and valid.address != "---"
+    assert valid.request_date  # xsd:date carrying a timezone offset
+    # A well-formed but non-existent number is a clean negative, not a fault.
+    assert invalid.valid is False
+
+
+@pytest.mark.live
+def test_live_check_vat_approx_production() -> None:
+    # checkVatApprox against the live production service must return the
+    # proof-of-consultation token (requestIdentifier) when a requester VAT is
+    # supplied — the audit trail businesses are required to keep.
+    with ViesClient() as client:
+        try:
+            result = client.check_vat_approx(
+                *_STABLE_VALID_VAT,
+                requester_country_code="BE",
+                requester_vat_number="0203201340",
+            )
+        except (ViesRateLimitError, ViesUnavailableError) as exc:  # pragma: no cover
+            pytest.skip(f"VIES transient condition: {exc}")
+    assert result.valid is True
+    assert result.request_identifier  # non-empty consultation token
