@@ -43,9 +43,14 @@ Contract quirks worth knowing (all observed on live envelopes):
   rejected silently, so ``input_params`` are kept in the documented order.
 * Result fragments have two roots (``xs:schema`` + ``diffgr:diffgram``) and
   the DataSet rows inherit the MRCS default namespace; the row element is named
-  per operation (``Table``, ``SerieHistorica``, ``DadosHidrometeorologicos``,
-  …), so :func:`_rows` reads the diffgram's DataSet children generically rather
-  than by a fixed table name.
+  per operation and is sometimes even misspelled — ``Table`` for the catalogues,
+  ``SerieHistorica`` for the series, and (typo and all) ``DadosHidrometereologicos``
+  for the telemetric reads — so :func:`_rows` reads the diffgram's DataSet
+  children generically rather than by a fixed table name.
+* ``DadosHidrometeorologicos`` / ``…Gerais`` report "no data for this
+  station/period" (or a rejected filter) not as an empty DataSet or a fault but
+  as a single row with an ``<Error>`` column; this client raises
+  :class:`AnaError` carrying that message.
 
 The row *column names* inside the DataSet vary per operation and are returned
 verbatim in each row dict (and in ``SerieHistoricaRegistro.raw``); the two
@@ -261,7 +266,15 @@ class AnaClient:
         return str(frag)
 
     def _call_rows(self, op: str, **kwargs: Any) -> list[dict[str, str | None]]:
-        return _rows(self._call_raw(op, **kwargs))
+        rows = _rows(self._call_raw(op, **kwargs))
+        # Some operations (e.g. DadosHidrometeorologicos) signal "no data for
+        # this station/period" — or a rejected filter — not with an empty
+        # DataSet or a SOAP fault, but with a single-row DataSet whose only
+        # column is <Error>. Surface the service's own message as AnaError so a
+        # caller never mistakes it for a data row.
+        if len(rows) == 1 and set(rows[0]) == {"Error"}:
+            raise AnaError(f"{op}: {rows[0]['Error']}")
+        return rows
 
     # -- public API: telemetric data --------------------------------------------
 

@@ -196,6 +196,25 @@ def test_soap_action_and_wrapper_namespace() -> None:
 
 # -- error handling -----------------------------------------------------------
 
+def test_error_row_becomes_anaerror() -> None:
+    # DadosHidrometeorologicos signals "no data" with a single <Error> column
+    # row (not an empty set / fault); the client raises it with the message.
+    msg = "Sem dados para esta estação (Código: 15120500) no período solicitado!"
+    ana = AnaClient(transport=_FakeTransport(
+        _dataset_envelope("DadosHidrometeorologicos", [{"Error": msg}])))
+    with pytest.raises(AnaError, match="Sem dados"):
+        ana.dados_hidrometeorologicos("15120500", "01/07/2026", "05/07/2026")
+
+
+def test_error_column_alongside_data_is_not_an_error() -> None:
+    # A row that merely *contains* an Error column among real data is not the
+    # no-data signal (which is a lone <Error> column).
+    ana, _t = _client("DadosHidrometeorologicos",
+                      [{"CodEstacao": "1", "Nivel": "57312", "Error": "x"}])
+    rows = ana.dados_hidrometeorologicos("1", "01/07/2026", "05/07/2026")
+    assert rows == [{"CodEstacao": "1", "Nivel": "57312", "Error": "x"}]
+
+
 def test_empty_result_raises_anaerror() -> None:
     env = (
         '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
