@@ -30,6 +30,7 @@ from typing import Any
 from soapbar.client.client import SoapClient
 from soapbar.client.transport import HttpTransport
 from soapbar.core.binding import BindingStyle, OperationParameter, OperationSignature
+from soapbar.core.exceptions import SoapbarError
 from soapbar.core.types import xsd
 from soapbar.core.wssecurity import UsernameTokenCredential
 
@@ -39,13 +40,24 @@ STORE_NS = "http://www.witsml.org/message/120"
 ACTION_BASE = "http://www.witsml.org/action/120/Store."
 
 
-class WitsmlError(Exception):
-    """A WITSML STORE call returned a negative result code."""
+class WitsmlError(SoapbarError):
+    """Base class for WITSML STORE errors, carrying the WITSML result ``code``.
+
+    ``code`` is the numeric WITSML result: a negative value is a server-reported
+    error (see :class:`WitsmlServerError`), and ``0`` is used here for a
+    protocol-level problem such as a response missing its ``Result`` element.
+    """
 
     def __init__(self, code: int, message: str = "") -> None:
         self.code = code
         self.message = message
         super().__init__(f"WITSML error {code}" + (f": {message}" if message else ""))
+
+
+class WitsmlServerError(WitsmlError):
+    """The STORE server returned a negative WITSML result code (a real
+    server-side failure, as opposed to a malformed/missing response envelope,
+    which stays a plain :class:`WitsmlError`)."""
 
 
 def options_in(**options: Any) -> str:
@@ -145,12 +157,12 @@ class WitsmlClient:
             return None
 
     def _check(self, resp: Any) -> int:
-        """Return the result code, raising WitsmlError on a negative value."""
+        """Return the result code, raising on a negative or missing value."""
         code = self._result_code(resp)
         if code is None:
             raise WitsmlError(0, "no Result code in WITSML response")
         if code < 0:
-            raise WitsmlError(code, self._safe_base_message(code))
+            raise WitsmlServerError(code, self._safe_base_message(code))
         return code
 
     def _safe_base_message(self, code: int) -> str:

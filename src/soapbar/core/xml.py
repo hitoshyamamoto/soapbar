@@ -8,6 +8,8 @@ from pathlib import Path
 from lxml import etree
 from lxml.etree import _Element
 
+from soapbar.core.exceptions import SoapbarError
+
 # ---------------------------------------------------------------------------
 # Hardened parser factory
 # ---------------------------------------------------------------------------
@@ -60,13 +62,15 @@ def sub_element(
 # Parsing
 # ---------------------------------------------------------------------------
 
-class BodyTooLargeError(ValueError):
+class BodyTooLargeError(SoapbarError, ValueError):
     """Raised when a request body (or a decoded/expanded form of it) exceeds
     the configured size limit.
 
-    Subclasses :class:`ValueError` so existing ``except (ValueError, TypeError)``
-    handlers still treat it as a client error, but the distinct type lets the
-    ingress adapters recognise a size-limit breach specifically (as opposed to a
+    Subclasses both :class:`~soapbar.core.exceptions.SoapbarError` (so
+    ``except SoapbarError`` catches it like any other soapbar error) and
+    :class:`ValueError` (so existing ``except (ValueError, TypeError)`` handlers
+    still treat it as a client error). The distinct type lets the ingress
+    adapters recognise a size-limit breach specifically (as opposed to a
     malformed-input ``ValueError``) and translate it into the standard
     oversized-request fault rather than a generic 500.
     """

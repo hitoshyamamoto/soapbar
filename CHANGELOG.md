@@ -6,6 +6,30 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+Public-API stabilization toward a future 1.0 contract. Changes are additive and
+backwards compatible unless noted.
+
+### Added
+
+- **`SoapbarError`** — a common base class for every exception soapbar raises
+  deliberately (`from soapbar import SoapbarError`). Callers can now
+  `except SoapbarError` to catch any library-originated failure. All existing
+  error types were reparented onto it: `SoapFault`, `XmlSecurityError`,
+  `SecurityValidationError`, `BodyTooLargeError` (which also keeps `ValueError`
+  as a base for back-compat), and the contrib errors `NfeError`, `AnaError`,
+  `WitsmlError`, `ViesError`. This is non-breaking — `except <SpecificError>`
+  and `except Exception` continue to work; it only adds a new grouping.
+- **Typed contrib sub-hierarchies** for consistency with `ViesError`:
+  `NfeInputError` (caller-side precondition failures), `AnaServiceError`
+  (ServiceANA returned no usable data / an `<Error>` column), and
+  `WitsmlServerError` (STORE server returned a negative result code). Existing
+  `except NfeError` / `except AnaError` / `except WitsmlError` still catch these
+  as before.
+
+---
+
 ## [0.14.1] — 2026-07-05
 
 A hardening and documentation patch closing the deferred P2 items from the
