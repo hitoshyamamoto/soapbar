@@ -24,14 +24,21 @@ def _unwrap_optional(hint: Any) -> tuple[Any, bool]:
     return hint, False
 
 
-class _SoapMethod(Protocol):
-    """Protocol for methods decorated with @soap_operation."""
+class SoapMethod(Protocol):
+    """The type of a method decorated with :func:`soap_operation`.
+
+    A callable carrying the ``__soap_operation__`` signature attribute. This is
+    the value type of :meth:`SoapService.get_operations`; it is part of the
+    public API so callers can annotate against it.
+    """
+
     __soap_operation__: OperationSignature
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 def soap_operation(
+    *,
     name: str | None = None,
     input_params: list[OperationParameter] | None = None,
     output_params: list[OperationParameter] | None = None,
@@ -103,9 +110,9 @@ class SoapService:
     __port_name__: str = ""
     __service_url__: str = "http://localhost:8000/soap"
 
-    def get_operations(self) -> dict[str, _SoapMethod]:
+    def get_operations(self) -> dict[str, SoapMethod]:
         """Return {operation_name: method} for all @soap_operation methods."""
-        result: dict[str, _SoapMethod] = {}
+        result: dict[str, SoapMethod] = {}
         for attr_name in dir(self.__class__):
             if attr_name.startswith("_"):
                 continue

@@ -13,6 +13,12 @@ backwards compatible unless noted.
 
 ### Changed
 
+- **`soap_operation` arguments are now keyword-only** (completing the freeze
+  above): `@soap_operation(name=..., one_way=..., …)`. Decorators are
+  conventionally called by keyword, so this is expected to affect no callers.
+- **`get_operations()` now returns `dict[str, SoapMethod]`** — the value type is
+  the newly-public `SoapMethod` (renamed from the private `_SoapMethod`), so the
+  public signature no longer leaks a private name. Behaviour is unchanged.
 - **Optional arguments are now keyword-only** across the public API, so their
   order is no longer part of the frozen contract and new options can be inserted
   without breaking callers. Required "leader" arguments stay positional-or-keyword
@@ -32,6 +38,16 @@ backwards compatible unless noted.
 
 ### Added
 
+- **Promoted to the top-level namespace** several names that were already used
+  as API from deep import paths (documentation pointed users at them, examples
+  and tests imported them): `BodyTooLargeError`, `AnyXmlType`,
+  `extract_xop_elements`, `WSA_ANONYMOUS`, `WSA_NONE`, `local_name`,
+  `namespace_uri`, and the now-public `SoapMethod`. They are importable directly
+  from `soapbar` and covered by the snapshot freeze. The deep import paths still
+  work but the top-level name is the stable one.
+- **Curated `__all__` for every contrib module** (`vies`, `nfe`, `ana`,
+  `witsml`), so each contrib client's public surface is explicit and frozen by
+  the snapshot test rather than being every module-level name by default.
 - **Public-API snapshot test** (`tests/test_public_api.py`) — freezes the exact
   set of top-level exports (`soapbar.__all__`) and the signatures (parameter
   names *and* keyword-only vs positional kind) of the security-critical

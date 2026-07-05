@@ -40,6 +40,20 @@ from soapbar.core.exceptions import SoapbarError
 from soapbar.core.types import AnyXmlType
 from soapbar.core.wssecurity import sign_element_by_id
 
+__all__ = [
+    "CONSULTA_PROTOCOLO_NS",
+    "NFE_NS",
+    "STATUS_SERVICO_NS",
+    "NfeClient",
+    "NfeError",
+    "NfeInputError",
+    "NfeStatusResult",
+    "build_cons_sit_nfe",
+    "build_cons_stat_serv",
+    "extract_infnfe_id",
+    "sign_nfe",
+]
+
 #: NF-e message content namespace (the <consStatServ>, <NFe>, … elements).
 NFE_NS = "http://www.portalfiscal.inf.br/nfe"
 #: Per-service WSDL namespaces (standardised nationally for layout 4.00).

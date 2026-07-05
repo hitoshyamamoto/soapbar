@@ -90,6 +90,18 @@ from soapbar.core.exceptions import SoapbarError
 from soapbar.core.types import AnyXmlType, xsd
 from soapbar.core.xml import local_name, parse_xml
 
+__all__ = [
+    "ANA_NS",
+    "DEFAULT_ENDPOINT",
+    "AnaClient",
+    "AnaError",
+    "AnaServiceError",
+    "OrigemTelemetrica",
+    "SerieHistoricaRegistro",
+    "TipoDados",
+    "TipoEstacao",
+]
+
 #: ServiceANA namespace (yes, it is literally ``http://MRCS/``).
 ANA_NS = "http://MRCS/"
 DEFAULT_ENDPOINT = "https://telemetriaws1.ana.gov.br/ServiceANA.asmx"

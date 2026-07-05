@@ -34,6 +34,15 @@ from soapbar.core.exceptions import SoapbarError
 from soapbar.core.types import xsd
 from soapbar.core.wssecurity import UsernameTokenCredential
 
+__all__ = [
+    "ACTION_BASE",
+    "STORE_NS",
+    "WitsmlClient",
+    "WitsmlError",
+    "WitsmlServerError",
+    "options_in",
+]
+
 #: WITSML 1.4.1.1 message namespace (the RPC wrapper element namespace).
 STORE_NS = "http://www.witsml.org/message/120"
 #: SOAPAction prefix; the full action is ``…/Store.<Operation>``.

@@ -21,6 +21,8 @@ from soapbar.core.binding import (
     get_serializer,
 )
 from soapbar.core.envelope import (
+    WSA_ANONYMOUS,
+    WSA_NONE,
     SoapEnvelope,
     SoapHeaderBlock,
     SoapVersion,
@@ -34,9 +36,22 @@ from soapbar.core.envelope import (
 )
 from soapbar.core.exceptions import SoapbarError
 from soapbar.core.fault import SoapFault
-from soapbar.core.mtom import MtomAttachment, MtomMessage, build_mtom, parse_mtom
+from soapbar.core.mtom import (
+    MtomAttachment,
+    MtomMessage,
+    build_mtom,
+    extract_xop_elements,
+    parse_mtom,
+)
 from soapbar.core.namespaces import NS
-from soapbar.core.types import ArrayXsdType, ChoiceXsdType, ComplexXsdType, XsdType, xsd
+from soapbar.core.types import (
+    AnyXmlType,
+    ArrayXsdType,
+    ChoiceXsdType,
+    ComplexXsdType,
+    XsdType,
+    xsd,
+)
 from soapbar.core.wsdl import (
     WsdlBinding,
     WsdlBindingOperation,
@@ -67,12 +82,20 @@ from soapbar.core.wssecurity import (
     verify_envelope,
     verify_envelope_bsp,
 )
-from soapbar.core.xml import parse_xml, parse_xml_document, to_bytes, to_string
+from soapbar.core.xml import (
+    BodyTooLargeError,
+    local_name,
+    namespace_uri,
+    parse_xml,
+    parse_xml_document,
+    to_bytes,
+    to_string,
+)
 from soapbar.server.application import SoapApplication
 from soapbar.server.asgi import AsgiSoapApp
 
 # Server
-from soapbar.server.service import SoapService, soap_operation
+from soapbar.server.service import SoapMethod, SoapService, soap_operation
 from soapbar.server.wsgi import WsgiSoapApp
 
 __all__ = [  # noqa: RUF022
@@ -83,11 +106,15 @@ __all__ = [  # noqa: RUF022
     "parse_xml_document",
     "to_string",
     "to_bytes",
+    "local_name",
+    "namespace_uri",
+    "BodyTooLargeError",
     "xsd",
     "XsdType",
     "ComplexXsdType",
     "ArrayXsdType",
     "ChoiceXsdType",
+    "AnyXmlType",
     "SoapbarError",
     "SoapFault",
     "BindingStyle",
@@ -99,6 +126,8 @@ __all__ = [  # noqa: RUF022
     "SoapVersion",
     "WsaHeaders",
     "WsaEndpointReference",
+    "WSA_ANONYMOUS",
+    "WSA_NONE",
     "build_request",
     "build_response",
     "build_fault",
@@ -123,6 +152,7 @@ __all__ = [  # noqa: RUF022
     "MtomMessage",
     "parse_mtom",
     "build_mtom",
+    "extract_xop_elements",
     "UsernameTokenCredential",
     "UsernameTokenValidator",
     "SecurityValidationError",
@@ -139,6 +169,7 @@ __all__ = [  # noqa: RUF022
     "decrypt_body",
     # server
     "SoapService",
+    "SoapMethod",
     "SoapApplication",
     "soap_operation",
     "AsgiSoapApp",
