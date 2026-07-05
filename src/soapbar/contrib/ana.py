@@ -42,8 +42,10 @@ Contract quirks worth knowing (all observed on live envelopes):
   against the schema ``sequence``: a wrong element *case* or *order* is
   rejected silently, so ``input_params`` are kept in the documented order.
 * Result fragments have two roots (``xs:schema`` + ``diffgr:diffgram``) and
-  the DataSet rows inherit the MRCS default namespace, hence the wrapper-parse
-  and local-name (``{*}Table``) matching in :func:`_rows`.
+  the DataSet rows inherit the MRCS default namespace; the row element is named
+  per operation (``Table``, ``SerieHistorica``, ``DadosHidrometeorologicos``,
+  …), so :func:`_rows` reads the diffgram's DataSet children generically rather
+  than by a fixed table name.
 
 The row *column names* inside the DataSet vary per operation and are returned
 verbatim in each row dict (and in ``SerieHistoricaRegistro.raw``); the two
@@ -121,18 +123,34 @@ def _s(name: str, required: bool = True) -> OperationParameter:
     return OperationParameter(name, t, required=required)
 
 
-def _rows(fragment: str, table: str = "Table") -> list[dict[str, str | None]]:
+def _rows(fragment: str) -> list[dict[str, str | None]]:
     """Flatten a diffgram DataSet fragment into a list of row dicts.
 
-    The fragment has two roots (schema + diffgram) and the DataSet rows inherit
-    the MRCS default namespace, so parse under a wrapper (through the hardened,
-    XXE-safe parser) and match table rows by local name regardless of namespace.
+    The fragment is an inline ``xsd:schema`` followed by a Microsoft diffgram
+    whose DataSet holds one element per record. That row element is named *per
+    operation* — ``Table`` for the catalogues / inventory / station registry,
+    ``SerieHistorica`` for the historical series, ``DadosHidrometeorologicos``
+    for telemetric data, and so on (the schema's ``msdata:MainDataTable``). So
+    rows are taken generically as the children of the DataSet container inside
+    the diffgram — never by a hard-coded table name, which would silently return
+    nothing for the differently-named DataSets.
+
+    Parsing goes through the hardened, XXE-safe parser; DataSet rows inherit the
+    MRCS default namespace, so columns are read by local name.
     """
     root = parse_xml(f"<r>{fragment}</r>".encode())
-    return [
-        {local_name(ch): ch.text for ch in row}
-        for row in root.iter(f"{{*}}{table}")
-    ]
+    diffgram = next((e for e in root.iter() if local_name(e) == "diffgram"), None)
+    if diffgram is None:
+        return []
+    out: list[dict[str, str | None]] = []
+    for dataset in diffgram:
+        # A SELECT result is just <NewDataSet>…</NewDataSet>; skip the optional
+        # diffgr:before / diffgr:after change-tracking sections defensively.
+        if local_name(dataset).lower() in ("before", "after"):
+            continue
+        for row in dataset:
+            out.append({local_name(c): c.text for c in row})
+    return out
 
 
 @dataclass(frozen=True)

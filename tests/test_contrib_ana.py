@@ -24,14 +24,16 @@ from soapbar.contrib.ana import (
 pytest.importorskip("httpx")
 
 
-def _dataset_envelope(op: str, rows: list[dict[str, str]]) -> bytes:
+def _dataset_envelope(op: str, rows: list[dict[str, str]], row_tag: str = "Table") -> bytes:
     """A SOAP 1.1 response for *op* wrapping an ADO.NET DataSet (schema +
-    diffgram). The rows deliberately inherit the MRCS default namespace, as the
-    live service does, to exercise the local-name (`{*}Table`) matching."""
+    diffgram). The row element is named *per operation* on the live service
+    (`Table`, `SerieHistorica`, `DadosHidrometeorologicos`, …); *row_tag* lets a
+    test reproduce that so the client is not silently assuming `Table`. Rows
+    inherit the MRCS default namespace, as the live service does."""
     body = ""
     for r in rows:
         cells = "".join(f"<{k}>{v}</{k}>" for k, v in r.items())
-        body += f"<Table>{cells}</Table>"
+        body += f"<{row_tag}>{cells}</{row_tag}>"
     inner = (
         '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" id="NewDataSet"/>'
         '<diffgr:diffgram xmlns:diffgr="urn:schemas-microsoft-com:xml-diffgram-v1">'
@@ -57,45 +59,70 @@ class _FakeTransport(HttpTransport):
         return 200, "text/xml", self._body
 
 
-def _client(op: str, rows: list[dict[str, str]]) -> tuple[AnaClient, _FakeTransport]:
-    t = _FakeTransport(_dataset_envelope(op, rows))
+def _client(
+    op: str, rows: list[dict[str, str]], row_tag: str = "Table"
+) -> tuple[AnaClient, _FakeTransport]:
+    t = _FakeTransport(_dataset_envelope(op, rows, row_tag))
     return AnaClient(transport=t), t
 
 
 # -- _rows: diffgram flattening ------------------------------------------------
 
-def test_rows_flattens_dataset_by_local_name() -> None:
-    fragment = (
+def _fragment(row_tag: str, rows: list[dict[str, str]]) -> str:
+    body = "".join(
+        f"<{row_tag}>" + "".join(f"<{k}>{v}</{k}>" for k, v in r.items()) + f"</{row_tag}>"
+        for r in rows
+    )
+    return (
         '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"/>'
         '<diffgr:diffgram xmlns:diffgr="urn:schemas-microsoft-com:xml-diffgram-v1">'
-        f'<NewDataSet xmlns="{ANA_NS}">'  # rows inherit MRCS → {*}Table match
-        "<Table><EstacaoCodigo>61135000</EstacaoCodigo><Vazao>12.3</Vazao></Table>"
-        "<Table><EstacaoCodigo>61136000</EstacaoCodigo><Vazao>4.5</Vazao></Table>"
-        "</NewDataSet></diffgr:diffgram>"
+        f'<NewDataSet xmlns="{ANA_NS}">{body}</NewDataSet>'  # rows inherit MRCS
+        "</diffgr:diffgram>"
     )
-    rows = _rows(fragment)
-    assert rows == [
-        {"EstacaoCodigo": "61135000", "Vazao": "12.3"},
-        {"EstacaoCodigo": "61136000", "Vazao": "4.5"},
-    ]
+
+
+def test_rows_flattens_dataset_regardless_of_table_name() -> None:
+    # Rows are the DataSet's children whatever the row element is named — the
+    # catalogues use <Table>, but HidroSerieHistorica names them <SerieHistorica>
+    # (and the client must NOT silently return nothing for those).
+    for tag in ("Table", "SerieHistorica", "DadosHidrometeorologicos"):
+        rows = _rows(_fragment(tag, [
+            {"EstacaoCodigo": "61135000", "Valor": "12.3"},
+            {"EstacaoCodigo": "61136000", "Valor": "4.5"},
+        ]))
+        assert rows == [
+            {"EstacaoCodigo": "61135000", "Valor": "12.3"},
+            {"EstacaoCodigo": "61136000", "Valor": "4.5"},
+        ], f"row element <{tag}> not flattened"
+
+
+def test_rows_without_diffgram_is_empty() -> None:
+    # A fragment with no diffgram (e.g. schema-only) yields no rows, not an error.
+    assert _rows('<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"/>') == []
 
 
 # -- round-trip ---------------------------------------------------------------
 
 def test_serie_historica_round_trip() -> None:
-    ana, _t = _client("HidroSerieHistorica", [
-        {"EstacaoCodigo": "61135000", "DataHora": "2026-01-01", "Vazao": "10"},
-    ])
+    # The live HidroSerieHistorica DataSet names its rows <SerieHistorica>, not
+    # <Table> — the client must extract them regardless (this fixture would have
+    # yielded 0 rows against the old hard-coded-"Table" extraction).
+    ana, _t = _client(
+        "HidroSerieHistorica",
+        [{"EstacaoCodigo": "61135000", "DataHora": "2005-12-01 00:00:00",
+          "Maxima": "835", "Minima": "379"}],
+        row_tag="SerieHistorica",
+    )
     serie = ana.serie_historica(
-        cod_estacao="61135000", data_inicio="01/01/2026", data_fim="30/06/2026",
-        tipo_dados=TipoDados.VAZOES, nivel_consistencia=1,
+        cod_estacao="61135000", data_inicio="01/01/2005", data_fim="31/12/2005",
+        tipo_dados=TipoDados.COTAS, nivel_consistencia=2,
     )
     assert len(serie) == 1
     reg = serie[0]
     assert isinstance(reg, SerieHistoricaRegistro)
-    assert reg.cod_estacao == "61135000"
-    assert reg.data_hora == "2026-01-01"
-    assert reg.raw["Vazao"] == "10"  # full row preserved verbatim
+    assert reg.cod_estacao == "61135000"      # typed shortcut resolved
+    assert reg.data_hora == "2005-12-01 00:00:00"
+    assert reg.raw["Maxima"] == "835"          # full row preserved verbatim
 
 
 def test_catalogue_returns_raw_rows() -> None:
