@@ -4,11 +4,11 @@
 
 | Version  | Supported |
 |----------|-----------|
-| 0.14.x   | ✓         |
-| < 0.14   | ✗         |
+| 0.15.x   | ✓         |
+| < 0.15   | ✗         |
 
 Being pre-1.0, only the latest released minor line receives security fixes;
-upgrade to the newest `0.14.x` to stay supported.
+upgrade to the newest `0.15.x` to stay supported.
 
 ## Reporting a Vulnerability
 
