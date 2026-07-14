@@ -252,8 +252,14 @@ class TestSoapbarSelfInterop:
 try:
     import spyne as _spyne  # noqa: F401
     _HAS_SPYNE = True
-except ImportError:
+    _SPYNE_SKIP_REASON = ""
+except ImportError as _spyne_exc:
+    # spyne 2.14 *installs* on Python >= 3.12 but fails to import
+    # (``ModuleNotFoundError: No module named 'spyne.util.six.moves'``), so a
+    # bare "spyne not installed" reason would be misleading. Surface the real
+    # error and distinguish genuinely-missing from installed-but-unimportable.
     _HAS_SPYNE = False
+    _SPYNE_SKIP_REASON = f"spyne unavailable on this Python: {_spyne_exc}"
 
 
 def _make_spyne_wsgi(soap_version: SoapVersion) -> Any:
@@ -347,7 +353,7 @@ class _SpyneWsgiTransport(HttpTransport):
         return data
 
 
-@pytest.mark.skipif(not _HAS_SPYNE, reason="spyne not installed")
+@pytest.mark.skipif(not _HAS_SPYNE, reason=_SPYNE_SKIP_REASON or "spyne not installed")
 class TestSpyneInterop:
     """soapbar client ↔ spyne server interoperability.
 

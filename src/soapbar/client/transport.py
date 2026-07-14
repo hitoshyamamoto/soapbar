@@ -6,12 +6,34 @@ from __future__ import annotations
 import urllib.error
 import urllib.request
 from typing import Any, Union
+from urllib.parse import urlparse
 
 # A client certificate may be given as httpx-native file paths (a single
 # combined PEM, or a ``(certfile, keyfile)`` / ``(certfile, keyfile, password)``
 # tuple), or as in-memory PEM bytes ``(cert_pem, key_pem)`` — typically the
 # output of :func:`load_pkcs12`, which never touches the disk.
 ClientCert = Union[str, "tuple[str, str]", "tuple[str, str, str]", "tuple[bytes, bytes]", None]
+
+_ALLOWED_URL_SCHEMES = ("http", "https")
+
+
+def _require_http_url(url: str) -> None:
+    """Reject any URL whose scheme is not ``http`` or ``https``.
+
+    ``urllib.request.urlopen`` will happily dereference ``file://`` and
+    ``ftp://`` URLs, so a request URL sourced from untrusted input (e.g. a
+    ``wsdl_url`` supplied by a caller) could otherwise read local files
+    (``file:///etc/passwd``) via the urllib fallback path — a local-file
+    disclosure. Restricting the scheme here closes that surface and mirrors the
+    SSRF/LFI guard already applied to ``wsdl:import`` resolution in the WSDL
+    parser. Raises :class:`ValueError` for any other scheme.
+    """
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in _ALLOWED_URL_SCHEMES:
+        raise ValueError(
+            f"Unsupported URL scheme {scheme!r} in {url!r}; "
+            "only 'http' and 'https' are allowed."
+        )
 
 
 class HttpTransport:
@@ -217,9 +239,10 @@ class HttpTransport:
         body: bytes,
         headers: dict[str, str],
     ) -> tuple[int, str, bytes]:
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")  # noqa: S310
+        _require_http_url(url)
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")  # noqa: S310 — scheme restricted to http(s) by _require_http_url
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 — scheme restricted to http(s) by _require_http_url
                 ct = resp.headers.get("Content-Type", "text/xml")
                 raw = resp.read()
                 ct, raw = self._decode_mtom_if_needed(ct, raw)
@@ -251,6 +274,7 @@ class HttpTransport:
 
     def fetch(self, url: str) -> bytes:
         """GET request for WSDL retrieval."""
+        _require_http_url(url)
         try:
             import httpx  # noqa: F401
         except ImportError:
@@ -259,7 +283,7 @@ class HttpTransport:
                     "Client certificate / custom CA bundle require httpx. "
                     "Install soapbar[client]."
                 ) from None
-            with urllib.request.urlopen(url, timeout=self.timeout) as resp:  # noqa: S310
+            with urllib.request.urlopen(url, timeout=self.timeout) as resp:  # noqa: S310 — scheme restricted to http(s) by _require_http_url
                 return bytes(resp.read())
         client = self._get_httpx_client()
         resp = client.get(url)
