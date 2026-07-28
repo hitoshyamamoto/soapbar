@@ -5,6 +5,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/soapbar.svg?logo=python&logoColor=white)](https://pypi.org/project/soapbar/)
 [![License](https://img.shields.io/pypi/l/soapbar.svg)](https://github.com/hitoshyamamoto/soapbar/blob/main/LICENSE)
 [![Conformance suite](https://img.shields.io/badge/conformance%20suite-116%20tests-blue)](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/audit/test_compliance.py)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hitoshyamamoto/soapbar/badge)](https://scorecard.dev/viewer/?uri=github.com/hitoshyamamoto/soapbar)
 
 A SOAP library for Python — client, server, and WSDL handling.
 
