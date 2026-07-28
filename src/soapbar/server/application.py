@@ -93,11 +93,11 @@ def _validate_input_params(sig: OperationSignature, kwargs: dict[str, Any]) -> N
 class SoapApplication:
     """Framework-agnostic SOAP dispatcher: routes envelopes to services.
 
-    Register :class:`~soapbar.server.service.SoapService` instances with
-    :meth:`register`, then expose the application over HTTP through
-    :class:`~soapbar.server.asgi.AsgiSoapApp` or
-    :class:`~soapbar.server.wsgi.WsgiSoapApp` (or call
-    :meth:`handle_request` from a custom adapter). Serves the
+    Register ``SoapService`` instances with
+    ``register``, then expose the application over HTTP through
+    ``AsgiSoapApp`` or
+    ``WsgiSoapApp`` (or call
+    ``handle_request`` from a custom adapter). Serves the
     auto-generated (or *custom_wsdl*) WSDL on ``?wsdl`` requests, subject
     to *wsdl_access*.
 
@@ -250,7 +250,7 @@ class SoapApplication:
 
         Exposed so the WSGI/ASGI adapters can enforce the same limit *before*
         they decompress or MTOM-decode a body — stages that run ahead of
-        :meth:`handle_request` and can amplify a small body into a huge one.
+        ``handle_request`` and can amplify a small body into a huge one.
         """
         return self._max_body_size
 

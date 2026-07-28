@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 @dataclass
 class WsdlPart:
+    """A ``wsdl:part`` of a message: a named reference to an element or type."""
+
     name: str
     element: str | None = None
     type: str | None = None
@@ -26,18 +28,25 @@ class WsdlPart:
 
 @dataclass
 class WsdlMessage:
+    """A ``wsdl:message``: a named list of ``WsdlPart`` entries."""
+
     name: str
     parts: list[WsdlPart] = field(default_factory=list)
 
 
 @dataclass
 class WsdlOperationMessage:
+    """An operation's input/output/fault slot referencing a message by QName."""
+
     message: str  # QName ref to WsdlMessage
     name: str | None = None
 
 
 @dataclass
 class WsdlOperation:
+    """A ``wsdl:operation`` in a port type: name, documentation, and its
+    input/output/fault message references."""
+
     name: str
     documentation: str = ""
     input: WsdlOperationMessage | None = None
@@ -47,12 +56,17 @@ class WsdlOperation:
 
 @dataclass
 class WsdlPortType:
+    """A ``wsdl:portType``: the abstract interface, a named set of operations."""
+
     name: str
     operations: list[WsdlOperation] = field(default_factory=list)
 
 
 @dataclass
 class WsdlBindingOperation:
+    """Per-operation SOAP binding details: ``soapAction``, style and use
+    overrides, and input/output body namespaces."""
+
     name: str
     soap_action: str = ""
     style: str | None = None   # "rpc" or "document" (operation-level override)
@@ -89,6 +103,8 @@ class WsdlBinding:
 
 @dataclass
 class WsdlPort:
+    """A ``wsdl:port``: a binding bound to a concrete endpoint address."""
+
     name: str
     binding: str  # QName ref
     address: str = ""
@@ -96,12 +112,21 @@ class WsdlPort:
 
 @dataclass
 class WsdlService:
+    """A ``wsdl:service``: a named collection of ``WsdlPort`` entries."""
+
     name: str
     ports: list[WsdlPort] = field(default_factory=list)
 
 
 @dataclass
 class WsdlDefinition:
+    """In-memory model of a complete WSDL 1.1 document.
+
+    Produced by ``parse_wsdl`` / ``parse_wsdl_file`` and consumed by
+    ``build_wsdl``; messages, port types, bindings, and services are keyed
+    by local name, with parsed schema types in ``complex_types``.
+    """
+
     name: str = ""
     target_namespace: str = ""
     messages: dict[str, WsdlMessage] = field(default_factory=dict)

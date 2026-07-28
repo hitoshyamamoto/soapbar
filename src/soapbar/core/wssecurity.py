@@ -186,7 +186,7 @@ class SecurityValidationError(SoapbarError):
 class UsernameTokenValidator(ABC):
     """Abstract base class for server-side UsernameToken validation.
 
-    Subclass and implement :meth:`get_password` to look up the expected
+    Subclass and implement ``get_password`` to look up the expected
     password for a given username.  The base class handles digest verification,
     ``wsu:Timestamp`` expiry checking (N05), and nonce replay prevention (N07).
 
@@ -222,7 +222,7 @@ class UsernameTokenValidator(ABC):
 
     def _check_created_freshness(self, created_text: str, label: str) -> None:
         """Reject a ``Created`` value that is stale (replay) or implausibly
-        future-dated. Governed by :attr:`max_created_age` / :attr:`max_clock_skew`."""
+        future-dated. Governed by ``max_created_age`` / ``max_clock_skew``."""
         if self.max_created_age is None and self.max_clock_skew is None:
             return
         try:
@@ -494,7 +494,7 @@ def sign_element_by_id(
 ) -> bytes:
     """Sign one *internal* element of a document, selected by its ``Id``.
 
-    Unlike :func:`sign_envelope` (which covers the whole SOAP envelope), this
+    Unlike ``sign_envelope`` (which covers the whole SOAP envelope), this
     produces an enveloped ``ds:Signature`` with a single ``ds:Reference`` whose
     URI is ``#<id_value>`` — the standard XML-DSIG pattern for signing an inner
     element. The ``ds:Signature`` is appended to the document root, so for a
@@ -647,7 +647,7 @@ def verify_envelope(
 ) -> bytes:
     """Verify the XML Digital Signature on a SOAP envelope.
 
-    Not wired into :meth:`SoapApplication.handle_request` automatically —
+    Not wired into ``SoapApplication.handle_request`` automatically —
     callers integrating XML Signature verification MUST invoke this
     function explicitly. For production use, also pass ``expected_references``
     matching the number of ``ds:Reference`` elements the signer pinned
@@ -860,10 +860,10 @@ def decrypt_body(
     *,
     allow_unauthenticated_cbc: bool = False,
 ) -> bytes:
-    """Decrypt the SOAP Body content encrypted by :func:`encrypt_body`.
+    """Decrypt the SOAP Body content encrypted by ``encrypt_body``.
 
     The body cipher is read from the ``xenc:EncryptionMethod`` algorithm.
-    **AES-256-GCM** (the default produced by :func:`encrypt_body`) is
+    **AES-256-GCM** (the default produced by ``encrypt_body``) is
     authenticated: a tampered ciphertext fails the tag check and is rejected.
 
     Legacy **AES-256-CBC** is *unauthenticated* — it is malleable and, because
@@ -1298,14 +1298,14 @@ def verify_envelope_bsp(
     ``verify_cert_trust=False`` to deliberately accept the embedded certificate
     unconditionally (INSECURE — e.g. tests).
 
-    Not wired into :meth:`SoapApplication.handle_request` automatically —
+    Not wired into ``SoapApplication.handle_request`` automatically —
     callers integrating BSP verification MUST invoke this function
     explicitly. For production use, also pass ``expected_references`` matching
     the number of ``ds:Reference`` elements the signer pinned (e.g. ``2``
     for Body + Timestamp); this prevents an attacker from dropping
     references and still getting a successful verify.
 
-    Like :func:`verify_envelope`, by default (``require_signed_body=True``) it
+    Like ``verify_envelope``, by default (``require_signed_body=True``) it
     fails closed unless the signature covers the SOAP Body, defeating
     reference-stripping / partial-coverage signatures.
 

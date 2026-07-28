@@ -8,9 +8,9 @@ SOAP **RPC** service whose WSDL declares no ``<types>`` — all domain data ride
 as an XML *string* inside the operation parameters. This client registers the
 STORE operations manually (soapbar's RPC binding) and adds:
 
-* an :func:`options_in` builder for the ``OptionsIn`` string,
+* an ``options_in`` builder for the ``OptionsIn`` string,
 * return-code handling — a positive ``Result`` is success, a negative one raises
-  :class:`WitsmlError` (whose text is resolved via ``WMLS_GetBaseMsg``).
+  ``WitsmlError`` (whose text is resolved via ``WMLS_GetBaseMsg``).
 
 Domain XML is passed through as strings (build/parse it with the soapbar core
 or your own models); this client owns the protocol, not the data model.
@@ -53,7 +53,7 @@ class WitsmlError(SoapbarError):
     """Base class for WITSML STORE errors, carrying the WITSML result ``code``.
 
     ``code`` is the numeric WITSML result: a negative value is a server-reported
-    error (see :class:`WitsmlServerError`), and ``0`` is used here for a
+    error (see ``WitsmlServerError``), and ``0`` is used here for a
     protocol-level problem such as a response missing its ``Result`` element.
     """
 
@@ -66,7 +66,7 @@ class WitsmlError(SoapbarError):
 class WitsmlServerError(WitsmlError):
     """The STORE server returned a negative WITSML result code (a real
     server-side failure, as opposed to a malformed/missing response envelope,
-    which stays a plain :class:`WitsmlError`)."""
+    which stays a plain ``WitsmlError``)."""
 
 
 def options_in(**options: Any) -> str:

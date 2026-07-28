@@ -50,7 +50,10 @@ class SoapHeaderBlock:
 # must not be routed as real endpoints.  Callers should check
 # ``address in (WSA_ANONYMOUS, WSA_NONE)`` before attempting to route.
 WSA_ANONYMOUS = "http://www.w3.org/2005/08/addressing/anonymous"
-WSA_NONE      = "http://www.w3.org/2005/08/addressing/none"
+"""WS-Addressing anonymous address: reply on the transport back-channel."""
+
+WSA_NONE = "http://www.w3.org/2005/08/addressing/none"
+"""WS-Addressing none address: the message must not be routed anywhere."""
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +145,9 @@ def _parse_ws_addressing(header_blocks: list[SoapHeaderBlock]) -> WsaHeaders | N
 
 
 class SoapVersion(Enum):
+    """SOAP protocol version (1.1 or 1.2), with per-version namespace,
+    content type, and prefix properties."""
+
     SOAP_11 = "1.1"
     SOAP_12 = "1.2"
 
@@ -199,7 +205,7 @@ class SoapEnvelope:
 
     def add_header(self, elem: _Element | SoapHeaderBlock) -> None:
         """Append a header block; a bare element is wrapped in a plain
-        :class:`SoapHeaderBlock` (no ``mustUnderstand``/``role`` attributes)."""
+        ``SoapHeaderBlock`` (no ``mustUnderstand``/``role`` attributes)."""
         if isinstance(elem, SoapHeaderBlock):
             self.header_blocks.append(elem)
         else:
@@ -434,7 +440,7 @@ def build_response(
     header_elements: list[_Element] | None = None,
 ) -> _Element:
     """Build a response ``Envelope`` element; structurally identical to
-    :func:`build_request` (SOAP responses differ only in body content)."""
+    ``build_request`` (SOAP responses differ only in body content)."""
     return build_request(version, body_elements, header_elements)
 
 

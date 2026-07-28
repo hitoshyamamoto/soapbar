@@ -9,9 +9,9 @@ from typing import ClassVar
 class _Namespaces:
     """Registry of the namespace URIs used across SOAP, WSDL, and WS-* specs.
 
-    Exposed as the module-level singleton :data:`NS`. Each constant is the
+    Exposed as the module-level singleton ``NS``. Each constant is the
     canonical URI (e.g. ``NS.SOAP_ENV``, ``NS.WSDL``, ``NS.WSSE``);
-    :attr:`DEFAULT_PREFIXES` maps each URI to the conventional prefix used
+    ``DEFAULT_PREFIXES`` maps each URI to the conventional prefix used
     when serializing. Helper methods build and split Clark-notation
     (``{ns}local``) qualified names.
     """
@@ -67,3 +67,4 @@ class _Namespaces:
 
 
 NS = _Namespaces()
+"""Singleton with every SOAP/WSDL/WS-* namespace URI constant (see ``_Namespaces``)."""

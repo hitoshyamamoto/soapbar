@@ -73,11 +73,11 @@ def parse_mtom(
             A message with many ``<xop:Include>`` references to a large
             attachment can inflate to far more than the raw body (XOP
             amplification); exceeding this bound raises
-            :class:`~soapbar.core.xml.BodyTooLargeError` instead of expanding it
+            ``BodyTooLargeError`` instead of expanding it
             in memory.
 
     Returns:
-        An :class:`MtomMessage` with resolved XML and the tuple of attachments.
+        An ``MtomMessage`` with resolved XML and the tuple of attachments.
 
     Raises:
         ValueError: If the message cannot be parsed as a valid MTOM envelope.
@@ -144,7 +144,7 @@ def _resolve_xop_includes(
     bounded: because a single small attachment can be referenced by arbitrarily
     many ``<xop:Include>`` elements, the resolved document can be orders of
     magnitude larger than the raw body. Exceeding the bound raises
-    :class:`~soapbar.core.xml.BodyTooLargeError`.
+    ``BodyTooLargeError``.
     """
     from lxml import etree
 

@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 # A client certificate may be given as httpx-native file paths (a single
 # combined PEM, or a ``(certfile, keyfile)`` / ``(certfile, keyfile, password)``
 # tuple), or as in-memory PEM bytes ``(cert_pem, key_pem)`` — typically the
-# output of :func:`load_pkcs12`, which never touches the disk.
+# output of ``load_pkcs12``, which never touches the disk.
 ClientCert = Union[str, "tuple[str, str]", "tuple[str, str, str]", "tuple[bytes, bytes]", None]
 
 _ALLOWED_URL_SCHEMES = ("http", "https")
@@ -26,7 +26,7 @@ def _require_http_url(url: str) -> None:
     (``file:///etc/passwd``) via the urllib fallback path — a local-file
     disclosure. Restricting the scheme here closes that surface and mirrors the
     SSRF/LFI guard already applied to ``wsdl:import`` resolution in the WSDL
-    parser. Raises :class:`ValueError` for any other scheme.
+    parser. Raises ``ValueError`` for any other scheme.
     """
     scheme = urlparse(url).scheme.lower()
     if scheme not in _ALLOWED_URL_SCHEMES:
@@ -37,7 +37,7 @@ def _require_http_url(url: str) -> None:
 
 
 class HttpTransport:
-    """HTTP transport used by :class:`~soapbar.client.client.SoapClient`.
+    """HTTP transport used by ``SoapClient``.
 
     Prefers httpx (sync and async, pooled connections) and falls back to
     stdlib ``urllib`` when httpx is not installed — the fallback supports
@@ -45,7 +45,7 @@ class HttpTransport:
 
     Construction knobs: *timeout*; *verify_ssl* (default ``True`` — the
     opt-out exists for test endpoints only); *client_cert* for mutual TLS
-    (see :func:`load_pkcs12` for ``.pfx`` bundles); *ca_bundle* to pin a
+    (see ``load_pkcs12`` for ``.pfx`` bundles); *ca_bundle* to pin a
     private/government PKI root (takes precedence over *verify_ssl*); and
     *persist_cookies* to keep session cookies across calls (stateful
     services). Use as a context manager or call ``close()``/``aclose()``
@@ -75,7 +75,7 @@ class HttpTransport:
         # returns JSESSIONID) is sent on the next — the basis for stateful
         # services like IRS MeF. Set ``persist_cookies=False`` for stateless
         # behaviour (the jar is cleared after every call). Read or inject
-        # cookies via the :attr:`cookies` jar.
+        # cookies via the ``cookies`` jar.
         self.persist_cookies = persist_cookies
         # Lazy long-lived httpx clients; created on first use, reused for
         # every subsequent request so TCP/TLS connections get pooled
@@ -313,7 +313,7 @@ def load_pkcs12(path: str, password: str | None = None) -> tuple[bytes, bytes]:
     chain (end-entity certificate first, followed by any bundled intermediates)
     and ``key_pem`` is the unencrypted PKCS#8 private key. Both are held in
     memory only — the key is never written to disk or logged. Feed the result
-    straight to :class:`HttpTransport`::
+    straight to ``HttpTransport``::
 
         cert_pem, key_pem = load_pkcs12("cert.pfx", "password")
         transport = HttpTransport(client_cert=(cert_pem, key_pem), ca_bundle="ca.pem")

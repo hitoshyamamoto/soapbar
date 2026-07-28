@@ -21,6 +21,28 @@ theme:
     - navigation.top
     - content.code.copy
 
+# Declaring `plugins` disables the defaults, so `search` must be re-listed.
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            # Docstrings use reST field lists (:param:, :raises:) — the
+            # "sphinx" parser understands them.
+            docstring_style: sphinx
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+            show_source: false
+            show_root_heading: false
+            # Hide private names, but keep the public __version__ export
+            # (last matching filter wins).
+            filters: ["!^_", "^__version__$"]
+
 markdown_extensions:
   - admonition
   - tables
@@ -41,6 +63,7 @@ nav:
       - Faults and one-way operations: faults.md
       - Security: security.md
   - Reference:
+      - API reference: api.md
       - Interoperability: interoperability.md
       - Real-world services: real-world.md
       - Architecture and public API: architecture.md

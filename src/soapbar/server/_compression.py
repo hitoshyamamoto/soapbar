@@ -27,7 +27,7 @@ def decompress_if_gzipped(
 
     When *max_size* is given, decompression is **bounded**: a gzip
     "decompression bomb" (a few KB that inflates to gigabytes) is refused with
-    :class:`BodyTooLargeError` instead of being fully expanded in memory. The
+    ``BodyTooLargeError`` instead of being fully expanded in memory. The
     plain ``gzip.decompress`` path (``max_size=None``) is retained only for
     callers that have already bounded their input.
 
