@@ -82,6 +82,7 @@ Mounting inside FastAPI/Flask, defining services, binding styles, and the client
 - SOAP server for any ASGI or WSGI framework (`AsgiSoapApp` / `WsgiSoapApp`), plus a sync and async WSDL-driven client
 - Auto-generates WSDL from service classes and parses existing WSDL — no config files needed
 - Hardened by default: XXE-safe lxml parser, SSRF guard on `wsdl:import`, message size and nesting depth limits, error scrubbing
+- Continuously assured: CodeQL static analysis, coverage-guided fuzzing (Atheris) and property-based tests (Hypothesis) in CI; holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849)
 - WS-Security: UsernameToken (PasswordText/PasswordDigest), XML Signature (incl. Id-targeted SEFAZ NF-e profile), AES-256-GCM XML Encryption, WS-I BSP X.509 token profile
 - MTOM/XOP binary attachments on both client and server
 - Mutual TLS with PKCS#12 helper, session cookies, WS-Addressing 1.0, one-way MEP, opt-in WSDL schema validation
@@ -95,6 +96,7 @@ Mounting inside FastAPI/Flask, defining services, binding styles, and the client
 
 - [Documentation](https://hitoshyamamoto.github.io/soapbar/)
 - [Security](https://hitoshyamamoto.github.io/soapbar/security/) — hardened parser, WS-Security, XML Signature and Encryption
+- [Security policy](https://github.com/hitoshyamamoto/soapbar/blob/main/.github/SECURITY.md) — private vulnerability reporting, supported versions, response times
 - [Real-world services](https://hitoshyamamoto.github.io/soapbar/real-world/) — VIES, NF-e, WITSML, ANA, IRS MeF
 - [Comparison with alternatives](https://hitoshyamamoto.github.io/soapbar/comparison/) — zeep, spyne, fastapi-soap
 - [Stability policy](https://github.com/hitoshyamamoto/soapbar/blob/main/STABILITY.md) — public surface, SemVer, deprecation process
