@@ -64,6 +64,7 @@ nav:
       - Security: security.md
   - Reference:
       - API reference: api.md
+      - Security assurance case: assurance-case.md
       - Interoperability: interoperability.md
       - Real-world services: real-world.md
       - Architecture and public API: architecture.md

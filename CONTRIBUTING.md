@@ -28,6 +28,31 @@ uv run ruff check src/ tests/ examples/
 uv run mypy src/ --strict
 ```
 
+## Tests are required
+
+**As new functionality is added, tests for that functionality MUST be added to
+the automated suite in the same pull request.** The same applies to bug fixes: a
+fix lands with a regression test that fails before it and passes after.
+
+The 93% coverage gate is a floor, not the policy — a change can clear the gate
+without testing anything new. Reviewers check for the tests, not just the
+number.
+
+## Coding style
+
+soapbar follows [PEP 8](https://peps.python.org/pep-0008/), enforced
+automatically by [ruff](https://docs.astral.sh/ruff/) — the `E` and `W` rules
+are pycodestyle and `N` is PEP 8 naming. On top of it the project enables
+pyflakes (`F`), import sorting (`I`), pyupgrade (`UP`), bugbear (`B`),
+simplify (`SIM`), flake8-bandit security rules (`S`), and ruff's own rules
+(`RUF`); see `[tool.ruff]` in `pyproject.toml`.
+
+One deliberate deviation: **line length is 100 characters**, not PEP 8's 79.
+Type annotations and XML namespace URIs make 79 counterproductive here.
+
+All public names carry docstrings, and `mypy --strict` must pass — the public
+API reference on the documentation site is generated from those docstrings.
+
 ## Public API stability
 
 The public surface of soapbar is frozen by a snapshot test

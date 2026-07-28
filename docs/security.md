@@ -34,6 +34,35 @@ These protections are verified continuously, not just designed in:
 - **Property-based tests** — [Hypothesis properties](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/test_properties.py) assert round-trip and robustness invariants for the XSD type system, envelope serialisation, and the parsers, as part of the normal test suite.
 - **OpenSSF** — soapbar holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849) and is monitored by [Scorecard](https://scorecard.dev/viewer/?uri=github.com/hitoshyamamoto/soapbar).
 
+## Verifying a release
+
+Every release is signed with [Sigstore](https://www.sigstore.dev/) keyless
+signing and ships a CycloneDX SBOM. Each [GitHub release](https://github.com/hitoshyamamoto/soapbar/releases)
+carries four assets: the wheel, the sdist, `soapbar-<version>.cdx.json` (the
+SBOM), and `soapbar-<version>-provenance.sigstore.json` (the signature bundle).
+
+There is **no public key to fetch**. Signing is keyless: the signing identity is
+the GitHub Actions workflow itself, and the certificate is issued at build time
+via OIDC and recorded in the public Sigstore transparency log. To verify, you
+assert which workflow in which repository you expect:
+
+```bash
+# Download the artifact and verify it was built by this repo's release workflow
+gh release download v0.15.3 --repo hitoshyamamoto/soapbar --pattern '*.whl'
+
+gh attestation verify soapbar-0.15.3-py3-none-any.whl \
+    --repo hitoshyamamoto/soapbar \
+    --signer-workflow hitoshyamamoto/soapbar/.github/workflows/release.yml
+```
+
+A successful run confirms the artifact was produced by that workflow, from this
+repository, and has not been modified since. The SBOM is signed by the same
+attestation, so it can be verified the same way.
+
+Packages installed from PyPI carry [PEP 740](https://peps.python.org/pep-0740/)
+attestations published by the same pipeline; PyPI displays and verifies these
+automatically, and they are visible via the `/integrity/` endpoint for each file.
+
 ## Reporting a vulnerability
 
 **Do not open a public issue for security vulnerabilities.** Use the private disclosure process in the [security policy](https://github.com/hitoshyamamoto/soapbar/blob/main/.github/SECURITY.md) — a [GitHub private security advisory](https://github.com/hitoshyamamoto/soapbar/security/advisories/new) visible only to you and the maintainer. As a single-maintainer project the targets are acknowledgement within 5 business days and an initial assessment within 14 days, with fix timelines agreed with the reporter by severity.
