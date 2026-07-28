@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/soapbar.svg?logo=pypi&logoColor=white)](https://pypi.org/project/soapbar/)
 [![Python versions](https://img.shields.io/pypi/pyversions/soapbar.svg?logo=python&logoColor=white)](https://pypi.org/project/soapbar/)
 [![License](https://img.shields.io/pypi/l/soapbar.svg)](https://github.com/hitoshyamamoto/soapbar/blob/main/LICENSE)
-![Conformance](https://img.shields.io/badge/SOAP%20conformance-100%25-brightgreen)
+[![Conformance suite](https://img.shields.io/badge/conformance%20suite-116%20tests-blue)](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/audit/test_compliance.py)
 
 A SOAP library for Python — client, server, and WSDL handling.
 
@@ -44,7 +44,8 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 26. [Inspired by](#inspired-by)
 27. [Learn more](#learn-more)
 28. [Known Limitations](#known-limitations)
-29. [License](#license)
+29. [Sponsoring](#sponsoring)
+30. [License](#license)
 
 ---
 
@@ -1099,20 +1100,22 @@ the full surface definition, the SemVer policy, and the deprecation process.
 | WSGI frameworks | ✓ | ✗ | ✓ | ✗ |
 | Auto WSDL generation | ✓ | ✗ | ✓ | ✓ |
 | WSDL-driven client | ✓ | ✓ | ✗ | ✗ |
-| XXE hardened by default | ✓ | undocumented | undocumented | undocumented |
-| Message size + depth limits | ✓ | ✗ | ✗ | ✗ |
+| XXE hardened by default | ✓ | not evaluated here¹ | not evaluated here¹ | not evaluated here¹ |
+| Message size + depth limits | ✓ | not evaluated here¹ | not evaluated here¹ | not evaluated here¹ |
 | WS-Security UsernameToken | ✓ | ✓ (client) | ✓ | ✗ |
 | XML Signature / Encryption | ✓ ([security]) | ✗ | Partial | ✗ |
 | MTOM/XOP | ✓ | ✓ | ✓ | ✗ |
 | WS-Addressing 1.0 | ✓ | ✓ | Partial | ✗ |
 | One-way MEP (HTTP 202) | ✓ | ✓ | ✓ | ✗ |
 | SOAP array attributes | ✓ | ✓ | ✓ | ✗ |
-| Internal conformance suite (116 tests) | ✓ | not claimed | not claimed | not claimed |
+| Internal conformance suite (116 tests) | ✓ | — | — | — |
 | Core dependency | lxml | lxml, requests | lxml | fastapi, lxml |
 | Async HTTP client | httpx (optional) | httpx (optional) | — | — |
 | Python versions | 3.10–3.14 | 3.8+ | 3.8+ | 3.8+ |
 
-soapbar is the only Python library that covers both client and server, works with any ASGI or WSGI framework, supports SOAP 1.1 and 1.2, is hardened against XXE/DoS attacks out of the box, and ships with an internal conformance suite of 116 tests covering 46 spec-derived checkpoints (see `tests/audit/test_compliance.py`).
+¹ Based on each project's public documentation as of July 2026, not on independent testing — consult each project's documentation for current behaviour.
+
+soapbar combines, in a single library, a SOAP client and server, integration with any ASGI or WSGI framework, SOAP 1.1 and 1.2 support, XXE/DoS hardening enabled by default, and an internal conformance suite of 116 tests covering 46 spec-derived checkpoints (see `tests/audit/test_compliance.py`).
 
 ---
 
@@ -1188,6 +1191,15 @@ The following features are intentionally out-of-scope for the current release.  
 | **WSDL 2.0** | Not supported | soapbar generates and parses WSDL 1.1 only. WSDL 2.0 adoption is low outside JAX-WS/Metro; 1.1 remains the de facto industry standard and interoperates cleanly with zeep / spyne / WCF / CXF / WSS4J. |
 | **WS-Policy / WS-PolicyAttachment** | Out of scope | Generated WSDL does not include `<wsp:Policy>` or `<wsp:PolicyReference>` elements. Deployers requiring declarative policy (algorithm suites, transport bindings, token assertions) should run a WS-Policy processor upstream or document the policy out-of-band. WS-SecurityPolicy assertions are likewise not emitted. |
 | **WS-ReliableMessaging / WS-Trust / WS-SecureConversation / WS-Federation** | Out of scope | These WS-* specifications are not implemented. soapbar's WS-Security surface covers UsernameToken, XML Signature, XML Encryption, Timestamp, and the BSP X.509 token profile — sufficient for the audit-checkpoint matrix items F01–S10 but not the token-issuance / session-continuity / federation specs. |
+
+---
+
+## Sponsoring
+
+soapbar is maintained by a single developer. If your organization depends on it — or on SOAP integrations with services such as VIES, NF-e, CCEE, or ANA — consider sponsoring its maintenance:
+
+- [GitHub Sponsors](https://github.com/sponsors/hitoshyamamoto)
+- The repository publishes a machine-readable funding manifest for the [FLOSS/fund](https://floss.fund) directory
 
 ---
 
