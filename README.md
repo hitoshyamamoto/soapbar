@@ -12,7 +12,7 @@ A SOAP library for Python — client, server, and WSDL handling.
 
 soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates WSDL from Python service classes, parses existing WSDL to drive a typed client, and integrates with any ASGI or WSGI framework via thin adapter classes. The XML parser is hardened against XXE attacks using lxml with `resolve_entities=False`.
 
-> **Conformance** — soapbar ships with an internal conformance suite of **116 tests across 11 spec-mapped classes** (`tests/audit/test_compliance.py`) covering SOAP 1.1/1.2, WSDL 1.1, and WS-I Basic Profile 1.1. The suite encodes 46 checkpoints derived from F01–F09 original findings, G01–G11 gap findings, I01–I04 informational observations, and S10 (WS-I BSP X.509 token profile); all 46 pass. This is a self-administered test suite, not an independent third-party audit.
+> **Conformance** — soapbar ships with an internal conformance suite of **116 tests across 11 spec-mapped classes** (`tests/audit/test_compliance.py`) covering SOAP 1.1/1.2, WSDL 1.1, and WS-I Basic Profile 1.1 — including the WS-I BSP X.509 token profile — and the gaps found by earlier internal audits; all pass. This is a self-administered test suite, not an independent third-party audit.
 
 ---
 
@@ -82,13 +82,13 @@ Mounting inside FastAPI/Flask, defining services, binding styles, and the client
 - SOAP server for any ASGI or WSGI framework (`AsgiSoapApp` / `WsgiSoapApp`), plus a sync and async WSDL-driven client
 - Auto-generates WSDL from service classes and parses existing WSDL — no config files needed
 - Hardened by default: XXE-safe lxml parser, SSRF guard on `wsdl:import`, message size and nesting depth limits, error scrubbing
-- Continuously assured: CodeQL static analysis, coverage-guided fuzzing (Atheris) and property-based tests (Hypothesis) in CI; holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849)
+- Continuously assured: CodeQL static analysis and property-based tests (Hypothesis) on every pull request, coverage-guided fuzzing (Atheris) weekly; holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849)
 - WS-Security: UsernameToken (PasswordText/PasswordDigest), XML Signature (incl. Id-targeted SEFAZ NF-e profile), AES-256-GCM XML Encryption, WS-I BSP X.509 token profile
 - MTOM/XOP binary attachments on both client and server
 - Mutual TLS with PKCS#12 helper, session cookies, WS-Addressing 1.0, one-way MEP, opt-in WSDL schema validation
 - XSD type registry (27 built-in types), complex types, SOAP arrays, multi-reference encoding
 - Optional typed clients for real-world services: EU VIES, WITSML, SEFAZ NF-e, ANA (`soapbar.contrib.*`)
-- Interoperable with zeep and spyne; fully type-annotated (PEP 561); Python 3.10 – 3.14
+- Interoperable with zeep and spyne (the spyne suite runs on Python ≤ 3.11 — upstream spyne does not import on 3.12+); fully type-annotated (PEP 561); Python 3.10 – 3.14
 
 ---
 
@@ -105,7 +105,7 @@ Mounting inside FastAPI/Flask, defining services, binding styles, and the client
 
 ## Sponsoring
 
-soapbar is maintained by a single developer. If your organization depends on it — or on SOAP integrations with services such as VIES, NF-e, CCEE, or ANA — consider sponsoring its maintenance:
+soapbar is maintained by a single developer. If your organization depends on it — or on SOAP integrations with services such as VIES, NF-e, WITSML, or ANA — consider sponsoring its maintenance:
 
 - [GitHub Sponsors](https://github.com/sponsors/hitoshyamamoto)
 - The repository publishes a machine-readable funding manifest for the [FLOSS/fund](https://floss.fund) directory

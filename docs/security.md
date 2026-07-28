@@ -36,7 +36,7 @@ These protections are verified continuously, not just designed in:
 
 ## Reporting a vulnerability
 
-**Do not open a public issue for security vulnerabilities.** Use the private disclosure process in the [security policy](https://github.com/hitoshyamamoto/soapbar/blob/main/.github/SECURITY.md) — a [GitHub private security advisory](https://github.com/hitoshyamamoto/soapbar/security/advisories/new) visible only to you and the maintainer. Acknowledgement within 48 h, assessment within 7 days.
+**Do not open a public issue for security vulnerabilities.** Use the private disclosure process in the [security policy](https://github.com/hitoshyamamoto/soapbar/blob/main/.github/SECURITY.md) — a [GitHub private security advisory](https://github.com/hitoshyamamoto/soapbar/security/advisories/new) visible only to you and the maintainer. As a single-maintainer project the targets are acknowledgement within 5 business days and an initial assessment within 14 days, with fix timelines agreed with the reporter by severity.
 
 ---
 

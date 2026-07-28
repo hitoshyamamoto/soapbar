@@ -4,7 +4,7 @@ A SOAP library for Python — client, server, and WSDL handling.
 
 soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates WSDL from Python service classes, parses existing WSDL to drive a typed client, and integrates with any ASGI or WSGI framework via thin adapter classes. The XML parser is hardened against XXE attacks using lxml with `resolve_entities=False`.
 
-> **Conformance** — soapbar ships with an internal conformance suite of **116 tests across 11 spec-mapped classes** ([`tests/audit/test_compliance.py`](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/audit/test_compliance.py)) covering SOAP 1.1/1.2, WSDL 1.1, and WS-I Basic Profile 1.1. The suite encodes 46 checkpoints derived from F01–F09 original findings, G01–G11 gap findings, I01–I04 informational observations, and S10 (WS-I BSP X.509 token profile); all 46 pass. This is a self-administered test suite, not an independent third-party audit.
+> **Conformance** — soapbar ships with an internal conformance suite of **116 tests across 11 spec-mapped classes** ([`tests/audit/test_compliance.py`](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/audit/test_compliance.py)) covering SOAP 1.1/1.2, WSDL 1.1, and WS-I Basic Profile 1.1 — including the WS-I BSP X.509 token profile — and the gaps found by earlier internal audits; all pass. This is a self-administered test suite, not an independent third-party audit.
 
 ---
 
@@ -17,7 +17,7 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - ASGI adapter (`AsgiSoapApp`) and WSGI adapter (`WsgiSoapApp`)
 - XXE-safe hardened XML parser (lxml, `resolve_entities=False`, `no_network=True`, `load_dtd=False`)
 - Message size limit (10 MB default) and XML nesting depth limit (100 levels) — DoS protection
-- Continuously assured: CodeQL static analysis, coverage-guided fuzzing (Atheris) and property-based tests (Hypothesis) in CI; holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849) — see [Security](security.md)
+- Continuously assured: CodeQL static analysis and property-based tests (Hypothesis) on every pull request, coverage-guided fuzzing (Atheris) weekly; holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849) — see [Security](security.md)
 - **WS-Security UsernameToken** — PasswordText and PasswordDigest (SHA-1) on both client and server
 - **XML Signature** — enveloped XML-DSIG signing and verification (`sign_envelope` / `verify_envelope`, requires `signxml`)
 - **Id-targeted signing** — sign an inner element selected by its `Id`/Reference URI (`sign_element_by_id`), with a configurable algorithm set (incl. the SEFAZ NF-e RSA-SHA1 / inclusive-C14N / EndCertOnly profile)
