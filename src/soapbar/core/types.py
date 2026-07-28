@@ -411,11 +411,11 @@ class ComplexXsdType(XsdType):
         return ftype
 
     def to_xml(self, value: Any) -> str:
-        """Unsupported: complex values have no text form — use :meth:`to_element`."""
+        """Unsupported: complex values have no text form — use ``to_element``."""
         raise TypeError(f"ComplexXsdType '{self.name}' requires element-level serialization")
 
     def from_xml(self, s: str) -> Any:
-        """Unsupported: complex values have no text form — use :meth:`from_element`."""
+        """Unsupported: complex values have no text form — use ``from_element``."""
         raise TypeError(f"ComplexXsdType '{self.name}' requires element-level deserialization")
 
     def to_element(
@@ -548,11 +548,11 @@ class ArrayXsdType(XsdType):
         return et.from_xml(child.text or "")
 
     def to_xml(self, value: Any) -> str:
-        """Unsupported: arrays have no text form — use :meth:`to_element`."""
+        """Unsupported: arrays have no text form — use ``to_element``."""
         raise TypeError(f"ArrayXsdType '{self.name}' requires element-level serialization")
 
     def from_xml(self, s: str) -> Any:
-        """Unsupported: arrays have no text form — use :meth:`from_element`."""
+        """Unsupported: arrays have no text form — use ``from_element``."""
         raise TypeError(f"ArrayXsdType '{self.name}' requires element-level deserialization")
 
     def to_element(
@@ -621,11 +621,11 @@ class ChoiceXsdType(XsdType):
         return self.target_namespace if self.qualified else ""
 
     def to_xml(self, value: Any) -> str:
-        """Unsupported: choices have no text form — use :meth:`to_element`."""
+        """Unsupported: choices have no text form — use ``to_element``."""
         raise TypeError(f"ChoiceXsdType '{self.name}' requires element-level serialization")
 
     def from_xml(self, s: str) -> Any:
-        """Unsupported: choices have no text form — use :meth:`from_element`."""
+        """Unsupported: choices have no text form — use ``from_element``."""
         raise TypeError(f"ChoiceXsdType '{self.name}' requires element-level deserialization")
 
     def to_element(
@@ -671,9 +671,9 @@ class ChoiceXsdType(XsdType):
 class _TypeRegistry:
     """A name → XsdType map.
 
-    The module-level :data:`xsd` registry holds only the immutable built-in
+    The module-level ``xsd`` registry holds only the immutable built-in
     XSD types and is safe to share globally. Parsed user types are NOT stored
-    here; each ``parse_wsdl`` call gets its own :meth:`scoped` child registry so
+    here; each ``parse_wsdl`` call gets its own ``scoped`` child registry so
     two documents that define a same-named type cannot clobber each other and
     parsing is safe under concurrency. A child resolves its own types first and
     falls back to the parent (the built-ins) for everything else.
@@ -726,6 +726,7 @@ class _TypeRegistry:
 
 
 xsd = _TypeRegistry()
+"""Global registry of the built-in XSD simple types, e.g. ``xsd.resolve("int")``."""
 
 _ALL_TYPES: list[XsdType] = [
     _StringType(),

@@ -66,9 +66,9 @@ class BodyTooLargeError(SoapbarError, ValueError):
     """Raised when a request body (or a decoded/expanded form of it) exceeds
     the configured size limit.
 
-    Subclasses both :class:`~soapbar.core.exceptions.SoapbarError` (so
+    Subclasses both ``SoapbarError`` (so
     ``except SoapbarError`` catches it like any other soapbar error) and
-    :class:`ValueError` (so existing ``except (ValueError, TypeError)`` handlers
+    ``ValueError`` (so existing ``except (ValueError, TypeError)`` handlers
     still treat it as a client error). The distinct type lets the ingress
     adapters recognise a size-limit breach specifically (as opposed to a
     malformed-input ``ValueError``) and translate it into the standard
@@ -115,7 +115,7 @@ def parse_xml(data: str | bytes) -> _Element:
 
 
 def parse_xml_file(path: str | Path) -> _Element:
-    """Parse an XML file from disk with the hardened parser (see :func:`parse_xml`)."""
+    """Parse an XML file from disk with the hardened parser (see ``parse_xml``)."""
     tree = etree.parse(str(path), parser=_PARSER)
     return tree.getroot()
 
@@ -123,9 +123,9 @@ def parse_xml_file(path: str | Path) -> _Element:
 def parse_xml_document(source: str | bytes | Path | _Element) -> _Element:
     """Return the root element for *source*, whatever its form.
 
-    Accepts a raw XML string or bytes, a filesystem :class:`~pathlib.Path`,
+    Accepts a raw XML string or bytes, a filesystem ``Path``,
     or an already-parsed element (returned unchanged). String and file input
-    go through the hardened parser (see :func:`parse_xml`).
+    go through the hardened parser (see ``parse_xml``).
     """
     if isinstance(source, _Element):
         return source
@@ -150,7 +150,7 @@ def to_bytes(
 ) -> bytes:
     """Serialize *elem* to UTF-8 bytes, by default with an XML declaration.
 
-    This is the form to put on the wire; use :func:`to_string` for logging
+    This is the form to put on the wire; use ``to_string`` for logging
     or embedding in text.
     """
     return etree.tostring(

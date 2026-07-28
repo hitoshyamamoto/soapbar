@@ -25,10 +25,10 @@ def _unwrap_optional(hint: Any) -> tuple[Any, bool]:
 
 
 class SoapMethod(Protocol):
-    """The type of a method decorated with :func:`soap_operation`.
+    """The type of a method decorated with ``soap_operation``.
 
     A callable carrying the ``__soap_operation__`` signature attribute. This is
-    the value type of :meth:`SoapService.get_operations`; it is part of the
+    the value type of ``SoapService.get_operations``; it is part of the
     public API so callers can annotate against it.
     """
 
@@ -106,9 +106,9 @@ class SoapService:
     """Base class for SOAP services.
 
     Subclass it, set the ``__service_name__`` and ``__tns__`` class
-    attributes, and decorate handler methods with :func:`soap_operation`;
+    attributes, and decorate handler methods with ``soap_operation``;
     parameter and return XSD types are introspected from type hints.
-    Register instances on a :class:`~soapbar.server.application.SoapApplication`
+    Register instances on a ``SoapApplication``
     to serve them.
 
     Class attributes: ``__service_name__`` (service element name),

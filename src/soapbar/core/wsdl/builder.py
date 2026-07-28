@@ -183,12 +183,12 @@ def _build_binding(
 
 
 def build_wsdl_string(defn: WsdlDefinition, address: str) -> str:
-    """Build the WSDL for *defn* and serialize it to ``str`` (see :func:`build_wsdl`)."""
+    """Build the WSDL for *defn* and serialize it to ``str`` (see ``build_wsdl``)."""
     return to_string(build_wsdl(defn, address))
 
 
 def build_wsdl_bytes(defn: WsdlDefinition, address: str) -> bytes:
-    """Build the WSDL for *defn* and serialize it to UTF-8 bytes (see :func:`build_wsdl`)."""
+    """Build the WSDL for *defn* and serialize it to UTF-8 bytes (see ``build_wsdl``)."""
     return to_bytes(build_wsdl(defn, address))
 
 

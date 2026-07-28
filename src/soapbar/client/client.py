@@ -40,15 +40,15 @@ class SoapClient:
 
     Three ways to construct one: ``SoapClient(wsdl_url)`` fetches and
     parses the WSDL (binding style, SOAP version, operations and endpoint
-    are configured automatically); :meth:`from_wsdl_string` does the same
-    from an in-memory document; :meth:`manual` skips WSDL entirely for
+    are configured automatically); ``from_wsdl_string`` does the same
+    from an in-memory document; ``manual`` skips WSDL entirely for
     endpoints where you register operations by hand.
 
-    Invoke operations with :meth:`call` / :meth:`call_async`, or through
+    Invoke operations with ``call`` / ``call_async``, or through
     the ``service`` attribute proxy (``client.service.Add(a=1, b=2)``).
     Optional behaviours: WS-Addressing headers (*use_wsa*), a WS-Security
     UsernameToken on every call (*wss_credential*), and MTOM attachments
-    (*use_mtom* + :meth:`add_attachment`).
+    (*use_mtom* + ``add_attachment``).
     """
 
     def __init__(
@@ -350,7 +350,7 @@ class SoapClient:
         Args:
             path: Path to the WSDL document.
             use_wsa: Enable WS-Addressing request headers.
-            transport: Custom :class:`HttpTransport` (e.g. for timeouts, mTLS,
+            transport: Custom ``HttpTransport`` (e.g. for timeouts, mTLS,
                 or a stubbed transport in tests). Defaults to a plain one.
             endpoint: Override the service address parsed from the WSDL — handy
                 when the WSDL lists a legacy/HTTP URL but you want HTTPS.
@@ -418,14 +418,14 @@ class SoapClient:
         return obj
 
     def register_operation(self, sig: OperationSignature) -> None:
-        """Register an operation signature by hand (for :meth:`manual` clients
+        """Register an operation signature by hand (for ``manual`` clients
         or to override a signature parsed from the WSDL)."""
         self._signatures[sig.name] = sig
 
     def close(self) -> None:
         """Close the underlying transport's pooled HTTP client, if any.
 
-        Safe to call multiple times. Since 0.6.1 :class:`HttpTransport`
+        Safe to call multiple times. Since 0.6.1 ``HttpTransport``
         maintains a long-lived ``httpx.Client`` for connection reuse;
         calling ``close()`` releases that client and the connections it
         owns. Not required for correctness (the transport tolerates
@@ -437,7 +437,7 @@ class SoapClient:
             close()
 
     async def aclose(self) -> None:
-        """Async counterpart to :meth:`close` for the async transport."""
+        """Async counterpart to ``close`` for the async transport."""
         aclose = getattr(self._transport, "aclose", None)
         if callable(aclose):
             await aclose()
@@ -488,10 +488,10 @@ class SoapClient:
           value) — *not* wrapped in a dict.
         * **Two or more output parameters** → a ``dict`` keyed by parameter name.
 
-        A SOAP fault in the response is raised as :class:`~soapbar.core.fault.SoapFault`.
+        A SOAP fault in the response is raised as ``SoapFault``.
         (The single-output unwrapping is a deliberate ergonomic choice; callers
         that want a uniform mapping can read the operation's output parameter
-        names from its :class:`~soapbar.core.binding.OperationSignature`.)
+        names from its ``OperationSignature``.)
         """
         sig = self._get_sig(operation)
         serializer = get_serializer(self._binding_style, self._soap_version)
@@ -535,10 +535,10 @@ class SoapClient:
         return self._parse_response(sig, resp_body, status)
 
     async def call_async(self, operation: str, **kwargs: Any) -> Any:
-        """Async counterpart of :meth:`call`; same arity-based return contract.
+        """Async counterpart of ``call``; same arity-based return contract.
 
         Requires httpx. WS-Security and WS-Addressing headers are applied
-        exactly as in :meth:`call`.
+        exactly as in ``call``.
         """
         sig = self._get_sig(operation)
         serializer = get_serializer(self._binding_style, self._soap_version)

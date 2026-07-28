@@ -7,7 +7,7 @@ is a classic ASP.NET ``.asmx`` endpoint: SOAP 1.1/1.2, document/literal
 *wrapped*, namespace ``http://MRCS/``, quoted ``SOAPAction``. Responses carry
 an ADO.NET DataSet — an inline ``xsd:schema`` followed by a Microsoft
 ``diffgram`` — inside the ``<OperacaoResult>`` element, which this client
-receives via :class:`~soapbar.core.types.AnyXmlType` and flattens into plain
+receives via ``AnyXmlType`` and flattens into plain
 dict rows.
 
 All 12 operations exposed by the service are covered (protocol verified against
@@ -45,12 +45,12 @@ Contract quirks worth knowing (all observed on live envelopes):
   the DataSet rows inherit the MRCS default namespace; the row element is named
   per operation and is sometimes even misspelled — ``Table`` for the catalogues,
   ``SerieHistorica`` for the series, and (typo and all) ``DadosHidrometereologicos``
-  for the telemetric reads — so :func:`_rows` reads the diffgram's DataSet
+  for the telemetric reads — so ``_rows`` reads the diffgram's DataSet
   children generically rather than by a fixed table name.
 * ``DadosHidrometeorologicos`` / ``…Gerais`` report "no data for this
   station/period" (or a rejected filter) not as an empty DataSet or a fault but
   as a single row with an ``<Error>`` column; this client raises
-  :class:`AnaServiceError` carrying that message.
+  ``AnaServiceError`` carrying that message.
 
 The row *column names* inside the DataSet vary per operation and are returned
 verbatim in each row dict (and in ``SerieHistoricaRegistro.raw``); the two
@@ -115,7 +115,7 @@ class AnaServiceError(AnaError):
     """The ServiceANA endpoint returned no usable data: an empty result, or a
     single-``<Error>``-column DataSet carrying the service's own "no data for
     this station/period" (or rejected-filter) message. Distinct from a SOAP
-    fault, which surfaces as a :class:`~soapbar.core.fault.SoapFault`."""
+    fault, which surfaces as a ``SoapFault``."""
 
 
 class TipoDados(IntEnum):

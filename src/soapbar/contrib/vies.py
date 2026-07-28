@@ -134,7 +134,7 @@ class ViesClient:
     """A typed wrapper over the VIES ``checkVat`` operation.
 
     The WSDL is loaded from the copy bundled with soapbar (no network at
-    construction); pass a custom :class:`HttpTransport` to control timeouts or
+    construction); pass a custom ``HttpTransport`` to control timeouts or
     proxies, or *endpoint* to target a mirror.
     """
 
@@ -200,12 +200,12 @@ class ViesClient:
     ) -> ViesApproxResult:
         """Validate a VAT number and (optionally) match trader details.
 
-        Returns a :class:`ViesApproxResult` including ``request_identifier`` —
+        Returns a ``ViesApproxResult`` including ``request_identifier`` —
         the proof-of-consultation token — and per-field match codes. Supply any
         ``trader_*`` fields you want matched; omit the rest. Providing
         ``requester_*`` (your own VAT) yields a consultation identifier.
 
-        Raises the same typed exceptions as :meth:`check_vat`.
+        Raises the same typed exceptions as ``check_vat``.
         """
         country_code = country_code.strip().upper()
         vat_number = vat_number.strip().replace(" ", "")

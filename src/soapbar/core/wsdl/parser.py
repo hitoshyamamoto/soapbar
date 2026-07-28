@@ -79,8 +79,8 @@ def _check_import_allowed(
       ``allow_remote_imports=True``.
     * ``file://`` or a bare filesystem path — a *local file read*; permitted
       only with ``allow_local_imports=True``. This is enabled by
-      :func:`parse_wsdl_file` (a trusted local WSDL resolving sibling imports)
-      but **not** by :func:`parse_wsdl` on in-memory/remote content, so a
+      ``parse_wsdl_file`` (a trusted local WSDL resolving sibling imports)
+      but **not** by ``parse_wsdl`` on in-memory/remote content, so a
       hostile ``<import location="file:///etc/passwd">`` or ``location="/etc/…"``
       in an untrusted WSDL cannot exfiltrate local files. Previously only the
       ``http(s)`` scheme was checked, leaving the local-read path wide open.
@@ -129,7 +129,7 @@ def _resolve_schema_imports(
     and return the merged complex-type dictionary harvested from each
     referenced schema document.
 
-    Reuses :func:`_fetch_wsdl_source` (which already SSRF-guards via the
+    Reuses ``_fetch_wsdl_source`` (which already SSRF-guards via the
     ``allow_remote_imports`` flag). ``visited`` is a resolved-URL set
     for cycle detection (separate from the WSDL-level visited set to
     avoid conflating xsd-schema and wsdl-document resolution planes).
@@ -211,7 +211,7 @@ def parse_wsdl(
     *allow_local_imports* controls whether imports that resolve to a local
     file (``file://`` or a filesystem path) are read.  It defaults to ``False``
     so that a hostile ``<import location="file:///etc/passwd">`` in an in-memory
-    or remote WSDL cannot exfiltrate local files.  :func:`parse_wsdl_file`
+    or remote WSDL cannot exfiltrate local files.  ``parse_wsdl_file``
     enables it, since a trusted on-disk WSDL legitimately references sibling
     documents; pass it explicitly only for equally trusted local content.
 
@@ -320,7 +320,7 @@ def parse_wsdl(
 def parse_wsdl_file(path: str | Path, strict: bool = True) -> WsdlDefinition:
     """Parse a WSDL document from a local file.
 
-    Unlike :func:`parse_wsdl` on in-memory or remote content, imports that
+    Unlike ``parse_wsdl`` on in-memory or remote content, imports that
     resolve to local files are allowed: a WSDL on disk is trusted to
     reference its sibling documents. Remote (``http(s)://``) imports remain
     blocked. With ``strict=False``, unresolvable imports are skipped

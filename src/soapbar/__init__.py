@@ -6,6 +6,7 @@ from __future__ import annotations
 try:
     from importlib.metadata import version as _version
     __version__: str = _version("soapbar")
+    """The installed soapbar version, from package metadata."""
 except Exception:
     __version__ = "unknown"
 

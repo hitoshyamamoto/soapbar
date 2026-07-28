@@ -72,7 +72,7 @@ class NfeInputError(NfeError):
     """A caller-side precondition failed: a malformed argument (``cUF``,
     ``tpAmb``, ``chNFe``), a document with no signable ``<infNFe Id=...>``, or a
     missing certificate. Distinct from a fault the SEFAZ web service returns,
-    which surfaces as a :class:`~soapbar.core.fault.SoapFault`."""
+    which surfaces as a ``SoapFault``."""
 
 
 def _local(elem_qname: str) -> str:

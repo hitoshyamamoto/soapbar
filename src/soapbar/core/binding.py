@@ -78,6 +78,9 @@ class OperationParameter:
 
 @dataclass
 class OperationSignature:
+    """Full description of one SOAP operation: name, input/output parameters,
+    ``soapAction``, and per-operation flags (one-way, rpc:result)."""
+
     # Intentionally mutable (not frozen): ``soap_action`` is lazily filled in at
     # service-registration time (see SoapService.get_operations), and the
     # parameter lists are built incrementally by the decorator. It is a
