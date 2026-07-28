@@ -6,6 +6,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.2](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.1...v0.15.2) (2026-07-28)
+
+
+### Documentation
+
+* add generated API reference (mkdocstrings) ([#127](https://github.com/hitoshyamamoto/soapbar/issues/127)) ([c98c19c](https://github.com/hitoshyamamoto/soapbar/commit/c98c19cd48a8e1b82cfad68906ddaa88d5f37bb7))
+* complete docstring coverage of the public API surface ([#125](https://github.com/hitoshyamamoto/soapbar/issues/125)) ([12e732f](https://github.com/hitoshyamamoto/soapbar/commit/12e732f6fe5a24321f74432b44f4cb72274a1103))
+
+
+### Chores
+
+* document the Release-As escape hatch ([#129](https://github.com/hitoshyamamoto/soapbar/issues/129)) ([893c4bc](https://github.com/hitoshyamamoto/soapbar/commit/893c4bc87a3bb9bc31f972edf52b1d2c076c7dce))
+
 ## [0.15.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.0...v0.15.1) (2026-07-28)
 
 
