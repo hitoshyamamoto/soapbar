@@ -65,4 +65,6 @@ jobs:
         # Tags created with GITHUB_TOKEN do not fire `on: push: tags`
         # (anti-recursion), but workflow_dispatch is a documented exception —
         # so release.yml keeps its PyPI trusted-publisher binding unchanged.
-        run: gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" -f tag="${TAG}"
+        # Dispatch on the tag ref: the pypi environment's deployment policy
+        # only allows deployments from v* tags, not branches.
+        run: gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "refs/tags/${TAG}" -f tag="${TAG}"
