@@ -100,17 +100,33 @@ def check_xml_depth(data: bytes, max_depth: int = 100) -> None:
 
 
 def parse_xml(data: str | bytes) -> _Element:
+    """Parse an XML document from a string or bytes with the hardened parser.
+
+    The parser refuses entity expansion, DTDs, and network access (XXE/SSRF
+    protection) and strips comments and processing instructions.
+
+    :param data: The XML document; ``str`` input is encoded as UTF-8.
+    :return: The document's root element.
+    :raises lxml.etree.XMLSyntaxError: if *data* is not well-formed XML.
+    """
     if isinstance(data, str):
         data = data.encode()
     return etree.fromstring(data, parser=_PARSER)
 
 
 def parse_xml_file(path: str | Path) -> _Element:
+    """Parse an XML file from disk with the hardened parser (see :func:`parse_xml`)."""
     tree = etree.parse(str(path), parser=_PARSER)
     return tree.getroot()
 
 
 def parse_xml_document(source: str | bytes | Path | _Element) -> _Element:
+    """Return the root element for *source*, whatever its form.
+
+    Accepts a raw XML string or bytes, a filesystem :class:`~pathlib.Path`,
+    or an already-parsed element (returned unchanged). String and file input
+    go through the hardened parser (see :func:`parse_xml`).
+    """
     if isinstance(source, _Element):
         return source
     if isinstance(source, Path):
@@ -123,6 +139,7 @@ def parse_xml_document(source: str | bytes | Path | _Element) -> _Element:
 # ---------------------------------------------------------------------------
 
 def to_string(elem: _Element, pretty_print: bool = False) -> str:
+    """Serialize *elem* to a ``str``, without an XML declaration."""
     return etree.tostring(elem, pretty_print=pretty_print, encoding="unicode")
 
 
@@ -131,6 +148,11 @@ def to_bytes(
     pretty_print: bool = False,
     xml_declaration: bool = True,
 ) -> bytes:
+    """Serialize *elem* to UTF-8 bytes, by default with an XML declaration.
+
+    This is the form to put on the wire; use :func:`to_string` for logging
+    or embedding in text.
+    """
     return etree.tostring(
         elem,
         pretty_print=pretty_print,
@@ -153,10 +175,12 @@ def collect_namespaces(elem: _Element) -> dict[str, str]:
 
 
 def local_name(elem: _Element) -> str:
+    """Return the tag name of *elem* without its namespace (``{ns}local`` → ``local``)."""
     return etree.QName(elem.tag).localname  # type: ignore[arg-type]
 
 
 def namespace_uri(elem: _Element) -> str | None:
+    """Return the namespace URI of *elem*'s tag, or ``None`` if it has none."""
     return etree.QName(elem.tag).namespace  # type: ignore[arg-type]
 
 

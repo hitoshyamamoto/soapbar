@@ -318,6 +318,14 @@ def parse_wsdl(
 
 
 def parse_wsdl_file(path: str | Path, strict: bool = True) -> WsdlDefinition:
+    """Parse a WSDL document from a local file.
+
+    Unlike :func:`parse_wsdl` on in-memory or remote content, imports that
+    resolve to local files are allowed: a WSDL on disk is trusted to
+    reference its sibling documents. Remote (``http(s)://``) imports remain
+    blocked. With ``strict=False``, unresolvable imports are skipped
+    instead of raising.
+    """
     # A WSDL loaded from a local file is trusted to reference sibling documents
     # on disk, so local (file://) imports are permitted here — unlike
     # parse_wsdl() on in-memory/remote content, where they are blocked (SSRF).

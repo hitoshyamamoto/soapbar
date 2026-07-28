@@ -14,6 +14,14 @@ def _is_mtom(content_type: str) -> bool:
 
 
 class AsgiSoapApp:
+    """ASGI 3 application wrapping a :class:`~soapbar.server.application.SoapApplication`.
+
+    Run it directly under any ASGI server (``uvicorn app:app``) or mount it
+    inside an ASGI framework (FastAPI, Starlette). ``GET ?wsdl`` serves the
+    WSDL; ``POST`` dispatches SOAP envelopes, decoding inbound MTOM
+    automatically. Lifespan events are acknowledged as no-ops.
+    """
+
     def __init__(self, soap_app: SoapApplication) -> None:
         self.soap_app = soap_app
 

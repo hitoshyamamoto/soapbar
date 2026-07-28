@@ -95,6 +95,7 @@ class SoapFault(SoapbarError):  # noqa: N818
     # ------------------------------------------------------------------
 
     def to_soap11_element(self) -> _Element:
+        """Render this fault as a SOAP 1.1 ``Fault`` element."""
         fault = make_element(
             f"{{{NS.SOAP_ENV}}}Fault",
             nsmap={"soapenv": NS.SOAP_ENV},
@@ -116,6 +117,8 @@ class SoapFault(SoapbarError):  # noqa: N818
         self,
         header_blocks: list[_Element] | None = None,
     ) -> _Element:
+        """Render this fault as a complete SOAP 1.1 ``Envelope`` element,
+        optionally carrying *header_blocks* in the ``Header``."""
         env = make_element(
             f"{{{NS.SOAP_ENV}}}Envelope",
             nsmap={"soapenv": NS.SOAP_ENV},
@@ -133,6 +136,12 @@ class SoapFault(SoapbarError):  # noqa: N818
     # ------------------------------------------------------------------
 
     def to_soap12_element(self) -> _Element:
+        """Render this fault as a SOAP 1.2 ``Fault`` element.
+
+        SOAP 1.1 fault codes are translated to their 1.2 equivalents
+        (e.g. ``Client`` → ``Sender``) and subcodes are emitted as
+        namespace-qualified QNames.
+        """
         fault = make_element(
             f"{{{NS.SOAP12_ENV}}}Fault",
             nsmap={"soap12": NS.SOAP12_ENV},
@@ -180,6 +189,8 @@ class SoapFault(SoapbarError):  # noqa: N818
         self,
         header_blocks: list[_Element] | None = None,
     ) -> _Element:
+        """Render this fault as a complete SOAP 1.2 ``Envelope`` element,
+        optionally carrying *header_blocks* in the ``Header``."""
         env = make_element(
             f"{{{NS.SOAP12_ENV}}}Envelope",
             nsmap={"soap12": NS.SOAP12_ENV},

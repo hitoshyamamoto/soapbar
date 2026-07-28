@@ -91,6 +91,22 @@ def _validate_input_params(sig: OperationSignature, kwargs: dict[str, Any]) -> N
 
 
 class SoapApplication:
+    """Framework-agnostic SOAP dispatcher: routes envelopes to services.
+
+    Register :class:`~soapbar.server.service.SoapService` instances with
+    :meth:`register`, then expose the application over HTTP through
+    :class:`~soapbar.server.asgi.AsgiSoapApp` or
+    :class:`~soapbar.server.wsgi.WsgiSoapApp` (or call
+    :meth:`handle_request` from a custom adapter). Serves the
+    auto-generated (or *custom_wsdl*) WSDL on ``?wsdl`` requests, subject
+    to *wsdl_access*.
+
+    Hardening knobs: *max_body_size* (default 10 MB), request nesting-depth
+    limits, optional WS-Security validation (*security_validator*), opt-in
+    body schema validation (*validate_body_schema*), and opt-in HTTP gzip
+    (*enable_gzip*). Construction warns when *service_url* is plain HTTP.
+    """
+
     def __init__(
         self,
         custom_wsdl: bytes | None = None,
@@ -188,6 +204,11 @@ class SoapApplication:
         return self._compiled_schema
 
     def register(self, service: SoapService) -> None:
+        """Register *service*, adding its operations to the dispatch table.
+
+        SOAPAction values are indexed both quoted and unquoted so requests
+        from either convention dispatch correctly.
+        """
         self._services.append(service)
         for op_name, method in service.get_operations().items():
             self._dispatch[op_name] = (service, method)
@@ -200,6 +221,8 @@ class SoapApplication:
                     self._action_map[clean] = op_name
 
     def get_wsdl(self) -> bytes:
+        """Return the WSDL document as bytes — the *custom_wsdl* passed at
+        construction, or one generated from the registered services."""
         if self._custom_wsdl is not None:
             return self._custom_wsdl
         defn = self._build_wsdl_definition()
