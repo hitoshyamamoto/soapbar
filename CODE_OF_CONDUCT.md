@@ -59,9 +59,10 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at
-andrehitoshi.01@gmail.com. All complaints will be reviewed and investigated
-promptly and fairly.
+reported to the community leader responsible for enforcement — the maintainer,
+[@hitoshyamamoto](https://github.com/hitoshyamamoto) — through the contact
+options listed on that GitHub profile. All complaints will be reviewed and
+investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.
