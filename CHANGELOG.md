@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.4](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.3...v0.15.4) (2026-07-28)
+
+
+### Documentation
+
+* add governance, roadmap and security assurance case ([#132](https://github.com/hitoshyamamoto/soapbar/issues/132)) ([9446972](https://github.com/hitoshyamamoto/soapbar/commit/94469729bb3b4214369541edcc991c1ad69fd1f2))
+
 ## [0.15.3](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.2...v0.15.3) (2026-07-28)
 
 
