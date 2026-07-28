@@ -1,0 +1,41 @@
+name: Fuzzing
+
+on:
+  schedule:
+    - cron: "15 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  atheris:
+    name: Atheris fuzz (parsing entry points)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        # Atheris >= 3.1 ships wheels for CPython 3.12+ only.
+        run: uv python install 3.12
+
+      - name: Install fuzz dependencies
+        run: uv sync --python 3.12 --group fuzz --no-default-groups
+
+      - name: Run fuzz harness (5 minutes)
+        run: uv run --python 3.12 --no-sync python fuzz/fuzz_parsing.py -max_total_time=300
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: fuzz-crashes
+          path: crash-*
+          retention-days: 30
