@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.3](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.2...v0.15.3) (2026-07-28)
+
+
+### Documentation
+
+* correct unverifiable public claims and relax the security SLA ([#130](https://github.com/hitoshyamamoto/soapbar/issues/130)) ([b223677](https://github.com/hitoshyamamoto/soapbar/commit/b223677159ab6db4ae7fbae7dcbc2fbde2d1adde))
+
 ## [0.15.2](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.1...v0.15.2) (2026-07-28)
 
 
