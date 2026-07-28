@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a defect in soapbar
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: soapbar version
+      placeholder: "0.15.0"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead? Include the full traceback if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The smallest code snippet (and SOAP envelope / WSDL fragment, if relevant) that reproduces the problem.
+      render: python
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        **Security issues:** do not report vulnerabilities here — use the
+        [private disclosure process](https://github.com/hitoshyamamoto/soapbar/security/policy) instead.
