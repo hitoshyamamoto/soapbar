@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.5](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.4...v0.15.5) (2026-07-28)
+
+
+### Documentation
+
+* add required URLs and refresh versions in badge answers ([#134](https://github.com/hitoshyamamoto/soapbar/issues/134)) ([b09741d](https://github.com/hitoshyamamoto/soapbar/commit/b09741d7b711af6b176f17caee207fe94f1e061f))
+
 ## [0.15.4](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.3...v0.15.4) (2026-07-28)
 
 
