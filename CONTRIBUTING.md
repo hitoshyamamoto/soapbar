@@ -55,6 +55,11 @@ CHANGELOG section, which may be hand-edited on that PR before merging.
 Merging the release PR tags the release, publishes to PyPI, and creates the
 GitHub Release — no manual version editing or tagging.
 
+To force a release when no `feat:`/`fix:` commits are pending (e.g. a
+docs-only release whose docstrings ship in the wheel), merge a commit whose
+message body carries a `Release-As: X.Y.Z` footer; release-please will open
+the release PR for exactly that version.
+
 ## Security issues
 
 Do **not** open a public issue for vulnerabilities. Follow the private
