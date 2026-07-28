@@ -51,6 +51,7 @@ lint           = ["ruff"]
 type           = ["mypy", "types-lxml", "httpx>=0.27"]
 crypto-interop = ["xmlsec>=1.3"]
 examples       = ["fastapi", "uvicorn", "flask"]   # HTTP frameworks the examples/ servers run on
+docs           = ["mkdocs-material>=9.5"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

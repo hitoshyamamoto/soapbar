@@ -1,0 +1,202 @@
+# Security
+
+soapbar uses a hardened lxml parser:
+
+```python
+lxml.etree.XMLParser(
+    resolve_entities=False,   # XXE prevention
+    no_network=True,          # SSRF prevention
+    load_dtd=False,           # DTD injection prevention
+    huge_tree=False,          # Billion-Laughs prevention
+    remove_comments=True,     # comment injection prevention
+    remove_pis=True,
+)
+```
+
+Entity references (potential XXE payloads) are silently dropped rather than expanded. No network connections are made during parsing. DTDs are not loaded.
+
+Additional hardening:
+
+- **Message size limit**: `SoapApplication(max_body_size=10*1024*1024)` — requests exceeding 10 MB are rejected with a `Client` fault before XML parsing.
+- **XML nesting depth**: requests exceeding 100 levels of nesting are rejected to prevent stack exhaustion.
+- **Error scrubbing**: unhandled exceptions produce `"An internal error occurred."` — no stack traces or exception text are returned to clients.
+- **HTTPS warning**: `SoapApplication` warns at construction time if `service_url` uses plain HTTP.
+
+---
+
+## WS-Security — UsernameToken
+
+soapbar supports WS-Security 1.0 UsernameToken (OASIS 2004), both plain-text and SHA-1 digest.
+
+### Client — attaching credentials
+
+```python
+from soapbar import SoapClient
+from soapbar.core.wssecurity import UsernameTokenCredential
+
+# Plain-text password
+cred = UsernameTokenCredential(username="alice", password="secret")
+
+# SHA-1 PasswordDigest (recommended for non-TLS scenarios)
+cred = UsernameTokenCredential(username="alice", password="secret", use_digest=True)
+
+client = SoapClient.manual(
+    "https://example.com/soap",
+    wss_credential=cred,
+)
+result = client.call("GetData", id=42)
+```
+
+The `wsse:Security` header is injected automatically on every call.
+
+### Server — validating credentials
+
+```python
+from soapbar import SoapApplication
+from soapbar.core.wssecurity import UsernameTokenValidator, SecurityValidationError
+
+
+class MyValidator(UsernameTokenValidator):
+    _users = {"alice": "secret", "bob": "hunter2"}
+
+    def get_password(self, username: str) -> str | None:
+        return self._users.get(username)
+
+
+app = SoapApplication(
+    service_url="https://example.com/soap",
+    security_validator=MyValidator(),
+)
+app.register(MyService())
+```
+
+`SecurityValidationError` is converted to a `Client` SOAP fault automatically. Both PasswordText and PasswordDigest token types are verified; Digest requires `wsse:Nonce` and `wsu:Created` to be present.
+
+---
+
+## XML Signature and Encryption
+
+Requires `pip install soapbar[security]` (pulls in `signxml` and `cryptography`).
+
+### XML Digital Signature (XML-DSIG)
+
+```python
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import hashes
+from cryptography.x509 import CertificateBuilder
+from soapbar.core.wssecurity import sign_envelope, verify_envelope, XmlSecurityError
+
+# Sign — enveloped RSA-SHA256 XML-DSIG
+signed_bytes = sign_envelope(envelope_bytes, private_key, certificate)
+
+# Verify — raises XmlSecurityError on bad signature
+try:
+    verified_bytes = verify_envelope(signed_bytes, certificate)
+except XmlSecurityError as exc:
+    print("Signature invalid:", exc)
+```
+
+#### Signing an internal element by `Id`
+
+Some services sign an inner element selected by its `Id` (referenced as
+`#<id>`) rather than the whole envelope — most notably SEFAZ NF-e, which signs
+`<infNFe>`. `sign_element_by_id` does exactly that, with a single
+`ds:Reference` and an enveloped signature:
+
+```python
+from soapbar.core.wssecurity import sign_element_by_id
+
+# Defaults: RSA-SHA256 / SHA-256 / Exclusive C14N.
+signed = sign_element_by_id(nfe_xml, "NFe3106...", private_key, certificate)
+
+# SEFAZ NF-e mandates the legacy algorithm set:
+signed = sign_element_by_id(
+    nfe_xml,
+    "NFe3106...",            # the <infNFe Id="..."> value
+    private_key,
+    certificate,
+    signature_method="rsa-sha1",
+    digest_method="sha1",
+    c14n="inclusive",        # http://www.w3.org/TR/2001/REC-xml-c14n-20010315
+    end_cert_only=True,      # only the end-entity cert in KeyInfo
+)
+```
+
+### XML Encryption (AES-256-GCM + RSA-OAEP)
+
+```python
+from soapbar.core.wssecurity import encrypt_body, decrypt_body, XmlSecurityError
+
+# Encrypt SOAP Body — AES-256-GCM session key wrapped with recipient's RSA public key
+encrypted_bytes = encrypt_body(envelope_bytes, recipient_public_key)
+
+# Decrypt — extracts and unwraps the session key, restores Body children
+decrypted_bytes = decrypt_body(encrypted_bytes, recipient_private_key)
+```
+
+The `xenc:EncryptedData` element is placed as the sole child of `<soap:Body>`. The body is encrypted with **AES-256-GCM** (XML-Enc 1.1, authenticated: the 16-byte GCM tag detects tampering), and the AES-256 session key is wrapped with RSA-OAEP (SHA-256) in an `xenc:EncryptedKey` element inside `xenc:KeyInfo`. Decryption accepts GCM by default; legacy unauthenticated AES-256-CBC ciphertext is rejected unless explicitly opted in via `decrypt_body(..., allow_unauthenticated_cbc=True)`.
+
+### WS-I BSP X.509 Token Profile (S10)
+
+For interoperability with WS-I Basic Security Profile 1.1 compliant clients and servers, use the BSP variant which embeds the certificate as a `wsse:BinarySecurityToken` and references it from `ds:Signature/ds:KeyInfo`:
+
+```python
+from soapbar.core.wssecurity import (
+    sign_envelope_bsp,
+    verify_envelope_bsp,
+    build_binary_security_token,
+    extract_certificate_from_security,
+)
+
+# Sign — adds wsse:BinarySecurityToken + wsse:SecurityTokenReference in KeyInfo
+signed_bytes = sign_envelope_bsp(envelope_bytes, private_key, certificate)
+
+# Verify — extracts cert from BST, verifies ds:Signature
+verified_bytes = verify_envelope_bsp(signed_bytes)
+
+# Build a standalone BinarySecurityToken element (e.g. to add to an existing header)
+bst = build_binary_security_token(certificate, token_id="MyToken-1")
+```
+
+---
+
+## MTOM/XOP
+
+soapbar supports MTOM (Message Transmission Optimization Mechanism, W3C) for sending and receiving SOAP messages with binary attachments. The `multipart/related` MIME packaging is handled transparently — the core envelope sees resolved base64 data; your service code sees plain bytes.
+
+### Client — sending attachments
+
+```python
+from soapbar import SoapClient, BindingStyle
+
+client = SoapClient.manual(
+    "http://localhost:8000/soap",
+    binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+    use_mtom=True,
+)
+
+# Queue a binary attachment and get its Content-ID back
+cid = client.add_attachment(b"\x89PNG...", content_type="image/png")
+
+# The call packages the envelope + attachments as multipart/related
+result = client.call("UploadImage", image_cid=cid, filename="logo.png")
+```
+
+### Server — receiving MTOM
+
+No configuration required. `AsgiSoapApp` and `WsgiSoapApp` automatically detect inbound `multipart/related` requests, resolve all `xop:Include` references inline, and pass the reconstructed XML to the dispatcher as a normal SOAP envelope.
+
+### Low-level API
+
+```python
+from soapbar import parse_mtom, build_mtom, MtomAttachment
+
+# Parse a raw MTOM HTTP body
+msg = parse_mtom(raw_bytes, content_type_header)
+print(msg.soap_xml)       # bytes — envelope with XOP includes resolved
+print(msg.attachments)    # list[MtomAttachment]
+
+# Build a MTOM HTTP body
+attachments = [MtomAttachment(content_id="part1@host", content_type="image/png", data=png_bytes)]
+body_bytes, content_type = build_mtom(soap_xml_bytes, attachments)
+```

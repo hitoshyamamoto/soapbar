@@ -1,0 +1,49 @@
+site_name: soapbar
+site_description: "A SOAP library for Python — client, server, and WSDL handling."
+site_url: https://hitoshyamamoto.github.io/soapbar/
+repo_url: https://github.com/hitoshyamamoto/soapbar
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Quick start: quickstart.md
+  - Guide:
+      - Server and frameworks: server.md
+      - Client: client.md
+      - WSDL: wsdl.md
+      - Type system and encoding: types.md
+      - Faults and one-way operations: faults.md
+      - Security: security.md
+  - Reference:
+      - Interoperability: interoperability.md
+      - Real-world services: real-world.md
+      - Architecture and public API: architecture.md
+      - Comparison with alternatives: comparison.md
+      - Known limitations: limitations.md
+  - Contributing: contributing.md
