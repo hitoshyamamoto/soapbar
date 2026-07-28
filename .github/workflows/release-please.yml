@@ -19,9 +19,22 @@ jobs:
       pull-requests: write  # open/update the release PR
       actions: write        # dispatch release.yml after a release is cut
     steps:
+      # Release PRs created with the default GITHUB_TOKEN get CI runs stuck in
+      # action_required (manual "Approve and run"). A GitHub App token avoids
+      # that. Optional: when the app is not configured (variable unset), the
+      # step is skipped and everything falls back to GITHUB_TOKEN.
+      - name: Mint GitHub App token
+        id: app-token
+        if: ${{ vars.RELEASE_BOT_APP_ID != '' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # v5.0.0
         id: release
         with:
+          token: ${{ steps.app-token.outputs.token || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -35,6 +48,10 @@ jobs:
           # `|| '{}'`: expressions in `with`/`env` are evaluated even for
           # skipped steps, so guard against the output being empty.
           ref: ${{ fromJSON(steps.release.outputs.pr || '{}').headBranchName }}
+          # Push the uv.lock sync with the app token too: pushes made with
+          # GITHUB_TOKEN don't trigger the PR's CI (anti-recursion), which
+          # would leave the release PR's head commit without required checks.
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Install uv
         if: ${{ steps.release.outputs.prs_created == 'true' }}
