@@ -6,7 +6,7 @@
         "role": "owner",
         "name": "Hitoshi Yamamoto",
         "email": "60470969+hitoshyamamoto@users.noreply.github.com",
-        "description": "Author and sole maintainer of soapbar, a security-hardened SOAP 1.1/1.2 library for Python (client, server, and WSDL handling) with typed clients for public services such as EU VIES, SEFAZ NF-e, CCEE, and ANA.",
+        "description": "Author and sole maintainer of soapbar, a security-hardened SOAP 1.1/1.2 library for Python (client, server, and WSDL handling) with typed clients for public services such as EU VIES, SEFAZ NF-e, WITSML, and ANA.",
         "webpageUrl": {
             "url": "https://github.com/hitoshyamamoto/soapbar",
             "wellKnown": "https://github.com/hitoshyamamoto/soapbar/blob/main/.well-known/funding-manifest-urls"
@@ -56,7 +56,7 @@
                 "guid": "monthly-maintenance",
                 "status": "active",
                 "name": "Monthly maintenance",
-                "description": "Sustains ongoing maintenance: security fixes and coordinated disclosure handling, dependency updates, interoperability testing against zeep/spyne and live public endpoints, and keeping the contrib clients (VIES, NF-e, CCEE, ANA, WITSML) in sync with externally-owned services that change without notice.",
+                "description": "Sustains ongoing maintenance: security fixes and coordinated disclosure handling, dependency updates, interoperability testing against zeep/spyne and live public endpoints, and keeping the contrib clients (VIES, NF-e, WITSML, ANA) in sync with externally-owned services that change without notice.",
                 "amount": 500,
                 "currency": "USD",
                 "frequency": "monthly",

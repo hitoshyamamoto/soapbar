@@ -19,6 +19,11 @@ Use [GitHub Private Security Advisory](https://github.com/hitoshyamamoto/soapbar
 
 Include: description, reproduction steps, affected versions, suggested fix.
 
-**Response:** acknowledgement within 48 h · assessment within 7 days ·
-fix within 30 days (critical) or 90 days (others).
-Fixes coordinated with reporter before public disclosure.
+**Response:** soapbar is maintained by one person, so the targets below are set
+to be sustainable rather than aggressive — acknowledgement within 5 business
+days, initial assessment within 14 days. Fix timelines depend on severity and
+are agreed with the reporter; fixes are coordinated with the reporter before
+public disclosure.
+
+In practice, past reports have moved faster than this: GHSA-859w-52fx-hcm6 was
+fixed and released within days.
