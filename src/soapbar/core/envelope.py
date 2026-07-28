@@ -198,15 +198,23 @@ class SoapEnvelope:
         self.header_blocks = [SoapHeaderBlock(element=e) for e in elems]
 
     def add_header(self, elem: _Element | SoapHeaderBlock) -> None:
+        """Append a header block; a bare element is wrapped in a plain
+        :class:`SoapHeaderBlock` (no ``mustUnderstand``/``role`` attributes)."""
         if isinstance(elem, SoapHeaderBlock):
             self.header_blocks.append(elem)
         else:
             self.header_blocks.append(SoapHeaderBlock(element=elem))
 
     def add_body_content(self, elem: _Element) -> None:
+        """Append *elem* as a child of the SOAP ``Body``."""
         self.body_elements.append(elem)
 
     def build(self) -> _Element:
+        """Build and return the ``Envelope`` element tree.
+
+        The ``Header`` element is emitted only when header blocks are
+        present; the ``Body`` is always present.
+        """
         env_ns = self.version.envelope_ns
         prefix = self.version.prefix
         nsmap: dict[str | None, str] = {prefix: env_ns}
@@ -225,9 +233,11 @@ class SoapEnvelope:
         return env
 
     def to_string(self, pretty_print: bool = False) -> str:
+        """Build the envelope and serialize it to ``str`` (no XML declaration)."""
         return to_string(self.build(), pretty_print=pretty_print)
 
     def to_bytes(self, pretty_print: bool = False) -> bytes:
+        """Build the envelope and serialize it to UTF-8 bytes, the wire form."""
         return to_bytes(self.build(), pretty_print=pretty_print)
 
     @classmethod
@@ -409,6 +419,7 @@ def build_request(
     body_elements: list[_Element],
     header_elements: list[_Element] | None = None,
 ) -> _Element:
+    """Build a request ``Envelope`` element with the given body and headers."""
     env = SoapEnvelope(version=version)
     for elem in (header_elements or []):
         env.add_header(elem)
@@ -422,6 +433,8 @@ def build_response(
     body_elements: list[_Element],
     header_elements: list[_Element] | None = None,
 ) -> _Element:
+    """Build a response ``Envelope`` element; structurally identical to
+    :func:`build_request` (SOAP responses differ only in body content)."""
     return build_request(version, body_elements, header_elements)
 
 
@@ -433,6 +446,11 @@ def build_fault(
     faultactor: str | None = None,
     detail: str | _Element | None = None,
 ) -> _Element:
+    """Build a complete fault ``Envelope`` element for *version*.
+
+    *faultcode* uses SOAP 1.1 vocabulary (``Client``, ``Server``, …) and is
+    translated to the SOAP 1.2 equivalent automatically when needed.
+    """
     from soapbar.core.fault import SoapFault
     fault = SoapFault(faultcode, faultstring, faultactor=faultactor, detail=detail)
     if version == SoapVersion.SOAP_11:
@@ -444,6 +462,11 @@ def http_headers(
     version: SoapVersion,
     soap_action: str = "",
 ) -> dict[str, str]:
+    """Return the HTTP headers for a SOAP request in *version*.
+
+    SOAP 1.1 carries the action in a quoted ``SOAPAction`` header; SOAP 1.2
+    carries it as the ``action`` parameter of the ``Content-Type``.
+    """
     headers = {"Content-Type": version.content_type}
     if version == SoapVersion.SOAP_11:
         headers["SOAPAction"] = f'"{soap_action}"'

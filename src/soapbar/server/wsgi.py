@@ -14,6 +14,14 @@ def _is_mtom(content_type: str) -> bool:
 
 
 class WsgiSoapApp:
+    """WSGI application wrapping a :class:`~soapbar.server.application.SoapApplication`.
+
+    The synchronous counterpart of :class:`~soapbar.server.asgi.AsgiSoapApp`
+    for WSGI servers and frameworks (gunicorn, Flask/Werkzeug mounts).
+    ``GET ?wsdl`` serves the WSDL; ``POST`` dispatches SOAP envelopes,
+    decoding inbound MTOM automatically.
+    """
+
     def __init__(self, soap_app: SoapApplication) -> None:
         self.soap_app = soap_app
 

@@ -36,6 +36,21 @@ class _ServiceProxy:
 
 
 class SoapClient:
+    """WSDL-driven SOAP client.
+
+    Three ways to construct one: ``SoapClient(wsdl_url)`` fetches and
+    parses the WSDL (binding style, SOAP version, operations and endpoint
+    are configured automatically); :meth:`from_wsdl_string` does the same
+    from an in-memory document; :meth:`manual` skips WSDL entirely for
+    endpoints where you register operations by hand.
+
+    Invoke operations with :meth:`call` / :meth:`call_async`, or through
+    the ``service`` attribute proxy (``client.service.Add(a=1, b=2)``).
+    Optional behaviours: WS-Addressing headers (*use_wsa*), a WS-Security
+    UsernameToken on every call (*wss_credential*), and MTOM attachments
+    (*use_mtom* + :meth:`add_attachment`).
+    """
+
     def __init__(
         self,
         wsdl_url: str | None = None,
@@ -403,6 +418,8 @@ class SoapClient:
         return obj
 
     def register_operation(self, sig: OperationSignature) -> None:
+        """Register an operation signature by hand (for :meth:`manual` clients
+        or to override a signature parsed from the WSDL)."""
         self._signatures[sig.name] = sig
 
     def close(self) -> None:
@@ -518,6 +535,11 @@ class SoapClient:
         return self._parse_response(sig, resp_body, status)
 
     async def call_async(self, operation: str, **kwargs: Any) -> Any:
+        """Async counterpart of :meth:`call`; same arity-based return contract.
+
+        Requires httpx. WS-Security and WS-Addressing headers are applied
+        exactly as in :meth:`call`.
+        """
         sig = self._get_sig(operation)
         serializer = get_serializer(self._binding_style, self._soap_version)
 

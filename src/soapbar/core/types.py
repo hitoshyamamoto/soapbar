@@ -31,10 +31,15 @@ class XsdType(ABC):
     namespace: str = NS.XSD
 
     @abstractmethod
-    def to_xml(self, value: Any) -> str: ...
+    def to_xml(self, value: Any) -> str:
+        """Serialize a Python *value* to the type's XSD lexical form."""
 
     @abstractmethod
-    def from_xml(self, s: str) -> Any: ...
+    def from_xml(self, s: str) -> Any:
+        """Parse an XSD lexical form back into the Python value.
+
+        :raises ValueError: if *s* is not a valid lexical value for the type.
+        """
 
     def __repr__(self) -> str:
         return f"<XsdType {self.name}>"
@@ -94,11 +99,13 @@ class AnyXmlType(XsdType):
     name = "any"
 
     def to_xml(self, value: Any) -> str:
+        """Return the raw XML string unchanged (bytes are decoded as UTF-8)."""
         if isinstance(value, bytes):
             return value.decode()
         return str(value)
 
     def from_xml(self, s: str) -> str:
+        """Return the inner-XML string unchanged."""
         return s
 
 
@@ -404,14 +411,22 @@ class ComplexXsdType(XsdType):
         return ftype
 
     def to_xml(self, value: Any) -> str:
+        """Unsupported: complex values have no text form — use :meth:`to_element`."""
         raise TypeError(f"ComplexXsdType '{self.name}' requires element-level serialization")
 
     def from_xml(self, s: str) -> Any:
+        """Unsupported: complex values have no text form — use :meth:`from_element`."""
         raise TypeError(f"ComplexXsdType '{self.name}' requires element-level deserialization")
 
     def to_element(
         self, tag: str, value: dict[str, Any], ns: str = "", soap_encoding: str | None = None
     ) -> Any:
+        """Serialize the field dict *value* as an element named *tag*.
+
+        Child elements follow the field order; ``None`` fields of non-string
+        types are omitted. *ns* qualifies the outer element; child
+        qualification follows the type's ``qualified`` flag.
+        """
         from lxml import etree
         full_tag = f"{{{ns}}}{tag}" if ns else tag
         elem = etree.Element(full_tag)
@@ -445,6 +460,12 @@ class ComplexXsdType(XsdType):
         return elem
 
     def from_element(self, elem: Any) -> dict[str, Any]:
+        """Deserialize *elem*'s children into a field dict.
+
+        Children are matched by local name (namespace tolerant); missing or
+        ``xsi:nil`` fields come back as ``None``, repeated (``maxOccurs>1``)
+        fields as lists.
+        """
         result: dict[str, Any] = {}
         # Read is namespace-tolerant: children are matched by local name so both
         # qualified (<ns:age>) and unqualified (<age>) inputs deserialize.
@@ -527,14 +548,22 @@ class ArrayXsdType(XsdType):
         return et.from_xml(child.text or "")
 
     def to_xml(self, value: Any) -> str:
+        """Unsupported: arrays have no text form — use :meth:`to_element`."""
         raise TypeError(f"ArrayXsdType '{self.name}' requires element-level serialization")
 
     def from_xml(self, s: str) -> Any:
+        """Unsupported: arrays have no text form — use :meth:`from_element`."""
         raise TypeError(f"ArrayXsdType '{self.name}' requires element-level deserialization")
 
     def to_element(
         self, tag: str, value: Any, ns: str = "", soap_encoding: str | None = None
     ) -> Any:
+        """Serialize the list *value* as a wrapper element named *tag*.
+
+        When *soap_encoding* names a SOAP encoding namespace, the wrapper
+        carries the mandated array attributes (``SOAP-ENC:arrayType`` for
+        1.1, ``enc:itemType``/``enc:arraySize`` for 1.2).
+        """
         from lxml import etree
         full_tag = f"{{{ns}}}{tag}" if ns else tag
         items = value if isinstance(value, list) else []
@@ -560,6 +589,7 @@ class ArrayXsdType(XsdType):
         return elem
 
     def from_element(self, elem: Any) -> list[Any]:
+        """Deserialize the wrapper *elem*'s children into a list of items."""
         result = []
         et = self.element_type
         for child in elem:
@@ -591,14 +621,18 @@ class ChoiceXsdType(XsdType):
         return self.target_namespace if self.qualified else ""
 
     def to_xml(self, value: Any) -> str:
+        """Unsupported: choices have no text form — use :meth:`to_element`."""
         raise TypeError(f"ChoiceXsdType '{self.name}' requires element-level serialization")
 
     def from_xml(self, s: str) -> Any:
+        """Unsupported: choices have no text form — use :meth:`from_element`."""
         raise TypeError(f"ChoiceXsdType '{self.name}' requires element-level deserialization")
 
     def to_element(
         self, tag: str, value: Any, ns: str = "", soap_encoding: str | None = None
     ) -> Any:
+        """Serialize *value* — a dict with exactly one option key set — as an
+        element named *tag* containing that single option child."""
         from lxml import etree
         full_tag = f"{{{ns}}}{tag}" if ns else tag
         elem = etree.Element(full_tag)
@@ -617,6 +651,8 @@ class ChoiceXsdType(XsdType):
         return elem
 
     def from_element(self, elem: Any) -> dict[str, Any]:
+        """Deserialize *elem* into ``{option_name: value}`` for the option
+        present; an empty dict if no known option matches."""
         option_map = {name: t for name, t in self.options}
         for child in elem:
             child_local = child.tag.split("}")[-1] if "}" in child.tag else child.tag

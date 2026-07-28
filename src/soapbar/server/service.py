@@ -103,6 +103,19 @@ def soap_operation(
 
 
 class SoapService:
+    """Base class for SOAP services.
+
+    Subclass it, set the ``__service_name__`` and ``__tns__`` class
+    attributes, and decorate handler methods with :func:`soap_operation`;
+    parameter and return XSD types are introspected from type hints.
+    Register instances on a :class:`~soapbar.server.application.SoapApplication`
+    to serve them.
+
+    Class attributes: ``__service_name__`` (service element name),
+    ``__tns__`` (target namespace), ``__binding_style__``,
+    ``__soap_version__``, ``__port_name__``, and ``__service_url__``.
+    """
+
     __service_name__: str = ""
     __tns__: str = "http://example.com/soap"
     __binding_style__: BindingStyle = BindingStyle.DOCUMENT_LITERAL_WRAPPED
@@ -126,6 +139,7 @@ class SoapService:
         return result
 
     def get_operation_signatures(self) -> dict[str, OperationSignature]:
+        """Return ``{operation_name: OperationSignature}`` for all operations."""
         return {
             name: method.__soap_operation__
             for name, method in self.get_operations().items()

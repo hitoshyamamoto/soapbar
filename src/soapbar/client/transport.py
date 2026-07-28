@@ -37,6 +37,21 @@ def _require_http_url(url: str) -> None:
 
 
 class HttpTransport:
+    """HTTP transport used by :class:`~soapbar.client.client.SoapClient`.
+
+    Prefers httpx (sync and async, pooled connections) and falls back to
+    stdlib ``urllib`` when httpx is not installed — the fallback supports
+    neither client certificates nor a custom CA bundle nor async.
+
+    Construction knobs: *timeout*; *verify_ssl* (default ``True`` — the
+    opt-out exists for test endpoints only); *client_cert* for mutual TLS
+    (see :func:`load_pkcs12` for ``.pfx`` bundles); *ca_bundle* to pin a
+    private/government PKI root (takes precedence over *verify_ssl*); and
+    *persist_cookies* to keep session cookies across calls (stateful
+    services). Use as a context manager or call ``close()``/``aclose()``
+    to release pooled connections.
+    """
+
     def __init__(
         self,
         *,

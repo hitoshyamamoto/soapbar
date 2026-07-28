@@ -15,6 +15,13 @@ from soapbar.core.xml import make_element, sub_element, to_bytes, to_string
 
 
 def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
+    """Build a WSDL 1.1 document element from *defn*.
+
+    :param defn: The definition to serialize (as built from service classes
+        or parsed from another WSDL).
+    :param address: The service endpoint URL, emitted in ``soap:address``.
+    :return: The ``wsdl:definitions`` root element.
+    """
     tns = defn.target_namespace
 
     # Determine SOAP ns from bindings
@@ -176,10 +183,12 @@ def _build_binding(
 
 
 def build_wsdl_string(defn: WsdlDefinition, address: str) -> str:
+    """Build the WSDL for *defn* and serialize it to ``str`` (see :func:`build_wsdl`)."""
     return to_string(build_wsdl(defn, address))
 
 
 def build_wsdl_bytes(defn: WsdlDefinition, address: str) -> bytes:
+    """Build the WSDL for *defn* and serialize it to UTF-8 bytes (see :func:`build_wsdl`)."""
     return to_bytes(build_wsdl(defn, address))
 
 
