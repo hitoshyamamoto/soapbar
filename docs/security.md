@@ -17,10 +17,26 @@ Entity references (potential XXE payloads) are silently dropped rather than expa
 
 Additional hardening:
 
+- **SSRF guard on WSDL imports**: `wsdl:import` / `xsd:import` locations are not fetched by default — remote (`http(s)://`) imports require `parse_wsdl(..., allow_remote_imports=True)` and local-file imports require `allow_local_imports=True`, so a hostile WSDL cannot reach internal hosts or read local files.
 - **Message size limit**: `SoapApplication(max_body_size=10*1024*1024)` — requests exceeding 10 MB are rejected with a `Client` fault before XML parsing.
 - **XML nesting depth**: requests exceeding 100 levels of nesting are rejected to prevent stack exhaustion.
 - **Error scrubbing**: unhandled exceptions produce `"An internal error occurred."` — no stack traces or exception text are returned to clients.
 - **HTTPS warning**: `SoapApplication` warns at construction time if `service_url` uses plain HTTP.
+
+---
+
+## Security assurance
+
+These protections are verified continuously, not just designed in:
+
+- **Static analysis** — [CodeQL](https://github.com/hitoshyamamoto/soapbar/blob/main/.github/workflows/codeql.yml) with the `security-extended` query pack, plus ruff's flake8-bandit rules and strict mypy, run on every push and pull request.
+- **Fuzzing** — a coverage-guided [Atheris/libFuzzer harness](https://github.com/hitoshyamamoto/soapbar/blob/main/fuzz/fuzz_parsing.py) feeds arbitrary bytes into every parser that accepts untrusted input (`parse_xml`, `check_xml_depth`, `SoapEnvelope.from_xml`, `parse_wsdl`) on a weekly schedule; any exception outside the documented error contract counts as a crash.
+- **Property-based tests** — [Hypothesis properties](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/test_properties.py) assert round-trip and robustness invariants for the XSD type system, envelope serialisation, and the parsers, as part of the normal test suite.
+- **OpenSSF** — soapbar holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849) and is monitored by [Scorecard](https://scorecard.dev/viewer/?uri=github.com/hitoshyamamoto/soapbar).
+
+## Reporting a vulnerability
+
+**Do not open a public issue for security vulnerabilities.** Use the private disclosure process in the [security policy](https://github.com/hitoshyamamoto/soapbar/blob/main/.github/SECURITY.md) — a [GitHub private security advisory](https://github.com/hitoshyamamoto/soapbar/security/advisories/new) visible only to you and the maintainer. Acknowledgement within 48 h, assessment within 7 days.
 
 ---
 

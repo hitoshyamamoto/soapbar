@@ -17,6 +17,7 @@ soapbar implements SOAP 1.1 and 1.2 with all five binding styles, auto-generates
 - ASGI adapter (`AsgiSoapApp`) and WSGI adapter (`WsgiSoapApp`)
 - XXE-safe hardened XML parser (lxml, `resolve_entities=False`, `no_network=True`, `load_dtd=False`)
 - Message size limit (10 MB default) and XML nesting depth limit (100 levels) — DoS protection
+- Continuously assured: CodeQL static analysis, coverage-guided fuzzing (Atheris) and property-based tests (Hypothesis) in CI; holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849) — see [Security](security.md)
 - **WS-Security UsernameToken** — PasswordText and PasswordDigest (SHA-1) on both client and server
 - **XML Signature** — enveloped XML-DSIG signing and verification (`sign_envelope` / `verify_envelope`, requires `signxml`)
 - **Id-targeted signing** — sign an inner element selected by its `Id`/Reference URI (`sign_element_by_id`), with a configurable algorithm set (incl. the SEFAZ NF-e RSA-SHA1 / inclusive-C14N / EndCertOnly profile)
