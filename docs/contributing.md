@@ -17,6 +17,12 @@ uv run ruff check src/ tests/
 uv run mypy src/
 ```
 
+Optionally, run the fuzz harness locally (Atheris needs CPython 3.12+):
+
+```bash
+uv run --group fuzz python fuzz/fuzz_parsing.py -max_total_time=60
+```
+
 Run the example server (requires FastAPI + uvicorn):
 
 ```bash
