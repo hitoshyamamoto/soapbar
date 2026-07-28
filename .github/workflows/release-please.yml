@@ -32,7 +32,9 @@ jobs:
         if: ${{ steps.release.outputs.prs_created == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          # `|| '{}'`: expressions in `with`/`env` are evaluated even for
+          # skipped steps, so guard against the output being empty.
+          ref: ${{ fromJSON(steps.release.outputs.pr || '{}').headBranchName }}
 
       - name: Install uv
         if: ${{ steps.release.outputs.prs_created == 'true' }}
@@ -43,7 +45,7 @@ jobs:
       - name: Sync uv.lock with the bumped version
         if: ${{ steps.release.outputs.prs_created == 'true' }}
         env:
-          BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          BRANCH: ${{ fromJSON(steps.release.outputs.pr || '{}').headBranchName }}
         run: |
           set -euo pipefail
           uv lock
