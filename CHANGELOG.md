@@ -6,6 +6,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.0...v0.15.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **security,ci:** P1 batch — scheme guard, PR xmlsec, honest spyne claim, coverage ([#97](https://github.com/hitoshyamamoto/soapbar/issues/97)) ([9c19b41](https://github.com/hitoshyamamoto/soapbar/commit/9c19b4185101c60bf287bdb98bc82cd22e7c6685))
+
+
+### Documentation
+
+* add mkdocs-material site on GitHub Pages ([#111](https://github.com/hitoshyamamoto/soapbar/issues/111)) ([863ae50](https://github.com/hitoshyamamoto/soapbar/commit/863ae5016370babb95f17cee3b1d02cd82022b3a))
+* add OpenSSF Best Practices passing badge to README ([#117](https://github.com/hitoshyamamoto/soapbar/issues/117)) ([7cf03d5](https://github.com/hitoshyamamoto/soapbar/commit/7cf03d57bd9efd355cbf461232a7c703fb2c0ece))
+* document security assurance, disclosure process, and SSRF guard ([#119](https://github.com/hitoshyamamoto/soapbar/issues/119)) ([63a102c](https://github.com/hitoshyamamoto/soapbar/commit/63a102c49342a573384f355f699b5062ae54efab))
+* fix README credibility issues ([#107](https://github.com/hitoshyamamoto/soapbar/issues/107)) ([3141445](https://github.com/hitoshyamamoto/soapbar/commit/3141445157e8a47ea63bd732408e9443a05b1681))
+* surface security assurance work in README ([#118](https://github.com/hitoshyamamoto/soapbar/issues/118)) ([a0ae174](https://github.com/hitoshyamamoto/soapbar/commit/a0ae174333885b76597eeb92de75dc77f93033a9))
+
 ## [0.15.0] — 2026-07-05
 
 The public-API stabilization release, and the project's move to **Beta**
