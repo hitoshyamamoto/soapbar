@@ -45,6 +45,16 @@ the API change in your pull request description.
 - New third-party GitHub Actions must be pinned to a full commit SHA with a
   version comment, matching the existing workflows.
 
+## Releases
+
+Releases are automated with [release-please](https://github.com/googleapis/release-please):
+merged `feat:` and `fix:` PRs accumulate into a rolling **release PR** that
+carries the version bump (computed from conventional-commit types: `fix:` →
+patch, `feat:` → minor; breaking changes bump minor while pre-1.0) and the
+CHANGELOG section, which may be hand-edited on that PR before merging.
+Merging the release PR tags the release, publishes to PyPI, and creates the
+GitHub Release — no manual version editing or tagging.
+
 ## Security issues
 
 Do **not** open a public issue for vulnerabilities. Follow the private
