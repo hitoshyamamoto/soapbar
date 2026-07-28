@@ -47,11 +47,28 @@ jobs:
       - name: Build wheel and sdist
         run: uv build
 
+      - name: Generate SBOM (CycloneDX, runtime dependencies)
+        # From the frozen lockfile, runtime graph only (no dev groups, no
+        # project itself) — the dependency inventory of the shipped package.
+        # Kept out of dist/ so the PyPI publish step never sees it.
+        run: |
+          uv export --frozen --no-dev --no-emit-project -o sbom-requirements.txt
+          mkdir -p sbom
+          uvx --from cyclonedx-bom==7.3.1 cyclonedx-py requirements sbom-requirements.txt \
+            --of JSON -o "sbom/soapbar-${RELEASE_TAG#v}.cdx.json"
+
       - name: Upload dist artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: dist
           path: dist/
+          retention-days: 7
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sbom
+          path: sbom/
           retention-days: 7
 
   publish:
@@ -70,17 +87,43 @@ jobs:
 
       - name: Publish to PyPI (OIDC trusted publishing)
         uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # release/v1
+        with:
+          # Idempotent re-runs: a version already on PyPI is skipped instead
+          # of failing the job (e.g. re-running to regenerate release assets).
+          skip-existing: true
 
   github-release:
     name: Create GitHub Release
     needs: publish
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # required to create a GitHub Release
+      contents: write      # create/edit the GitHub Release and upload assets
+      id-token: write      # sign the provenance attestation (Sigstore)
+      attestations: write  # store the attestation in the GitHub store
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: sbom
+          path: sbom/
+
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        with:
+          subject-path: |
+            dist/*
+            sbom/*
 
       - name: Create or update GitHub Release from CHANGELOG section
         env:
@@ -125,3 +168,19 @@ jobs:
               --title "${TAG}" \
               --notes-file release-notes.md
           fi
+
+      - name: Attach dist, SBOM, and provenance bundle to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ env.RELEASE_TAG }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        # The .sigstore.json suffix is what verification tooling (and the
+        # Scorecard Signed-Releases check) recognizes as a signature bundle —
+        # artifacts must never be attached without it.
+        run: |
+          set -euo pipefail
+          cp "${BUNDLE}" "soapbar-${TAG#v}-provenance.sigstore.json"
+          gh release upload "${TAG}" --clobber \
+            dist/* \
+            sbom/* \
+            "soapbar-${TAG#v}-provenance.sigstore.json"
