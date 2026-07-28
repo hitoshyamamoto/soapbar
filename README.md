@@ -96,10 +96,14 @@ Mounting inside FastAPI/Flask, defining services, binding styles, and the client
 
 - [Documentation](https://hitoshyamamoto.github.io/soapbar/)
 - [Security](https://hitoshyamamoto.github.io/soapbar/security/) — hardened parser, WS-Security, XML Signature and Encryption
+- [Security assurance case](https://hitoshyamamoto.github.io/soapbar/assurance-case/) — threat model, trust boundaries, residual risk
 - [Security policy](https://github.com/hitoshyamamoto/soapbar/blob/main/.github/SECURITY.md) — private vulnerability reporting, supported versions, response times
+- [Verifying a release](https://hitoshyamamoto.github.io/soapbar/security/#verifying-a-release) — Sigstore provenance and SBOM
 - [Real-world services](https://hitoshyamamoto.github.io/soapbar/real-world/) — VIES, NF-e, WITSML, ANA, IRS MeF
 - [Comparison with alternatives](https://hitoshyamamoto.github.io/soapbar/comparison/) — zeep, spyne, fastapi-soap
 - [Stability policy](https://github.com/hitoshyamamoto/soapbar/blob/main/STABILITY.md) — public surface, SemVer, deprecation process
+- [Roadmap](https://github.com/hitoshyamamoto/soapbar/blob/main/ROADMAP.md) — what is planned, and what is deliberately not
+- [Governance](https://github.com/hitoshyamamoto/soapbar/blob/main/GOVERNANCE.md) — decision model, roles, continuity
 
 ---
 
