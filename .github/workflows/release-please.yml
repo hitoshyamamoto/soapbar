@@ -74,6 +74,21 @@ jobs:
             git push origin "HEAD:${BRANCH}"
           fi
 
+      # Enable native auto-merge on the release PR so publishing to PyPI needs
+      # no human click. Guarded on the App token being configured: the merge is
+      # then attributed to the App (not GITHUB_TOKEN), so the resulting push to
+      # main re-triggers this workflow to cut the tag/release — a merge made by
+      # GITHUB_TOKEN would not (anti-recursion). Requires branch protection with
+      # required status checks on main plus repo "Allow auto-merge"; auto-merge
+      # then waits for CI to pass before merging. Without the App the step is
+      # skipped and the release PR keeps its current manual-merge flow.
+      - name: Enable auto-merge on the release PR
+        if: ${{ steps.release.outputs.prs_created == 'true' && vars.RELEASE_BOT_APP_ID != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ fromJSON(steps.release.outputs.pr || '{}').number }}
+        run: gh pr merge --auto --squash "${PR}" --repo "${GITHUB_REPOSITORY}"
+
       - name: Trigger PyPI publish workflow
         if: ${{ steps.release.outputs.release_created == 'true' }}
         env:
