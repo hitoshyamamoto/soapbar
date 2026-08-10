@@ -21,6 +21,11 @@ updates:
       day: "monday"
     open-pull-requests-limit: 5
     groups:
+      # Group ALL action bumps into one PR. Critical for github/codeql-action:
+      # its init/analyze/upload-sarif sub-actions must stay on the same version
+      # (init writes a config the analyze step must match), so bumping them in
+      # separate PRs breaks CodeQL until every PR merges. A single grouped PR
+      # keeps them in lockstep and cuts PR noise.
       github-actions:
-        patterns: ["actions/*"]
+        patterns: ["*"]
     labels: ["dependencies", "github-actions"]

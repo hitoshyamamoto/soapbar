@@ -89,14 +89,18 @@ jobs:
           PR: ${{ fromJSON(steps.release.outputs.pr || '{}').number }}
         run: gh pr merge --auto --squash "${PR}" --repo "${GITHUB_REPOSITORY}"
 
+      # Only needed on the GITHUB_TOKEN fallback path. Tags created with
+      # GITHUB_TOKEN do not fire `on: push: tags` (anti-recursion), so we
+      # dispatch release.yml manually. When the App token is configured the tag
+      # IS created by the App, so `on: push: tags` fires on its own — dispatching
+      # here too would publish twice (the second run only survives because
+      # release.yml sets skip-existing). Guard on the App being unset to keep
+      # exactly one publish per release.
       - name: Trigger PyPI publish workflow
-        if: ${{ steps.release.outputs.release_created == 'true' }}
+        if: ${{ steps.release.outputs.release_created == 'true' && vars.RELEASE_BOT_APP_ID == '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.release.outputs.tag_name }}
-        # Tags created with GITHUB_TOKEN do not fire `on: push: tags`
-        # (anti-recursion), but workflow_dispatch is a documented exception —
-        # so release.yml keeps its PyPI trusted-publisher binding unchanged.
         # Dispatch on the tag ref: the pypi environment's deployment policy
         # only allows deployments from v* tags, not branches.
         run: gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "refs/tags/${TAG}" -f tag="${TAG}"
