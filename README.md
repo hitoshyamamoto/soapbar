@@ -72,7 +72,22 @@ app = AsgiSoapApp(soap_app)
 # WSDL: GET http://localhost:8000?wsdl
 ```
 
-Mounting inside FastAPI/Flask, defining services, binding styles, and the client are covered in the [Quick start](https://hitoshyamamoto.github.io/soapbar/quickstart/) and [Client](https://hitoshyamamoto.github.io/soapbar/client/) docs.
+Mounting inside FastAPI/Flask, defining services, and binding styles are covered in the [Quick start](https://hitoshyamamoto.github.io/soapbar/quickstart/) docs.
+
+---
+
+## Quick start — client
+
+Drive a typed client from an existing WSDL:
+
+```python
+from soapbar import SoapClient
+
+client = SoapClient(wsdl_url="http://localhost:8000?wsdl")
+result = client.service.add(a=3, b=5)     # or client.call("add", a=3, b=5)
+```
+
+Async (`await client.call_async(...)`), WSDL-less `SoapClient.manual(...)`, mutual TLS (`HttpTransport(client_cert=..., ca_bundle=...)`, `load_pkcs12(...)`), and session cookies are covered in the [Client](https://hitoshyamamoto.github.io/soapbar/client/) docs.
 
 ---
 
