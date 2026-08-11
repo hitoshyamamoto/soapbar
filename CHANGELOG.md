@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.6](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.5...v0.15.6) (2026-08-11)
+
+
+### Documentation
+
+* client quickstart in README + comparison accuracy fixes ([#151](https://github.com/hitoshyamamoto/soapbar/issues/151)) ([e4d5a86](https://github.com/hitoshyamamoto/soapbar/commit/e4d5a8641e40bac1dc533fd6d03157e1ff8a6924))
+
 ## [0.15.5](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.4...v0.15.5) (2026-08-10)
 
 
