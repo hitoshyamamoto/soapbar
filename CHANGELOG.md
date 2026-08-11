@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.8](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.7...v0.15.8) (2026-08-11)
+
+
+### Documentation
+
+* state that soapbar does not run paid bounties or solicitations ([#159](https://github.com/hitoshyamamoto/soapbar/issues/159)) ([e16eb39](https://github.com/hitoshyamamoto/soapbar/commit/e16eb392854d04db62023b2aa8ba2f4147f19e97))
+
 ## [0.15.7](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.6...v0.15.7) (2026-08-11)
 
 
