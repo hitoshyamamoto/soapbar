@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.7](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.6...v0.15.7) (2026-08-11)
+
+
+### Documentation
+
+* document the wider SOAP landscape + correct Python-version data ([#154](https://github.com/hitoshyamamoto/soapbar/issues/154)) ([e3a466d](https://github.com/hitoshyamamoto/soapbar/commit/e3a466d043143afd9921045c54066ff3174db3ea))
+
 ## [0.15.6](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.5...v0.15.6) (2026-08-11)
 
 
