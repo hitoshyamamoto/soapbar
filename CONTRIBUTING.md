@@ -3,6 +3,15 @@
 Thank you for considering a contribution. Issues, discussions, and pull
 requests are all welcome.
 
+## No paid solicitations
+
+soapbar does not run paid bounties, and its issue tracker is not a marketplace.
+Please do not comment offering to implement an issue for a fee (e.g. "I can do
+this for $X, confirm the scope before I begin"). Such comments — especially the
+same templated message posted across several issues — will be hidden as spam,
+and the account may be blocked and reported. Genuine contributions are always
+welcome: open a pull request, or ask a question in an issue or discussion.
+
 ## Development setup
 
 soapbar uses [uv](https://docs.astral.sh/uv/) for dependency management:
