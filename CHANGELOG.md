@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.9](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.8...v0.15.9) (2026-08-11)
+
+
+### Documentation
+
+* add PyPI downloads and GitHub stars badges ([#161](https://github.com/hitoshyamamoto/soapbar/issues/161)) ([428ea2a](https://github.com/hitoshyamamoto/soapbar/commit/428ea2a3e48432e10c240d89db707fd653da6906))
+
 ## [0.15.8](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.7...v0.15.8) (2026-08-11)
 
 
