@@ -3,6 +3,8 @@
 [![CI](https://github.com/hitoshyamamoto/soapbar/actions/workflows/push.yml/badge.svg?branch=main)](https://github.com/hitoshyamamoto/soapbar/actions/workflows/push.yml)
 [![PyPI](https://img.shields.io/pypi/v/soapbar.svg?logo=pypi&logoColor=white)](https://pypi.org/project/soapbar/)
 [![Python versions](https://img.shields.io/pypi/pyversions/soapbar.svg?logo=python&logoColor=white)](https://pypi.org/project/soapbar/)
+[![Downloads](https://img.shields.io/pypi/dm/soapbar.svg?logo=pypi&logoColor=white)](https://pypi.org/project/soapbar/)
+[![GitHub stars](https://img.shields.io/github/stars/hitoshyamamoto/soapbar.svg?logo=github&logoColor=white)](https://github.com/hitoshyamamoto/soapbar/stargazers)
 [![License](https://img.shields.io/pypi/l/soapbar.svg)](https://github.com/hitoshyamamoto/soapbar/blob/main/LICENSE)
 [![Conformance suite](https://img.shields.io/badge/conformance%20suite-116%20tests-blue)](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/audit/test_compliance.py)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hitoshyamamoto/soapbar/badge)](https://scorecard.dev/viewer/?uri=github.com/hitoshyamamoto/soapbar)
