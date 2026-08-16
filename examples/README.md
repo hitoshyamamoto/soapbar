@@ -5,7 +5,7 @@ and binds to `127.0.0.1` so it never exposes a socket outside the host.
 
 | Folder | What it demonstrates |
 |---|---|
-| [`01_calculator/`](01_calculator/) | First-look SOAP 1.1 service on FastAPI and Flask; soapbar and zeep clients; SOAP Fault handling. |
+| [`01_calculator/`](01_calculator/) | First-look SOAP 1.1 service on FastAPI, Flask and Django; soapbar and zeep clients; SOAP Fault handling. |
 | [`02_soap12/`](02_soap12/) | The same service upgraded to SOAP 1.2 — one attribute change. |
 | [`03_wsdl_access_control/`](03_wsdl_access_control/) | X06 — serve the WSDL only to authenticated callers via `wsdl_access="authenticated"` + `wsdl_auth_hook`. |
 | [`04_ws_security_signing/`](04_ws_security_signing/) | S04/S05 — sign an envelope with `sign_envelope_bsp` (Exclusive C14N + explicit `ds:Reference` for Body and Timestamp) and round-trip through `verify_envelope_bsp`. |
@@ -51,10 +51,11 @@ Optional extras the examples assume:
 
 - `fastapi`, `uvicorn` — `01_calculator/server_fastapi.py`, most ASGI servers.
 - `flask` — `01_calculator/server_flask.py`.
+- `django` — `01_calculator/server_django.py`.
 - `zeep` — `01_calculator/client_zeep.py` (interoperability demo).
 - `cryptography` / `signxml` — `04_ws_security_signing/`, `19_nfe/` (bundled with `soapbar[security]`).
 
-The `fastapi`/`uvicorn`/`flask` servers are also available via `uv sync --group examples`.
+The `fastapi`/`uvicorn`/`flask`/`django` servers are also available via `uv sync --group examples`.
 
 ## Security note
 
