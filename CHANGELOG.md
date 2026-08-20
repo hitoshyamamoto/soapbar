@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.12](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.11...v0.15.12) (2026-08-20)
+
+
+### Bug Fixes
+
+* **server:** publish one WSDL document per target namespace ([#185](https://github.com/hitoshyamamoto/soapbar/issues/185)) ([7555907](https://github.com/hitoshyamamoto/soapbar/commit/7555907cd89d6cc1431d8c2bbe29253840aa77d9))
+
 ## [0.15.11](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.10...v0.15.11) (2026-08-20)
 
 
