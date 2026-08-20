@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.16.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.13...v0.16.0) (2026-08-20)
+
+
+### Features
+
+* **wsdl:** materialise xsd:simpleType instead of downgrading to string ([#191](https://github.com/hitoshyamamoto/soapbar/issues/191)) ([3478010](https://github.com/hitoshyamamoto/soapbar/commit/3478010a68568ebc3ba36e3774473d3052bf2ad2))
+
 ## [0.15.13](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.12...v0.15.13) (2026-08-20)
 
 
