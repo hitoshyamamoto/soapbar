@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.11](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.10...v0.15.11) (2026-08-20)
+
+
+### Documentation
+
+* **server:** correct how to mount the SOAP app under Django ([#173](https://github.com/hitoshyamamoto/soapbar/issues/173)) ([5cb6cc0](https://github.com/hitoshyamamoto/soapbar/commit/5cb6cc0042b40ee38ea39a13a973d87aefd21d0f))
+
 ## [0.15.10](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.9...v0.15.10) (2026-08-20)
 
 
