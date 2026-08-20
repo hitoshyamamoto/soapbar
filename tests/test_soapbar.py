@@ -8602,3 +8602,234 @@ class TestHttpTransportConnectionReuse:
             transport._httpx_client = httpx.Client()
             assert transport._httpx_client is not None
         assert transport._httpx_client is None
+
+
+# ---------------------------------------------------------------------------
+# Multi-namespace WSDL publication
+#
+# A wsdl:definitions document carries exactly one targetNamespace, so services
+# registered under different __tns__ values get one document each, selectable
+# via ?wsdl=<ServiceName>. Services that agree on namespace, style and version
+# keep sharing a single document, byte-for-byte as before.
+# ---------------------------------------------------------------------------
+
+class _Alpha(SoapService):
+    __service_name__ = "Alpha"
+    __tns__ = "http://example.com/alpha"
+    __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+    @soap_operation()
+    def alpha_op(self) -> str:
+        return "alpha"
+
+
+class _Beta(SoapService):
+    __service_name__ = "Beta"
+    __tns__ = "http://example.com/beta"
+    __binding_style__ = BindingStyle.RPC_LITERAL
+    __soap_version__ = SoapVersion.SOAP_12
+
+    @soap_operation()
+    def beta_op(self, x: int) -> int:
+        return x
+
+
+def _multi_ns_app() -> SoapApplication:
+    app = SoapApplication(service_url="https://example.com/soap")
+    app.register(_Alpha())
+    app.register(_Beta())
+    return app
+
+
+class TestMultiNamespaceWsdl:
+    """One document per target namespace, each describing its own services."""
+
+    def test_service_names_lists_every_service(self) -> None:
+        assert _multi_ns_app().wsdl_service_names == ["Alpha", "Beta"]
+
+    def test_default_document_is_the_first_namespace(self) -> None:
+        defn = parse_wsdl(_multi_ns_app().get_wsdl())
+        assert defn.target_namespace == "http://example.com/alpha"
+        assert list(defn.services) == ["Alpha"]
+
+    def test_each_service_selects_its_own_document(self) -> None:
+        app = _multi_ns_app()
+        alpha = parse_wsdl(app.get_wsdl("Alpha"))
+        beta = parse_wsdl(app.get_wsdl("Beta"))
+
+        assert alpha.target_namespace == "http://example.com/alpha"
+        assert beta.target_namespace == "http://example.com/beta"
+        assert [o.name for pt in beta.port_types.values() for o in pt.operations] == ["beta_op"]
+
+    def test_second_service_keeps_its_own_binding_style(self) -> None:
+        """The regression this guards: beta_op used to be published as
+        document/literal in Alpha's namespace while the dispatcher ran it as
+        RPC, so a client generated from the WSDL could not call the server."""
+        beta = parse_wsdl(_multi_ns_app().get_wsdl("Beta"))
+        binding = next(iter(beta.bindings.values()))
+        assert binding.style == "rpc"
+        op = binding.operations[0]
+        assert op.use == "literal"
+        assert op.input_namespace == "http://example.com/beta"
+
+    def test_published_style_matches_the_dispatcher(self) -> None:
+        app = _multi_ns_app()
+        for name, op_name in (("Alpha", "alpha_op"), ("Beta", "beta_op")):
+            binding = next(iter(parse_wsdl(app.get_wsdl(name)).bindings.values()))
+            service, _method = app._dispatch[op_name]
+            assert binding.style == service.__binding_style__.soap_style
+
+    def test_default_document_points_at_its_siblings(self) -> None:
+        assert "?wsdl=Beta" in _multi_ns_app().get_wsdl().decode()
+
+    def test_unknown_service_name_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown WSDL service 'Nope'"):
+            _multi_ns_app().get_wsdl("Nope")
+
+    def test_custom_wsdl_ignores_the_selector(self) -> None:
+        app = SoapApplication(custom_wsdl=b"<definitions/>", service_url="https://e.com/s")
+        app.register(_Alpha())
+        assert app.get_wsdl("anything") == b"<definitions/>"
+
+
+class TestSingleNamespaceWsdlUnchanged:
+    """Services sharing a namespace keep sharing one document."""
+
+    def test_same_name_and_style_merge_into_one_port_type(self) -> None:
+        class OrdersPart(SoapService):
+            __service_name__ = "Shop"
+            __tns__ = "http://example.com/shop"
+
+            @soap_operation()
+            def place_order(self, sku: str) -> int:
+                return 1
+
+        class CustomersPart(SoapService):
+            __service_name__ = "Shop"
+            __tns__ = "http://example.com/shop"
+
+            @soap_operation()
+            def find_customer(self, email: str) -> str:
+                return email
+
+        app = SoapApplication(service_url="https://example.com/soap")
+        app.register(OrdersPart())
+        app.register(CustomersPart())
+
+        defn = parse_wsdl(app.get_wsdl())
+        assert list(defn.services) == ["Shop"]
+        assert list(defn.port_types) == ["ShopPortType"]
+        assert {o.name for o in defn.port_types["ShopPortType"].operations} == {
+            "place_order",
+            "find_customer",
+        }
+        # A lone namespace has no siblings to advertise.
+        assert "<documentation>" not in app.get_wsdl().decode()
+
+    def test_mixed_soap_versions_in_one_namespace_declare_both_prefixes(self) -> None:
+        class Legacy(SoapService):
+            __service_name__ = "Legacy"
+            __tns__ = "http://example.com/mix"
+            __soap_version__ = SoapVersion.SOAP_11
+
+            @soap_operation()
+            def old_op(self) -> str:
+                return "old"
+
+        class Modern(SoapService):
+            __service_name__ = "Modern"
+            __tns__ = "http://example.com/mix"
+            __soap_version__ = SoapVersion.SOAP_12
+
+            @soap_operation()
+            def new_op(self) -> str:
+                return "new"
+
+        app = SoapApplication(service_url="https://example.com/soap")
+        app.register(Legacy())
+        app.register(Modern())
+        raw = app.get_wsdl().decode()
+
+        assert 'xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"' in raw
+        assert 'xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/"' in raw
+        # Each port's address sits in the namespace of the binding it refers to.
+        assert raw.count("<soap:address") == 1
+        assert raw.count("<soap12:address") == 1
+
+
+class TestWsdlSelectorRouting:
+    """?wsdl=<name> reaches get_wsdl through both adapters."""
+
+    @staticmethod
+    def _wsgi_get(app: SoapApplication, query: str) -> tuple[str, bytes]:
+        captured: dict[str, str] = {}
+
+        def start_response(status: str, headers: list[tuple[str, str]]) -> None:
+            captured["status"] = status
+
+        body = b"".join(
+            WsgiSoapApp(app)(
+                {
+                    "REQUEST_METHOD": "GET",
+                    "QUERY_STRING": query,
+                    "wsgi.input": io.BytesIO(b""),
+                },
+                start_response,
+            )
+        )
+        return captured["status"], body
+
+    def test_wsgi_selects_named_document(self) -> None:
+        status, body = self._wsgi_get(_multi_ns_app(), "wsdl=Beta")
+        assert status.startswith("200")
+        assert b'targetNamespace="http://example.com/beta"' in body
+
+    def test_wsgi_bare_wsdl_serves_the_default(self) -> None:
+        status, body = self._wsgi_get(_multi_ns_app(), "wsdl")
+        assert status.startswith("200")
+        assert b'targetNamespace="http://example.com/alpha"' in body
+
+    def test_wsgi_parameter_name_is_case_insensitive(self) -> None:
+        _status, body = self._wsgi_get(_multi_ns_app(), "WSDL=Beta")
+        assert b'targetNamespace="http://example.com/beta"' in body
+
+    def test_wsgi_unknown_name_is_404(self) -> None:
+        status, body = self._wsgi_get(_multi_ns_app(), "wsdl=Nope")
+        assert status.startswith("404")
+        assert b"Unknown WSDL service" in body
+
+    async def test_asgi_selects_named_document(self) -> None:
+        messages: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, Any]) -> None:
+            messages.append(message)
+
+        await AsgiSoapApp(_multi_ns_app())(
+            {"type": "http", "method": "GET", "query_string": b"wsdl=Beta", "headers": []},
+            receive,
+            send,
+        )
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+        assert start["status"] == 200
+        assert b'targetNamespace="http://example.com/beta"' in body
+
+    async def test_asgi_unknown_name_is_404(self) -> None:
+        messages: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, Any]) -> None:
+            messages.append(message)
+
+        await AsgiSoapApp(_multi_ns_app())(
+            {"type": "http", "method": "GET", "query_string": b"wsdl=Nope", "headers": []},
+            receive,
+            send,
+        )
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        assert start["status"] == 404

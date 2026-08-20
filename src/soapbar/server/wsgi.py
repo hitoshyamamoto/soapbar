@@ -49,7 +49,18 @@ class WsgiSoapApp:
                     ("Content-Length", str(len(body))),
                 ])
                 return [body]
-            wsdl = self.soap_app.get_wsdl()
+            # ?wsdl=<name> selects one document when the application spans
+            # several namespaces; an unknown name is a 404, not a 500.
+            from soapbar.server.application import _wsdl_selector
+            try:
+                wsdl = self.soap_app.get_wsdl(_wsdl_selector(query_string))
+            except ValueError as exc:
+                body = str(exc).encode()
+                start_response("404 Not Found", [
+                    ("Content-Type", "text/plain"),
+                    ("Content-Length", str(len(body))),
+                ])
+                return [body]
             start_response("200 OK", [
                 ("Content-Type", "text/xml; charset=utf-8"),
                 ("Content-Length", str(len(wsdl))),

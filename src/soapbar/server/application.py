@@ -42,6 +42,26 @@ from soapbar.server.service import SoapMethod, SoapService
 _log = logging.getLogger(__name__)
 
 
+def _wsdl_selector(query_string: str) -> str | None:
+    """Return the service named in a ``?wsdl=<name>`` query, or ``None``.
+
+    ``?wsdl`` on its own selects the default document, so a blank value is
+    indistinguishable from no value and both yield ``None``. The parameter name
+    is matched case-insensitively, matching how the adapters detect the WSDL
+    route itself.
+
+    Shared by the ASGI and WSGI adapters so both resolve the selector
+    identically.
+    """
+    from urllib.parse import parse_qs
+
+    for key, values in parse_qs(query_string, keep_blank_values=True).items():
+        if key.lower() == "wsdl":
+            selected = next((v for v in values if v), None)
+            return selected
+    return None
+
+
 def _accepts_json(accept: str) -> bool:
     """Return True if ``accept`` contains ``application/json`` as a discrete media type.
 
@@ -220,13 +240,92 @@ class SoapApplication:
                 if clean != sig.soap_action:
                     self._action_map[clean] = op_name
 
-    def get_wsdl(self) -> bytes:
-        """Return the WSDL document as bytes — the *custom_wsdl* passed at
-        construction, or one generated from the registered services."""
+    @property
+    def wsdl_service_names(self) -> list[str]:
+        """Names selectable through ``get_wsdl(service_name=...)``.
+
+        One entry per registered service, in registration order. Services that
+        share a ``__tns__`` share a document, so several names here may select
+        the same bytes.
+        """
+        return [self._service_name_of(s) for s in self._services]
+
+    def get_wsdl(self, service_name: str | None = None) -> bytes:
+        """Return a WSDL document as bytes.
+
+        With no argument this is the *custom_wsdl* passed at construction, or
+        the document for the first registered service's namespace — the whole
+        contract whenever every service shares a ``__tns__``, which is the
+        common case.
+
+        A WSDL 1.1 document carries exactly one ``targetNamespace``, so an
+        application whose services span several namespaces publishes **one
+        document per namespace**. Pass *service_name* to select one; the names
+        are listed in ``wsdl_service_names``, and the default document's
+        ``documentation`` element names the alternatives.
+
+        :raises ValueError: if *service_name* matches no registered service.
+        """
         if self._custom_wsdl is not None:
             return self._custom_wsdl
-        defn = self._build_wsdl_definition()
+
+        groups = self._wsdl_groups()
+        if not groups:
+            return build_wsdl_bytes(self._build_wsdl_definition([]), self.service_url)
+
+        if service_name is None:
+            services = next(iter(groups.values()))
+        else:
+            services = self._services_for_name(service_name, groups)
+
+        defn = self._build_wsdl_definition(services)
+        self._annotate_sibling_documents(defn, services, groups)
         return build_wsdl_bytes(defn, self.service_url)
+
+    def _services_for_name(
+        self,
+        service_name: str,
+        groups: dict[str, list[SoapService]],
+    ) -> list[SoapService]:
+        """Return the document group containing the service called *service_name*."""
+        for members in groups.values():
+            if any(self._service_name_of(s) == service_name for s in members):
+                return members
+        known = ", ".join(sorted(set(self.wsdl_service_names))) or "none"
+        raise ValueError(
+            f"Unknown WSDL service {service_name!r}; registered services: {known}."
+        )
+
+    def _annotate_sibling_documents(
+        self,
+        defn: WsdlDefinition,
+        services: list[SoapService],
+        groups: dict[str, list[SoapService]],
+    ) -> None:
+        """Record the other documents in *defn*'s ``documentation`` element.
+
+        A WSDL document cannot describe a namespace other than its own, so when
+        an application spans several the remaining ones would otherwise be
+        undiscoverable. ``wsdl:import`` would make them machine-followable but
+        would also require every consumer — soapbar's own parser included, where
+        remote imports are refused by default as an SSRF guard — to fetch them,
+        so the pointer is left as human-readable documentation instead.
+        """
+        if len(groups) < 2:
+            return
+        mine = {id(s) for s in services}
+        others = [
+            self._service_name_of(s)
+            for members in groups.values()
+            for s in members
+            if id(s) not in mine
+        ]
+        if others:
+            defn.documentation = (
+                "This application also serves: "
+                + ", ".join(f"{name} (?wsdl={name})" for name in others)
+                + "."
+            )
 
     def check_wsdl_access(self, headers: dict[str, str]) -> bool:
         """Return True if the WSDL may be served for the given request headers.
@@ -552,30 +651,95 @@ class SoapApplication:
 
         return None
 
-    def _build_wsdl_definition(self) -> WsdlDefinition:
-        """Auto-generate WsdlDefinition from registered services."""
-        if not self._services:
+    @staticmethod
+    def _service_name_of(service: SoapService) -> str:
+        """The WSDL service element name for *service*."""
+        return service.__service_name__ or service.__class__.__name__
+
+    def _wsdl_groups(self) -> dict[str, list[SoapService]]:
+        """Registered services grouped by target namespace, in registration order.
+
+        A WSDL 1.1 ``definitions`` document carries exactly one
+        ``targetNamespace``, so services that declare different ``__tns__``
+        values cannot share a document — each namespace gets its own.
+        """
+        groups: dict[str, list[SoapService]] = {}
+        for service in self._services:
+            groups.setdefault(service.__tns__, []).append(service)
+        return groups
+
+    def _build_wsdl_definition(
+        self,
+        services: list[SoapService] | None = None,
+    ) -> WsdlDefinition:
+        """Auto-generate a ``WsdlDefinition`` from *services*.
+
+        All services passed in must share a ``__tns__`` (see
+        ``_wsdl_groups``); they may differ in binding style and SOAP
+        version, and each such combination is published as its own
+        ``portType``/``binding``/``service`` triple so the document describes
+        what the dispatcher actually does. Defaults to every registered
+        service, which is correct whenever they all share a namespace.
+        """
+        services = self._services if services is None else services
+        if not services:
             return WsdlDefinition(target_namespace="http://example.com/soap")
 
-        svc = self._services[0]
-        tns = svc.__tns__
-        service_name = svc.__service_name__ or svc.__class__.__name__
-        binding_style = svc.__binding_style__
-        soap_version = svc.__soap_version__
-        port_name = svc.__port_name__ or f"{service_name}Port"
-
-        soap_ns = NS.WSDL_SOAP if soap_version == SoapVersion.SOAP_11 else NS.WSDL_SOAP12
-        transport = "http://schemas.xmlsoap.org/soap/http"
-
+        tns = services[0].__tns__
         defn = WsdlDefinition(
-            name=service_name,
+            name=self._service_name_of(services[0]),
             target_namespace=tns,
         )
+        transport = "http://schemas.xmlsoap.org/soap/http"
 
+        # Sub-group by the triple that determines a binding's shape. Services
+        # that agree on all three are merged into one portType, which keeps the
+        # single-service and homogeneous cases byte-identical to what earlier
+        # releases emitted.
+        subgroups: dict[tuple[str, Any, Any], list[SoapService]] = {}
+        for service in services:
+            key = (
+                self._service_name_of(service),
+                service.__binding_style__,
+                service.__soap_version__,
+            )
+            subgroups.setdefault(key, []).append(service)
+
+        for (service_name, binding_style, soap_version), members in subgroups.items():
+            port_name = members[0].__port_name__ or f"{service_name}Port"
+            soap_ns = (
+                NS.WSDL_SOAP if soap_version == SoapVersion.SOAP_11 else NS.WSDL_SOAP12
+            )
+            self._add_service_to_definition(
+                defn,
+                members,
+                service_name=service_name,
+                port_name=port_name,
+                binding_style=binding_style,
+                soap_ns=soap_ns,
+                transport=transport,
+                tns=tns,
+            )
+
+        return defn
+
+    def _add_service_to_definition(
+        self,
+        defn: WsdlDefinition,
+        services: list[SoapService],
+        *,
+        service_name: str,
+        port_name: str,
+        binding_style: Any,
+        soap_ns: str,
+        transport: str,
+        tns: str,
+    ) -> None:
+        """Append one portType/binding/service triple for *services* to *defn*."""
         pt = WsdlPortType(name=f"{service_name}PortType")
         binding_ops: list[WsdlBindingOperation] = []
 
-        for svc_instance in self._services:
+        for svc_instance in services:
             for op_name, method in svc_instance.get_operations().items():
                 sig: OperationSignature = method.__soap_operation__
                 doc = getattr(method, "__soap_documentation__", "")
@@ -661,5 +825,3 @@ class SoapApplication:
             name=service_name,
             ports=[wsdl_port],
         )
-
-        return defn

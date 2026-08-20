@@ -129,6 +129,10 @@ class WsdlDefinition:
 
     name: str = ""
     target_namespace: str = ""
+    #: Free text emitted as the document's ``wsdl:documentation`` element. Used
+    #: to point at sibling documents when an application spans several
+    #: namespaces, since one document cannot describe more than its own.
+    documentation: str = ""
     messages: dict[str, WsdlMessage] = field(default_factory=dict)
     port_types: dict[str, WsdlPortType] = field(default_factory=dict)
     bindings: dict[str, WsdlBinding] = field(default_factory=dict)
