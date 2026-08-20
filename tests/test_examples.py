@@ -8,7 +8,7 @@ using the current interpreter:
   run the client, and assert it exits 0.
 
 Server-based tests are skipped when their optional deps (``fastapi`` /
-``uvicorn`` / ``flask``) are not installed, so ``uv sync --group dev`` alone
+``uvicorn`` / ``flask`` / ``django``) are not installed, so ``uv sync --group dev`` alone
 still passes; install them with ``uv sync --group examples``.
 """
 from __future__ import annotations
@@ -32,6 +32,7 @@ EXAMPLES = REPO / "examples"
 
 _HAS_SERVER = all(importlib.util.find_spec(m) for m in ("fastapi", "uvicorn"))
 _HAS_FLASK = importlib.util.find_spec("flask") is not None
+_HAS_DJANGO = importlib.util.find_spec("django") is not None
 _HAS_ZEEP = importlib.util.find_spec("zeep") is not None
 
 requires_server = pytest.mark.skipif(
@@ -221,6 +222,18 @@ def test_calculator_and_dependents(tmp_path: Path) -> None:
 def test_flask_serves_wsdl() -> None:
     with _serve("01_calculator/server_flask.py", 5000), urllib.request.urlopen(
         "http://127.0.0.1:5000/soap?wsdl", timeout=10
+    ) as resp:
+        assert resp.status == 200
+        assert "definitions" in resp.read().decode()
+
+
+# ---------------------------------------------------------------------------
+# 4b. Django variant (:8001) — boot and serve a WSDL
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(not _HAS_DJANGO, reason="django not installed (uv sync --group examples)")
+def test_django_serves_wsdl() -> None:
+    with _serve("01_calculator/server_django.py", 8001), urllib.request.urlopen(
+        "http://127.0.0.1:8001/soap?wsdl", timeout=10
     ) as resp:
         assert resp.status == 200
         assert "definitions" in resp.read().decode()
