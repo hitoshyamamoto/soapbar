@@ -15,6 +15,7 @@ from soapbar.core.binding import (
     get_serializer,
 )
 from soapbar.core.envelope import SoapEnvelope, SoapVersion, http_headers
+from soapbar.core.exceptions import SoapbarError
 from soapbar.core.namespaces import NS
 from soapbar.core.wsdl import (
     WsdlDefinition,
@@ -23,6 +24,65 @@ from soapbar.core.wsdl import (
 )
 from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
 from soapbar.core.xml import make_element
+
+#: Bytes kept from a non-SOAP response body when reporting NonSoapResponseError —
+#: enough to recognise a proxy error page or a JSON error, short enough to never
+#: dump a large or binary body into an exception message.
+_BODY_EXCERPT_LIMIT = 200
+
+
+class NonSoapResponseError(SoapbarError):
+    """Raised when an HTTP response body is not a parseable SOAP envelope.
+
+    Every real deployment eventually returns something that is not SOAP: a
+    proxy's error page, an authentication challenge, a JSON error from an
+    API gateway, or an empty body. Without this check that surfaced as an
+    opaque ``lxml.etree.XMLSyntaxError`` (not even a ``SoapbarError``) or,
+    for well-formed XML with an unrecognised root, a misleading
+    ``SoapFault: VersionMismatch`` — as if the server had spoken SOAP and
+    disagreed on the version, which it had not.
+
+    Carries the HTTP *status*, the response's *content_type* header, and a
+    truncated, leniently-decoded *body_excerpt* so the caller can see what
+    actually came back. The status alone never gates this check — a soapbar
+    server legitimately returns HTTP 500 for a SOAP fault and HTTP 400 for a
+    SOAP 1.2 sender fault, both of which are real SOAP envelopes and must
+    still parse normally.
+    """
+
+    def __init__(self, status: int, content_type: str, body: bytes) -> None:
+        excerpt = body[:_BODY_EXCERPT_LIMIT].decode("utf-8", errors="replace")
+        if len(body) > _BODY_EXCERPT_LIMIT:
+            excerpt += "…"
+        super().__init__(
+            f"HTTP {status} response is not a SOAP envelope "
+            f"(Content-Type: {content_type or '<none>'!r}): {excerpt!r}"
+        )
+        self.status = status
+        self.content_type = content_type
+        self.body_excerpt = excerpt
+
+
+def _is_soap_envelope(body: bytes) -> bool:
+    """True if *body* parses as XML whose root is a SOAP 1.1/1.2 Envelope.
+
+    Checked before handing the body to ``SoapEnvelope.from_xml`` so malformed
+    XML, a wrong-but-valid XML document (HTML, JSON-as-text, an empty body),
+    or any other non-SOAP payload gets a clear ``NonSoapResponseError``
+    instead of an unguarded parser exception or a misleading fault.
+    """
+    from lxml import etree
+
+    from soapbar.core.xml import local_name, namespace_uri, parse_xml
+
+    try:
+        root = parse_xml(body)
+    except etree.XMLSyntaxError:
+        return False
+    return local_name(root) == "Envelope" and namespace_uri(root) in (
+        NS.SOAP_ENV,
+        NS.SOAP12_ENV,
+    )
 
 
 class _ServiceProxy:
@@ -570,8 +630,8 @@ class SoapClient:
                 soap_action=sig.soap_action or "",
             )
 
-        status, _ct, resp_body = self._transport.send(self._address, req_bytes, headers)
-        return self._parse_response(sig, resp_body, status)
+        status, content_type, resp_body = self._transport.send(self._address, req_bytes, headers)
+        return self._parse_response(sig, resp_body, status, content_type)
 
     async def call_async(self, operation: str, **kwargs: Any) -> Any:
         """Async counterpart of ``call``; same arity-based return contract.
@@ -605,8 +665,10 @@ class SoapClient:
         req_bytes = envelope.to_bytes()
         headers = http_headers(self._soap_version, sig.soap_action)
 
-        status, _ct, resp_body = await self._transport.send_async(self._address, req_bytes, headers)
-        return self._parse_response(sig, resp_body, status)
+        status, content_type, resp_body = await self._transport.send_async(
+            self._address, req_bytes, headers
+        )
+        return self._parse_response(sig, resp_body, status, content_type)
 
     def _get_sig(self, operation: str) -> OperationSignature:
         if operation in self._signatures:
@@ -619,7 +681,11 @@ class SoapClient:
         sig: OperationSignature,
         resp_body: bytes,
         status: int,
+        content_type: str = "",
     ) -> Any:
+        if not _is_soap_envelope(resp_body):
+            raise NonSoapResponseError(status, content_type, resp_body)
+
         envelope = SoapEnvelope.from_xml(resp_body)
         if envelope.is_fault:
             fault = envelope.fault

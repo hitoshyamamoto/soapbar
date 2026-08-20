@@ -111,6 +111,7 @@ EXPECTED_ALL = {
     # client
     "HttpTransport",
     "SoapClient",
+    "NonSoapResponseError",
     "load_pkcs12",
 }
 
