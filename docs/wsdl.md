@@ -8,6 +8,36 @@ wsdl_bytes = soap_app.get_wsdl()
 
 Served automatically at `GET ?wsdl` when using `AsgiSoapApp` or `WsgiSoapApp`.
 
+## Applications spanning several namespaces
+
+A `SoapApplication` can serve any number of services. Whenever they share a
+`__tns__` they also share one document, and `?wsdl` returns the whole contract —
+this is the common case and nothing else is needed.
+
+A WSDL 1.1 `definitions` document carries exactly **one** `targetNamespace`, so
+services declaring different `__tns__` values cannot be described by a single
+document. soapbar publishes **one document per namespace** instead, each with its
+own port types, bindings and SOAP version:
+
+```python
+soap_app.register(BillingService())   # __tns__ = "http://example.com/billing"
+soap_app.register(ShippingService())  # __tns__ = "http://example.com/shipping"
+
+soap_app.wsdl_service_names          # ['Billing', 'Shipping']
+soap_app.get_wsdl()                  # the first namespace's document
+soap_app.get_wsdl("Shipping")        # the shipping document
+```
+
+Over HTTP the same selection is `GET ?wsdl=Shipping`; a name that matches no
+registered service answers **404**. Bare `?wsdl` keeps returning the first
+service's document, and that document's `wsdl:documentation` element names the
+alternatives so they are discoverable.
+
+Services sharing a namespace but differing in binding style or SOAP version are
+published as separate port types and bindings **inside the same document**, which
+WSDL 1.1 allows — mixing SOAP 1.1 and 1.2 bindings simply declares both `soap:`
+and `soap12:` prefixes.
+
 **Parse an existing WSDL** to inspect its structure:
 
 ```python

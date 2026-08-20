@@ -24,22 +24,31 @@ def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
     """
     tns = defn.target_namespace
 
-    # Determine SOAP ns from bindings
+    # A single document may carry bindings that target different SOAP versions —
+    # an application serving several services in one namespace can mix SOAP 1.1
+    # and 1.2. Collect every WSDL/SOAP namespace actually in use and declare a
+    # prefix for each, rather than assuming the whole document speaks one
+    # version. The first binding's namespace remains the document default, which
+    # is what a single-service definition (the common case) emits.
     soap_ns = NS.WSDL_SOAP
     for binding in defn.bindings.values():
         if binding.soap_ns:
             soap_ns = binding.soap_ns
             break
 
-    soap_prefix = "soap12" if soap_ns == NS.WSDL_SOAP12 else "soap"
-
     nsmap: dict[str | None, str] = {
         None: NS.WSDL,
         "wsdl": NS.WSDL,
-        soap_prefix: soap_ns,
-        "tns": tns,
-        "xsd": NS.XSD,
+        _soap_prefix(soap_ns): soap_ns,
     }
+    # Any second SOAP version present among the bindings gets its own prefix.
+    # Declared after the document default so a single-version document — every
+    # single-service application — serializes exactly as it always has.
+    for binding in defn.bindings.values():
+        extra = binding.soap_ns or soap_ns
+        nsmap.setdefault(_soap_prefix(extra), extra)
+    nsmap["tns"] = tns
+    nsmap["xsd"] = NS.XSD
 
     root = make_element(
         f"{{{NS.WSDL}}}definitions",
@@ -49,6 +58,10 @@ def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
         },
         nsmap=nsmap,
     )
+
+    # Documentation, if any, must precede every other child ([WSDL11] §2.1.1).
+    if defn.documentation:
+        sub_element(root, f"{{{NS.WSDL}}}documentation", text=defn.documentation)
 
     # Types
     if defn.schema_elements or defn.complex_types or defn.global_elements:
@@ -116,11 +129,12 @@ def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
                     attrib={"message": f"tns:{op.output.message}"},
                 )
 
-    # Bindings
+    # Bindings — each one is emitted in its own SOAP namespace.
     for binding in defn.bindings.values():
-        _build_binding(root, binding, soap_ns, soap_prefix, tns)
+        _build_binding(root, binding, binding.soap_ns or soap_ns, tns)
 
-    # Services
+    # Services. ``soap:address`` must sit in the same namespace as the binding
+    # the port refers to, so resolve it per port instead of per document.
     for svc in defn.services.values():
         svc_elem = sub_element(root, f"{{{NS.WSDL}}}service", attrib={"name": svc.name})
         for port in svc.ports:
@@ -129,20 +143,26 @@ def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
                 f"{{{NS.WSDL}}}port",
                 attrib={"name": port.name, "binding": f"tns:{port.binding}"},
             )
+            bound = defn.bindings.get(port.binding)
+            port_ns = (bound.soap_ns if bound and bound.soap_ns else soap_ns)
             sub_element(
                 port_elem,
-                f"{{{soap_ns}}}address",
+                f"{{{port_ns}}}address",
                 attrib={"location": address},
             )
 
     return root
 
 
+def _soap_prefix(soap_ns: str) -> str:
+    """Conventional prefix for a WSDL/SOAP binding namespace."""
+    return "soap12" if soap_ns == NS.WSDL_SOAP12 else "soap"
+
+
 def _build_binding(
     root: _Element,
     binding: WsdlBinding,
     soap_ns: str,
-    soap_prefix: str,
     tns: str,
 ) -> None:
     binding_elem = sub_element(

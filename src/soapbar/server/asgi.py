@@ -59,7 +59,14 @@ class AsgiSoapApp:
             if not self.soap_app.check_wsdl_access(_req_headers):
                 await self._send_response(send, 403, "text/plain", b"WSDL access denied")
                 return
-            wsdl = self.soap_app.get_wsdl()
+            # ?wsdl=<name> selects one document when the application spans
+            # several namespaces; an unknown name is a 404, not a 500.
+            from soapbar.server.application import _wsdl_selector
+            try:
+                wsdl = self.soap_app.get_wsdl(_wsdl_selector(query_string))
+            except ValueError as exc:
+                await self._send_response(send, 404, "text/plain", str(exc).encode())
+                return
             await self._send_response(send, 200, "text/xml; charset=utf-8", wsdl)
             return
 
