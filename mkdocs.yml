@@ -61,6 +61,7 @@ nav:
       - WSDL: wsdl.md
       - Type system and encoding: types.md
       - Faults and one-way operations: faults.md
+      - Testing your service: testing.md
       - Security: security.md
   - Reference:
       - API reference: api.md
