@@ -664,6 +664,110 @@ class ChoiceXsdType(XsdType):
         return {}
 
 
+def _string_fallback() -> XsdType:
+    """The built-in ``xsd:string``, the universal lexical fallback.
+
+    Mirrors the guard in ``SoapClient._resolve_xsd_type``: raise loudly rather
+    than assert, so the check survives ``python -O``.
+    """
+    fallback = xsd.resolve("string")
+    if fallback is None:  # pragma: no cover — xsd:string is always registered
+        raise RuntimeError(
+            "xsd:string type is missing from the xsd registry; "
+            "core types are not initialized."
+        )
+    return fallback
+
+
+class SimpleXsdType(XsdType):
+    """A named ``xsd:simpleType`` that restricts another type.
+
+    soapbar models the **base** type's lexical behaviour and deliberately does
+    not enforce the restriction's facets (``enumeration``, ``pattern``,
+    ``minInclusive`` and friends). The schema itself is the authority on those,
+    and ``SoapApplication(validate_body_schema=True)`` already validates message
+    bodies against it with lxml — enforcing them a second time here would
+    duplicate that check, less completely, and would reject payloads that used
+    to round-trip.
+
+    Modelling the base is what matters for fidelity: a ``tns:Amount``
+    restricting ``xsd:decimal`` now round-trips as a ``Decimal`` instead of
+    silently degrading to ``str``.
+
+    *base* may be an ``XsdType`` or a string reference resolved lazily, so a
+    type declared before the one it restricts still works.
+    """
+
+    namespace: str = ""
+
+    def __init__(
+        self,
+        name: str,
+        base: XsdType | str,
+        target_namespace: str = "",
+        registry: _TypeRegistry | None = None,
+    ) -> None:
+        self.name = name
+        self.base: XsdType | str = base
+        self.target_namespace = target_namespace
+        # Same rationale as ComplexXsdType.registry: resolve against the
+        # parse's own scoped registry so sibling types from this document win
+        # over anything a concurrent parse registered.
+        self.registry = registry
+
+    def _resolve_base(self) -> XsdType:
+        """Return the underlying type, resolving a string reference on first use.
+
+        Falls back to ``xsd:string`` when the reference cannot be resolved or
+        forms a cycle, which keeps a partially-understood schema usable instead
+        of raising mid-serialization.
+        """
+        base = self.base
+        if isinstance(base, str):
+            resolved = (self.registry or xsd).resolve(base)
+            if resolved is None or resolved is self:
+                # Unresolvable, or restricting itself — neither can produce a
+                # lexical form, so degrade to string rather than recursing.
+                return _string_fallback()
+            if isinstance(resolved, SimpleXsdType) and resolved._restricts(self):
+                return _string_fallback()
+            self.base = resolved
+            return resolved
+        return base
+
+    def _restricts(self, other: SimpleXsdType, _depth: int = 0) -> bool:
+        """True if *other* is reachable by following this type's base chain.
+
+        Used to detect restriction cycles (``A`` restricts ``B`` restricts
+        ``A``) before they turn into unbounded recursion.
+        """
+        if _depth > 16:
+            return True
+        base = self.base
+        if base is other:
+            return True
+        if isinstance(base, SimpleXsdType):
+            return base._restricts(other, _depth + 1)
+        if isinstance(base, str):
+            resolved = (self.registry or xsd).resolve(base)
+            if resolved is other:
+                return True
+            if isinstance(resolved, SimpleXsdType):
+                return resolved._restricts(other, _depth + 1)
+        return False
+
+    def to_xml(self, value: Any) -> str:
+        return self._resolve_base().to_xml(value)
+
+    def from_xml(self, s: str) -> Any:
+        return self._resolve_base().from_xml(s)
+
+    def __repr__(self) -> str:
+        base = self.base
+        base_name = base if isinstance(base, str) else base.name
+        return f"<SimpleXsdType {self.name} restricting {base_name}>"
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------

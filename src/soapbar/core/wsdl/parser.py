@@ -13,6 +13,7 @@ from soapbar.core.types import (
     ArrayXsdType,
     ChoiceXsdType,
     ComplexXsdType,
+    SimpleXsdType,
     XsdType,
     _TypeRegistry,
     xsd,
@@ -529,6 +530,14 @@ def _parse_schema_types(
 
     for child in schema_elem:
         lname = local_name(child)
+        if lname == "simpleType":
+            st_name = child.get("name", "")
+            if not st_name:
+                continue  # anonymous — only reachable through its owner
+            simple_type = _parse_simple_type_element(st_name, child, tns, registry)
+            if simple_type is not None:
+                result[st_name] = simple_type
+            continue
         if lname != "complexType":
             continue
         ct_name = child.get("name", "")
@@ -541,6 +550,37 @@ def _parse_schema_types(
             result[ct_name] = xsd_type
 
     return result
+
+
+def _parse_simple_type_element(
+    name: str,
+    elem: _Element,
+    target_namespace: str,
+    registry: _TypeRegistry,
+) -> XsdType | None:
+    """Parse a named ``<xsd:simpleType>`` into a ``SimpleXsdType``.
+
+    Only ``<xsd:restriction base="…">`` is modelled — the shape that carries a
+    usable lexical form. ``xsd:list`` and ``xsd:union`` have no single base type
+    to inherit from, so they are left unregistered on purpose: the client then
+    reports them as unresolved rather than pretending to understand them.
+
+    The base is kept as a string reference and resolved on first use, so a type
+    declared before the one it restricts still resolves.
+    """
+    for child in elem:
+        if local_name(child) != "restriction":
+            continue
+        base = child.get("base", "")
+        if not base:
+            return None
+        return SimpleXsdType(
+            name=name,
+            base=base,
+            target_namespace=target_namespace,
+            registry=registry,
+        )
+    return None
 
 
 def _parse_complex_type_element(

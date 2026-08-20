@@ -36,6 +36,40 @@ Python → XSD mapping:
 
 ---
 
+## Simple types from a WSDL
+
+A named `xsd:simpleType` that restricts another type is parsed and modelled by
+its **base**, so it keeps that base's behaviour instead of degrading to a string:
+
+```xml
+<xsd:simpleType name="Amount">
+  <xsd:restriction base="xsd:decimal">
+    <xsd:minInclusive value="0"/>
+  </xsd:restriction>
+</xsd:simpleType>
+```
+
+```python
+amount = parse_wsdl(wsdl).complex_types["Amount"]
+amount.from_xml("12.50")        # Decimal('12.50') — not '12.50'
+```
+
+A base declared later in the same schema resolves fine, since the reference is
+followed on first use.
+
+**Facets are not enforced.** `enumeration`, `pattern`, `minInclusive` and the
+rest are read as documentation, not as validation: the schema itself is the
+authority, and `SoapApplication(validate_body_schema=True)` already validates
+message bodies against it with lxml. Enforcing them a second time in the type
+system would duplicate that check less completely, and would reject payloads
+that used to round-trip.
+
+`xsd:union` and `xsd:list` have no single base to inherit, so they are left
+unresolved on purpose — a client referencing one warns that it fell back to
+`xsd:string`, rather than silently pretending to understand it.
+
+---
+
 ## SOAP array attributes
 
 When using encoded binding styles (`RPC_ENCODED`, `DOCUMENT_ENCODED`), array elements are annotated with the correct version-specific attributes automatically.
