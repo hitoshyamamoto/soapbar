@@ -3,11 +3,12 @@
 """SOAP client."""
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
 
-from soapbar.client.transport import HttpTransport
+from soapbar.client.transport import HttpTransport, redact_envelope
 from soapbar.core.binding import (
     BindingStyle,
     OperationParameter,
@@ -23,6 +24,51 @@ from soapbar.core.wsdl import (
 )
 from soapbar.core.wsdl.parser import parse_wsdl, parse_wsdl_file
 from soapbar.core.xml import make_element
+
+_log = logging.getLogger(__name__)
+
+
+def _log_call(sig: Any, binding_style: Any, soap_version: Any, address: str) -> None:
+    """DEBUG-log the resolved operation, before the envelope is built."""
+    if _log.isEnabledFor(logging.DEBUG):
+        _log.debug(
+            "call %r -> %s (SOAPAction=%r, binding=%s, soap=%s, inputs=%s, outputs=%s)",
+            sig.name,
+            address,
+            sig.soap_action,
+            getattr(binding_style, "name", binding_style),
+            getattr(soap_version, "name", soap_version),
+            [p.name for p in sig.input_params],
+            [p.name for p in sig.output_params],
+        )
+
+
+def _log_request(req_bytes: bytes, headers: dict[str, str]) -> None:
+    """DEBUG-log the outgoing envelope, with wsse:Security redacted."""
+    if _log.isEnabledFor(logging.DEBUG):
+        # Content-Type and SOAPAction only. The header dict is not dumped
+        # wholesale, because a caller is free to put an Authorization header
+        # in it and this function must not be the thing that logs it.
+        _log.debug(
+            "request Content-Type=%r SOAPAction=%r\n%s",
+            headers.get("Content-Type", ""),
+            headers.get("SOAPAction", ""),
+            redact_envelope(req_bytes),
+        )
+
+
+def _log_response(status: int, content_type: str, resp_body: bytes) -> None:
+    """DEBUG-log the response.
+
+    Here rather than in HttpTransport so that it covers *every* transport: a
+    caller who supplies their own (a test double, an in-process transport)
+    overrides send() wholesale and would never reach a log call placed inside
+    the httpx/urllib paths.
+    """
+    if _log.isEnabledFor(logging.DEBUG):
+        _log.debug(
+            "response %d %s\n%s", status, content_type, redact_envelope(resp_body)
+        )
 
 
 class _ServiceProxy:
@@ -533,6 +579,7 @@ class SoapClient:
         names from its ``OperationSignature``.)
         """
         sig = self._get_sig(operation)
+        _log_call(sig, self._binding_style, self._soap_version, self._address)
         serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
@@ -570,7 +617,9 @@ class SoapClient:
                 soap_action=sig.soap_action or "",
             )
 
-        status, _ct, resp_body = self._transport.send(self._address, req_bytes, headers)
+        _log_request(req_bytes, headers)
+        status, ct, resp_body = self._transport.send(self._address, req_bytes, headers)
+        _log_response(status, ct, resp_body)
         return self._parse_response(sig, resp_body, status)
 
     async def call_async(self, operation: str, **kwargs: Any) -> Any:
@@ -580,6 +629,7 @@ class SoapClient:
         exactly as in ``call``.
         """
         sig = self._get_sig(operation)
+        _log_call(sig, self._binding_style, self._soap_version, self._address)
         serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
@@ -605,7 +655,11 @@ class SoapClient:
         req_bytes = envelope.to_bytes()
         headers = http_headers(self._soap_version, sig.soap_action)
 
-        status, _ct, resp_body = await self._transport.send_async(self._address, req_bytes, headers)
+        _log_request(req_bytes, headers)
+        status, ct, resp_body = await self._transport.send_async(
+            self._address, req_bytes, headers
+        )
+        _log_response(status, ct, resp_body)
         return self._parse_response(sig, resp_body, status)
 
     def _get_sig(self, operation: str) -> OperationSignature:

@@ -3,6 +3,7 @@
 """HTTP transport for SOAP client."""
 from __future__ import annotations
 
+import logging
 import urllib.error
 import urllib.request
 from typing import Any, Union
@@ -13,6 +14,56 @@ from urllib.parse import urlparse
 # tuple), or as in-memory PEM bytes ``(cert_pem, key_pem)`` — typically the
 # output of ``load_pkcs12``, which never touches the disk.
 ClientCert = Union[str, "tuple[str, str]", "tuple[str, str, str]", "tuple[bytes, bytes]", None]
+
+_log = logging.getLogger(__name__)
+
+#: Stand-in for the contents of a redacted ``wsse:Security`` header.
+_REDACTED = "[redacted by soapbar: wsse:Security may carry a password]"
+
+
+def redact_envelope(raw: bytes) -> str:
+    """A SOAP envelope as text, with any ``wsse:Security`` header emptied.
+
+    A ``wsse:UsernameToken`` carries the password in the envelope, so the
+    envelope is not safe to log verbatim. Every ``wsse:Security`` element has
+    its children replaced with a marker; everything else is untouched, which is
+    the part someone debugging actually needs to read.
+
+    Non-XML input -- an MTOM multipart body, or a truncated buffer -- is
+    reported as such rather than raised, because a logging call must not be
+    able to fail the request it is describing.
+    """
+    # Imported inside the function so importing the transport stays cheap for
+    # anyone who never turns DEBUG on.
+    from soapbar.core.namespaces import NS
+    from soapbar.core.xml import parse_xml, to_string
+
+    try:
+        # The project's hardened parser, not etree.fromstring: a response body
+        # is attacker-controlled, and a logging path is the last place that
+        # should be the one route into an unhardened parse.
+        root = parse_xml(raw)
+    except Exception:
+        # Multipart MTOM bodies land here, and so does anything malformed.
+        # Say so instead of dumping bytes that may embed an unparsed envelope.
+        return f"<{len(raw)} bytes, not parseable as XML (MTOM multipart?); not logged>"
+
+    redacted = False
+    for security in root.iter(f"{{{NS.WSSE}}}Security"):
+        for child in list(security):
+            security.remove(child)
+        security.text = _REDACTED
+        redacted = True
+
+    try:
+        text = to_string(root)
+    except Exception:
+        return f"<{len(raw)} bytes, could not be re-serialised for logging>"
+
+    if redacted:
+        text += "  <!-- soapbar: wsse:Security contents removed before logging -->"
+    return text
+
 
 _ALLOWED_URL_SCHEMES = ("http", "https")
 
@@ -215,7 +266,9 @@ class HttpTransport:
                     "Client certificate / custom CA bundle require httpx. "
                     "Install soapbar[client]."
                 ) from None
+            _log.debug("POST %s via urllib fallback (httpx not installed)", url)
             return self._send_urllib(url, body, headers)
+        _log.debug("POST %s via httpx", url)
         return self._send_httpx(url, body, headers)
 
     @staticmethod
@@ -231,6 +284,13 @@ class HttpTransport:
                 "application/soap+xml; charset=utf-8"
                 if "soap+xml" in ct_lower
                 else "text/xml; charset=utf-8"
+            )
+            _log.debug(
+                "decoded MTOM response: %d bytes multipart -> %d bytes SOAP XML, "
+                "content-type normalised to %s",
+                len(body),
+                len(mtom_msg.soap_xml),
+                normalised_ct,
             )
             return normalised_ct, mtom_msg.soap_xml
         return ct, body
@@ -280,6 +340,7 @@ class HttpTransport:
                 "httpx is required for async transport. Install soapbar[client]."
             ) from err
 
+        _log.debug("POST %s via httpx (async)", url)
         client = self._get_httpx_async_client()
         resp = await client.post(url, content=body, headers=headers)
         ct = resp.headers.get("content-type", "text/xml")
