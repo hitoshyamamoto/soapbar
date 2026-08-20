@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.10](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.9...v0.15.10) (2026-08-20)
+
+
+### Documentation
+
+* **examples:** add a Django integration example ([#163](https://github.com/hitoshyamamoto/soapbar/issues/163)) ([25fdfad](https://github.com/hitoshyamamoto/soapbar/commit/25fdfada8e2135a0d5fc7dd7dbab970960aad6e7))
+
 ## [0.15.9](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.8...v0.15.9) (2026-08-11)
 
 
