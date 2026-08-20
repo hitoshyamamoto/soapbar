@@ -70,6 +70,10 @@ class SoapClient:
         self._wss_credential = wss_credential  # G09: UsernameTokenCredential or None
         self._use_mtom: bool = use_mtom
         self._mtom_attachments: list[Any] = []  # MtomAttachment items to send
+        # Type references already warned about as falling back to
+        # xsd:string, so a large WSDL with one unknown type does not
+        # flood the output with a warning per parameter.
+        self._warned_unresolved_types: set[str] = set()
 
         if wsdl_url is not None:
             wsdl_bytes = self._transport.fetch(wsdl_url)
@@ -126,8 +130,8 @@ class SoapClient:
             # targetNamespace. Fall back to it when the binding has none.
             sig = OperationSignature(
                 name=binding_op.name,
-                input_params=self._resolve_op_params(port_op.input),
-                output_params=self._resolve_op_params(port_op.output),
+                input_params=self._resolve_op_params(port_op.input, binding_op.name),
+                output_params=self._resolve_op_params(port_op.output, binding_op.name),
                 soap_action=binding_op.soap_action or "",
                 input_namespace=binding_op.input_namespace
                 or self._wrapper_namespace(port_op.input),
@@ -192,13 +196,19 @@ class SoapClient:
         return None
 
     def _resolve_op_params(
-        self, op_msg: WsdlOperationMessage | None
+        self, op_msg: WsdlOperationMessage | None, operation: str | None = None
     ) -> list[OperationParameter]:
         """Translate a ``WsdlOperationMessage`` (an input/output ref) into
         ``OperationParameter``s. Supports both document-literal (part
         references a global element whose inline complexType enumerates
         the parameters) and RPC-style (one part per parameter with a
-        type reference)."""
+        type reference).
+
+        Args:
+            op_msg: The input/output message reference to translate.
+            operation: Name of the owning operation, forwarded so
+                ``_resolve_xsd_type`` can name it in its fallback warning.
+        """
         if op_msg is None or self._wsdl is None:
             return []
         local = op_msg.message.split(":", 1)[-1]
@@ -224,13 +234,13 @@ class SoapClient:
                 else:
                     # Document-literal wrapped — the element's inline
                     # complexType sequence carries the actual parameters.
-                    params.extend(self._params_from_global_element(elem_local))
+                    params.extend(self._params_from_global_element(elem_local, operation))
             elif part.type:
                 # RPC-style — one part per parameter.
                 params.append(
                     OperationParameter(
                         name=part.name,
-                        xsd_type=self._resolve_xsd_type(part.type),
+                        xsd_type=self._resolve_xsd_type(part.type, operation),
                     )
                 )
         return params
@@ -278,10 +288,17 @@ class SoapClient:
         return has_any and not has_named
 
     def _params_from_global_element(
-        self, element_name: str
+        self, element_name: str, operation: str | None = None
     ) -> list[OperationParameter]:
         """Find a global <xsd:element name=…> in the parsed WSDL and
-        return its inline complexType's sequence as OperationParameters."""
+        return its inline complexType's sequence as OperationParameters.
+
+        Args:
+            element_name: The global element whose inline complexType
+                sequence carries the parameters.
+            operation: Name of the owning operation, forwarded so
+                ``_resolve_xsd_type`` can name it in its fallback warning.
+        """
         target = self._find_global_element(self._wsdl, element_name)
         if target is None:
             return []
@@ -307,7 +324,7 @@ class SoapClient:
             params.append(
                 OperationParameter(
                     name=name,
-                    xsd_type=self._resolve_xsd_type(type_ref or "xsd:string"),
+                    xsd_type=self._resolve_xsd_type(type_ref or "xsd:string", operation),
                     # minOccurs="0" → optional (e.g. VIES name/address and the
                     # checkVatApprox trader fields). Default minOccurs is 1.
                     required=child.get("minOccurs", "1") != "0",
@@ -315,9 +332,15 @@ class SoapClient:
             )
         return params
 
-    def _resolve_xsd_type(self, type_ref: str) -> Any:
+    def _resolve_xsd_type(self, type_ref: str, operation: str | None = None) -> Any:
         """Resolve a ``prefix:local`` type reference against the primitive
-        xsd registry first, then the WsdlDefinition's complex_types."""
+        xsd registry first, then the WsdlDefinition's complex_types.
+
+        Args:
+            type_ref: The type reference (``prefix:local`` or bare local).
+            operation: Name of the operation the type belongs to, used to
+                make the unresolved-type fallback warning actionable.
+        """
         from soapbar.core.types import xsd as _xsd_registry
 
         resolved = _xsd_registry.resolve(type_ref)
@@ -327,7 +350,20 @@ class SoapClient:
         if self._wsdl is not None and local in self._wsdl.complex_types:
             return self._wsdl.complex_types[local]
         # Fall back to xsd:string so the client at least produces a
-        # shaped request rather than crashing on an unresolved type.
+        # shaped request rather than crashing on an unresolved type. Warn
+        # once per distinct type (not per parameter) so a large WSDL with
+        # one unknown type does not flood the output, but the caller can
+        # still see *which* reference and operation were not understood.
+        if type_ref not in self._warned_unresolved_types:
+            self._warned_unresolved_types.add(type_ref)
+            import warnings
+
+            context = f" in operation {operation!r}" if operation else ""
+            warnings.warn(
+                f"Unresolved WSDL type reference {type_ref!r}{context}; "
+                "falling back to xsd:string.",
+                stacklevel=2,
+            )
         fallback = _xsd_registry.resolve("string")
         if fallback is None:  # pragma: no cover — xsd:string is always registered
             raise RuntimeError(
@@ -366,6 +402,7 @@ class SoapClient:
         obj._wss_credential = None
         obj._use_mtom = False
         obj._mtom_attachments = []
+        obj._warned_unresolved_types = set()
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl_file(path)
         obj._init_from_wsdl(defn)
@@ -386,6 +423,7 @@ class SoapClient:
         obj._wss_credential = None
         obj._use_mtom = False
         obj._mtom_attachments = []
+        obj._warned_unresolved_types = set()
         obj.service = _ServiceProxy(obj)
         defn = parse_wsdl(wsdl)
         obj._init_from_wsdl(defn)
@@ -414,6 +452,7 @@ class SoapClient:
         obj._wss_credential = wss_credential
         obj._use_mtom = use_mtom
         obj._mtom_attachments = []
+        obj._warned_unresolved_types = set()
         obj.service = _ServiceProxy(obj)
         return obj
 
