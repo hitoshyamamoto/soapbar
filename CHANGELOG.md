@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.15.13](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.12...v0.15.13) (2026-08-20)
+
+
+### Bug Fixes
+
+* warn when an unresolved WSDL type falls back to xsd:string ([#187](https://github.com/hitoshyamamoto/soapbar/issues/187)) ([ca86a18](https://github.com/hitoshyamamoto/soapbar/commit/ca86a1851b2a4f460941afb390bfcaf9e85a8786))
+
 ## [0.15.12](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.11...v0.15.12) (2026-08-20)
 
 
