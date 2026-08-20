@@ -3,6 +3,7 @@
 """SOAP client."""
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,32 @@ def _is_soap_envelope(body: bytes) -> bool:
         NS.SOAP_ENV,
         NS.SOAP12_ENV,
     )
+
+
+_log = logging.getLogger(__name__)
+
+
+def _redact_security_header(envelope_bytes: bytes) -> bytes:
+    """Return *envelope_bytes* with any ``wsse:Security`` header's contents
+    replaced by a placeholder.
+
+    Used only when composing a DEBUG log line, so a ``wsse:UsernameToken``
+    password is never written to a log. Returns the input unchanged if it
+    cannot be parsed or carries no security header.
+    """
+    from lxml import etree
+
+    try:
+        root = etree.fromstring(envelope_bytes)
+    except etree.XMLSyntaxError:
+        return envelope_bytes
+    redacted = False
+    for security in root.iter(f"{{{NS.WSSE}}}Security"):
+        for child in list(security):
+            security.remove(child)
+        security.text = "[REDACTED]"
+        redacted = True
+    return etree.tostring(root) if redacted else envelope_bytes
 
 
 class _ServiceProxy:
@@ -593,6 +620,10 @@ class SoapClient:
         names from its ``OperationSignature``.)
         """
         sig = self._get_sig(operation)
+        _log.debug(
+            "call %r: binding_style=%s soap_version=%s",
+            operation, self._binding_style, self._soap_version,
+        )
         serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
@@ -616,6 +647,11 @@ class SoapClient:
             envelope.add_body_content(child)
 
         req_bytes = envelope.to_bytes()
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "Request envelope: %s",
+                _redact_security_header(req_bytes).decode("utf-8", "replace"),
+            )
         headers = http_headers(self._soap_version, sig.soap_action)
         headers["Content-Type"] = headers.get("Content-Type", self._soap_version.content_type)
 
@@ -640,6 +676,10 @@ class SoapClient:
         exactly as in ``call``.
         """
         sig = self._get_sig(operation)
+        _log.debug(
+            "call_async %r: binding_style=%s soap_version=%s",
+            operation, self._binding_style, self._soap_version,
+        )
         serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
@@ -663,6 +703,11 @@ class SoapClient:
             envelope.add_body_content(child)
 
         req_bytes = envelope.to_bytes()
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "Request envelope: %s",
+                _redact_security_header(req_bytes).decode("utf-8", "replace"),
+            )
         headers = http_headers(self._soap_version, sig.soap_action)
 
         status, content_type, resp_body = await self._transport.send_async(
