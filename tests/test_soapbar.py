@@ -4302,9 +4302,88 @@ class TestInitFromWsdlEdgeCases:
         # Complex from the WSDL's own type table.
         assert client._resolve_xsd_type("tns:Foo") is client._wsdl.complex_types["Foo"]
 
-        # Unknown reference → string fallback.
-        fallback = client._resolve_xsd_type("tns:DoesNotExist")
+        # Unknown reference → string fallback, with a warning.
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            fallback = client._resolve_xsd_type("tns:DoesNotExist")
         assert fallback.name == "string"
+        assert any("DoesNotExist" in str(w.message) for w in caught), (
+            f"Expected a fallback warning naming 'DoesNotExist'; "
+            f"got {[str(w.message) for w in caught]}"
+        )
+
+    def test_unresolved_type_warns_once_naming_operation_and_fallback_string(
+        self,
+    ) -> None:
+        """A WSDL whose message part references a never-declared type must
+        (a) fall back to xsd:string without crashing and (b) emit exactly
+        one UserWarning naming both the unresolved type reference and the
+        operation it belongs to — instead of silently downgrading the type
+        or flooding the output with one warning per parameter."""
+        import warnings
+
+        wsdl = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://example.com/calc"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             targetNamespace="http://example.com/calc"
+             name="Calculator">
+  <message name="AddRequest">
+    <part name="amount" type="tns:MoneyAmount"/>
+    <part name="amount2" type="tns:MoneyAmount"/>
+    <part name="when" type="xsd:dateTime"/>
+  </message>
+  <message name="AddResponse">
+    <part name="result" type="xsd:string"/>
+  </message>
+  <portType name="CalculatorPortType">
+    <operation name="Add">
+      <input message="tns:AddRequest"/>
+      <output message="tns:AddResponse"/>
+    </operation>
+  </portType>
+  <binding name="CalculatorBinding" type="tns:CalculatorPortType">
+    <soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Add">
+      <soap:operation soapAction="http://example.com/calc/Add" style="rpc"/>
+      <input>
+        <soap:body use="encoded" namespace="http://example.com/calc"/>
+      </input>
+      <output>
+        <soap:body use="encoded" namespace="http://example.com/calc"/>
+      </output>
+    </operation>
+  </binding>
+  <service name="Calculator">
+    <port name="CalculatorPort" binding="tns:CalculatorBinding">
+      <soap:address location="http://example.com/calc"/>
+    </port>
+  </service>
+</definitions>"""
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client = SoapClient.from_wsdl_string(wsdl)
+
+        messages = [str(w.message) for w in caught]
+        unresolved = [m for m in messages if "MoneyAmount" in m]
+        assert unresolved, f"Expected a warning about 'MoneyAmount'; got {messages}"
+        # The warning names the unresolved type reference and the operation.
+        assert any("tns:MoneyAmount" in m for m in unresolved)
+        assert any("Add" in m for m in unresolved)
+        # Two parameters reference the same unknown type → one warning, not two.
+        assert len(unresolved) == 1
+
+        # Unknown params still resolve to xsd:string; the resolvable one keeps its type.
+        params = {
+            p.name: p.xsd_type.name for p in client._signatures["Add"].input_params
+        }
+        assert params["amount"] == "string", f"amount should fall back; got {params}"
+        assert params["amount2"] == "string", f"amount2 should fall back; got {params}"
+        assert params["when"] == "dateTime", f"when should stay dateTime; got {params}"
 
     def test_binding_is_dlw_shaped_rejects_multi_part_message(self) -> None:
         """_binding_is_dlw_shaped returns False when a message has
