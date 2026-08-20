@@ -8912,3 +8912,133 @@ class TestWsdlSelectorRouting:
         )
         start = next(m for m in messages if m["type"] == "http.response.start")
         assert start["status"] == 404
+
+
+# ---------------------------------------------------------------------------
+# xsd:simpleType materialisation
+#
+# Named simple types used to be skipped by the schema parser, so any reference
+# to one resolved to nothing and the client silently downgraded it to
+# xsd:string. They are now modelled by their restriction base.
+# ---------------------------------------------------------------------------
+
+_SIMPLE_TYPE_WSDL = b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+             xmlns:tns="http://example.com/svc"
+             targetNamespace="http://example.com/svc" name="Svc">
+  <types>
+    <xsd:schema targetNamespace="http://example.com/svc">
+      <xsd:simpleType name="Amount">
+        <xsd:restriction base="xsd:decimal">
+          <xsd:minInclusive value="0"/>
+        </xsd:restriction>
+      </xsd:simpleType>
+      <!-- declared before the type it restricts: must still resolve -->
+      <xsd:simpleType name="Discounted">
+        <xsd:restriction base="tns:Amount"/>
+      </xsd:simpleType>
+      <xsd:simpleType name="Loop"><xsd:restriction base="tns:Loop2"/></xsd:simpleType>
+      <xsd:simpleType name="Loop2"><xsd:restriction base="tns:Loop"/></xsd:simpleType>
+      <xsd:simpleType name="Union">
+        <xsd:union memberTypes="xsd:int xsd:string"/>
+      </xsd:simpleType>
+      <xsd:simpleType name="Listy">
+        <xsd:list itemType="xsd:int"/>
+      </xsd:simpleType>
+      <xsd:simpleType>
+        <xsd:restriction base="xsd:string"/>
+      </xsd:simpleType>
+      <xsd:simpleType name="NoBase"><xsd:restriction/></xsd:simpleType>
+    </xsd:schema>
+  </types>
+  <message name="R">
+    <part name="amount" type="tns:Amount"/>
+    <part name="when" type="xsd:dateTime"/>
+  </message>
+  <portType name="P"><operation name="Op"><input message="tns:R"/></operation></portType>
+  <binding name="B" type="tns:P">
+    <soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Op"><soap:operation soapAction="urn:Op"/>
+      <input><soap:body use="literal" namespace="http://example.com/svc"/></input>
+    </operation>
+  </binding>
+  <service name="S"><port name="Pt" binding="tns:B">
+    <soap:address location="https://example.com/svc"/></port></service>
+</definitions>"""
+
+
+class TestSimpleTypeParsing:
+    """Named xsd:simpleType declarations are modelled by their restriction base."""
+
+    def test_restriction_of_builtin_keeps_the_base_behaviour(self) -> None:
+        """The fidelity gain: a decimal restriction round-trips as Decimal
+        rather than degrading to str."""
+        from decimal import Decimal
+
+        amount = parse_wsdl(_SIMPLE_TYPE_WSDL).complex_types["Amount"]
+        value = amount.from_xml("12.50")
+        assert isinstance(value, Decimal)
+        assert value == Decimal("12.50")
+        assert amount.to_xml(Decimal("3.14")) == "3.14"
+
+    def test_forward_reference_to_a_later_type_resolves(self) -> None:
+        from decimal import Decimal
+
+        types = parse_wsdl(_SIMPLE_TYPE_WSDL).complex_types
+        assert types["Discounted"].from_xml("7.25") == Decimal("7.25")
+
+    def test_restriction_cycle_degrades_to_string_without_recursing(self) -> None:
+        """A restricts B restricts A has no lexical form; it must fall back to
+        string rather than exhausting the stack."""
+        types = parse_wsdl(_SIMPLE_TYPE_WSDL).complex_types
+        assert types["Loop"].from_xml("x") == "x"
+        assert types["Loop2"].to_xml("y") == "y"
+
+    def test_union_and_list_are_left_unregistered(self) -> None:
+        """Neither has a single base to inherit, so they stay unknown on
+        purpose — the client then reports them instead of pretending."""
+        types = parse_wsdl(_SIMPLE_TYPE_WSDL).complex_types
+        assert "Union" not in types
+        assert "Listy" not in types
+
+    def test_anonymous_and_baseless_declarations_are_skipped(self) -> None:
+        types = parse_wsdl(_SIMPLE_TYPE_WSDL).complex_types
+        assert "NoBase" not in types
+        assert set(types) == {"Amount", "Discounted", "Loop", "Loop2"}
+
+    def test_client_resolves_a_simple_type_without_warning(self) -> None:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            client = SoapClient.from_wsdl_string(_SIMPLE_TYPE_WSDL)
+
+        unresolved = [w for w in caught if "Unresolved WSDL type" in str(w.message)]
+        assert not unresolved, [str(w.message) for w in unresolved]
+
+        params = {p.name: p.xsd_type for p in client._signatures["Op"].input_params}
+        assert params["amount"].name == "Amount"
+        assert params["when"].name == "dateTime"
+
+    def test_bundled_vies_wsdl_no_longer_warns(self) -> None:
+        """Regression for the reported symptom: the EU VIES contract declares
+        matchCode and companyTypeCode as simple types, and every ViesClient()
+        used to emit an unresolved-type warning for both."""
+        from importlib import resources
+
+        wsdl = resources.files("soapbar.contrib").joinpath("_wsdl/checkVatService.wsdl")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            SoapClient.from_wsdl_string(wsdl.read_bytes())
+
+        unresolved = [str(w.message) for w in caught if "Unresolved WSDL type" in str(w.message)]
+        assert not unresolved, unresolved
+
+    def test_facets_are_not_enforced(self) -> None:
+        """Documented scope: the base's lexical behaviour is modelled, the
+        restriction's facets are not — schema validation owns that."""
+        from decimal import Decimal
+
+        amount = parse_wsdl(_SIMPLE_TYPE_WSDL).complex_types["Amount"]
+        # minInclusive="0" is not enforced here by design.
+        assert amount.from_xml("-5") == Decimal("-5")
