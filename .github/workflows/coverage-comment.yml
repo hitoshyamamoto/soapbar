@@ -28,7 +28,7 @@ jobs:
       # permissions in response to untrusted PRs. See:
       # https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
       - name: Post coverage comment
-        uses: py-cov-action/python-coverage-comment-action@508e7102e4d996a5e59ed4089c1d941c54e35c24  # v3
+        uses: py-cov-action/python-coverage-comment-action@a05be3d2e8a6272d3ef5fb2840ab20368bb2eb71  # v4.3
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_RUN_ID: ${{ github.event.workflow_run.id }}
