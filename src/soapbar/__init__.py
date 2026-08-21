@@ -11,7 +11,7 @@ except Exception:
     __version__ = "unknown"
 
 # Core
-from soapbar.client.client import SoapClient
+from soapbar.client.client import NonSoapResponseError, SoapClient
 
 # Client
 from soapbar.client.transport import HttpTransport, load_pkcs12
@@ -178,5 +178,6 @@ __all__ = [  # noqa: RUF022
     # client
     "HttpTransport",
     "SoapClient",
+    "NonSoapResponseError",
     "load_pkcs12",
 ]
