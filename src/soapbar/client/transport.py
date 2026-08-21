@@ -3,10 +3,13 @@
 """HTTP transport for SOAP client."""
 from __future__ import annotations
 
+import logging
 import urllib.error
 import urllib.request
 from typing import Any, Union
 from urllib.parse import urlparse
+
+_log = logging.getLogger(__name__)
 
 # A client certificate may be given as httpx-native file paths (a single
 # combined PEM, or a ``(certfile, keyfile)`` / ``(certfile, keyfile, password)``
@@ -215,7 +218,9 @@ class HttpTransport:
                     "Client certificate / custom CA bundle require httpx. "
                     "Install soapbar[client]."
                 ) from None
+            _log.debug("send: using the urllib fallback transport (httpx not installed)")
             return self._send_urllib(url, body, headers)
+        _log.debug("send: using the httpx transport")
         return self._send_httpx(url, body, headers)
 
     @staticmethod
@@ -232,6 +237,7 @@ class HttpTransport:
                 if "soap+xml" in ct_lower
                 else "text/xml; charset=utf-8"
             )
+            _log.debug("Decoded MTOM/XOP response into %s", normalised_ct)
             return normalised_ct, mtom_msg.soap_xml
         return ct, body
 
@@ -246,6 +252,11 @@ class HttpTransport:
         ct = resp.headers.get("content-type", "text/xml")
         ct, content = self._decode_mtom_if_needed(ct, resp.content)
         self._clear_cookies_if_stateless(client)
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "Response status=%s content-type=%s body=%r",
+                resp.status_code, ct, content,
+            )
         return resp.status_code, ct, content
 
     def _send_urllib(
@@ -261,10 +272,19 @@ class HttpTransport:
                 ct = resp.headers.get("Content-Type", "text/xml")
                 raw = resp.read()
                 ct, raw = self._decode_mtom_if_needed(ct, raw)
+                if _log.isEnabledFor(logging.DEBUG):
+                    _log.debug(
+                        "Response status=%s content-type=%s body=%r", resp.status, ct, raw,
+                    )
                 return resp.status, ct, raw
         except urllib.error.HTTPError as e:
             ct = e.headers.get("Content-Type", "text/xml")
-            return e.code, ct, e.read()
+            body = e.read()
+            if _log.isEnabledFor(logging.DEBUG):
+                _log.debug(
+                    "Response status=%s content-type=%s body=%r", e.code, ct, body,
+                )
+            return e.code, ct, body
 
     async def send_async(
         self,
@@ -285,6 +305,11 @@ class HttpTransport:
         ct = resp.headers.get("content-type", "text/xml")
         ct, content = self._decode_mtom_if_needed(ct, resp.content)
         self._clear_cookies_if_stateless(client)
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "Response status=%s content-type=%s body=%r",
+                resp.status_code, ct, content,
+            )
         return resp.status_code, ct, content
 
     def fetch(self, url: str) -> bytes:
