@@ -11,14 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Features
 
-* **client:** add DEBUG logging to the client and transport path ([#193](https://github.com/hitoshyamamoto/soapbar/issues/193)) ([a8508b7](https://github.com/hitoshyamamoto/soapbar/commit/a8508b798bcfdb3edb5518d6083092e32364a102))
+* **client:** add DEBUG logging to the client and transport path ([#193](https://github.com/hitoshyamamoto/soapbar/issues/193)) ([a8508b7](https://github.com/hitoshyamamoto/soapbar/commit/a8508b798bcfdb3edb5518d6083092e32364a102)) — contributed by [@Rehan30g](https://github.com/Rehan30g)
 
 ## [0.16.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.16.0...v0.16.1) (2026-08-21)
 
 
 ### Bug Fixes
 
-* **client:** raise NonSoapResponseError for non-SOAP HTTP responses ([#194](https://github.com/hitoshyamamoto/soapbar/issues/194)) ([80c6039](https://github.com/hitoshyamamoto/soapbar/commit/80c60394ba1ec5fd00ea4454a780cd20aae720fa))
+* **client:** raise NonSoapResponseError for non-SOAP HTTP responses ([#194](https://github.com/hitoshyamamoto/soapbar/issues/194)) ([80c6039](https://github.com/hitoshyamamoto/soapbar/commit/80c60394ba1ec5fd00ea4454a780cd20aae720fa)) — contributed by [@Rehan30g](https://github.com/Rehan30g)
 
 ## [0.16.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.13...v0.16.0) (2026-08-20)
 
