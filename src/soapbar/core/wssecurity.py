@@ -1414,6 +1414,7 @@ __all__ = [
     "decrypt_body",
     "encrypt_body",
     "extract_certificate_from_security",
+    "sign_element_by_id",
     "sign_envelope",
     "sign_envelope_bsp",
     "verify_envelope",
