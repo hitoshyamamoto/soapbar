@@ -2071,7 +2071,7 @@ class TestSoapClientWsaHeaders:
 # =============================================================================
 
 class _InlineTransport(HttpTransport):
-    """Routes SoapClient.send() directly into SoapApplication.handle_request()."""
+    """Routes SoapClient requests directly into SoapApplication.handle_request()."""
 
     def __init__(self, app: SoapApplication) -> None:
         super().__init__()
@@ -2093,6 +2093,14 @@ class _InlineTransport(HttpTransport):
                     soap_action = part[len("action="):].strip('"')
                     break
         return self._app.handle_request(body, soap_action=soap_action)
+
+    async def send_async(
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str],
+    ) -> tuple[int, str, bytes]:
+        return self.send(url, body, headers)
 
 
 class TestEndToEnd:
@@ -4161,6 +4169,14 @@ class TestWsdlDrivenClientCall:
                             break
                 return app.handle_request(body, soap_action=soap_action)
 
+            async def send_async(
+                self,
+                url: str,
+                body: bytes,
+                headers: dict[str, str],
+            ) -> tuple[int, str, bytes]:
+                return self.send(url, body, headers)
+
         return _InlineTransport()
 
     def test_signatures_registered_after_wsdl_load(self) -> None:
@@ -4187,6 +4203,15 @@ class TestWsdlDrivenClientCall:
 
         result = client.call("Add", a=3, b=4)
         assert result == 7, f"Expected 7, got {result!r}"
+
+    async def test_dlw_wsdl_driven_call_async_round_trips(self) -> None:
+        """The inline transport must keep async calls off the network."""
+        app, wsdl = self._calc_app(BindingStyle.DOCUMENT_LITERAL_WRAPPED)
+        client = SoapClient.from_wsdl_string(wsdl)
+        client._transport = self._inline_transport(app)
+
+        result = await client.call_async("Add", a=5, b=6)
+        assert result == 11, f"Expected 11, got {result!r}"
 
     def test_rpc_wsdl_driven_call_round_trips(self) -> None:
         """Same pattern for RPC/Literal — exercises the non-DLW branch
@@ -7434,6 +7459,72 @@ class TestSoapClientCallCoverage:
         fault_xml = _build_soap11_fault("Server", "Oops")
         with pytest.raises(SoapFault):
             client._parse_response(sig, fault_xml, 500)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            b"<html><body><h1>502 Bad Gateway</h1></body></html>",
+            b"<!DOCTYPE html>\n<html><body><center>502 Bad Gateway</center><hr></body></html>",
+            b'{"error":"unauthorized","status":401}',
+            b"",
+        ],
+        ids=["wellformed-html", "real-nginx-html", "json", "empty"],
+    )
+    def test_parse_response_non_soap_body_raises_non_soap_response_error(
+        self, body: bytes
+    ) -> None:
+        """A response that is not a SOAP envelope raises NonSoapResponseError,
+        not lxml.etree.XMLSyntaxError or a misleading VersionMismatch fault."""
+        from soapbar.client.client import NonSoapResponseError, SoapClient
+        from soapbar.core.binding import OperationSignature
+
+        client = SoapClient.manual("http://example.com/")
+        sig = OperationSignature(name="op")
+        with pytest.raises(NonSoapResponseError) as exc_info:
+            client._parse_response(sig, body, 502, "text/html")
+        err = exc_info.value
+        assert isinstance(err, soapbar.SoapbarError)
+        assert err.status == 502
+        assert err.content_type == "text/html"
+
+    def test_non_soap_response_error_truncates_and_reports_body_excerpt(self) -> None:
+        """The excerpt is capped so a large/binary body is never dumped wholesale."""
+        from soapbar.client.client import _BODY_EXCERPT_LIMIT, NonSoapResponseError
+
+        long_body = b"x" * (_BODY_EXCERPT_LIMIT * 5)
+        err = NonSoapResponseError(500, "text/plain", long_body)
+        assert len(err.body_excerpt) == _BODY_EXCERPT_LIMIT + 1  # + truncation marker
+        assert err.body_excerpt.endswith("…")
+        assert str(err.status) in str(err)
+        assert "text/plain" in str(err)
+
+    def test_call_raises_non_soap_response_error_end_to_end(self) -> None:
+        """call() surfaces NonSoapResponseError when the transport returns HTML."""
+        from soapbar.client.client import NonSoapResponseError
+        from soapbar.core.binding import OperationSignature
+
+        client, transport = self._make_client_with_mock_transport(b"")
+        transport.send.return_value = (  # type: ignore[union-attr]
+            502, "text/html", b"<html><body>502 Bad Gateway</body></html>",
+        )
+        client.register_operation(OperationSignature(name="op"))  # type: ignore[union-attr]
+        with pytest.raises(NonSoapResponseError) as exc_info:
+            client.call("op")  # type: ignore[union-attr]
+        assert exc_info.value.status == 502
+        assert exc_info.value.content_type == "text/html"
+
+    def test_parse_response_soap_fault_with_error_status_still_parses(self) -> None:
+        """A real SOAP fault at HTTP 500 must still parse as a fault, not a
+        NonSoapResponseError — the status alone must not gate the check."""
+        from soapbar.client.client import SoapClient
+        from soapbar.core.binding import OperationSignature
+        from soapbar.core.fault import SoapFault
+
+        client = SoapClient.manual("http://example.com/")
+        sig = OperationSignature(name="op")
+        fault_xml = _build_soap11_fault("Server", "Oops")
+        with pytest.raises(SoapFault):
+            client._parse_response(sig, fault_xml, 500, "text/xml")
 
     def test_parse_response_empty_body_returns_none(self) -> None:
         """_parse_response with empty Body returns None."""

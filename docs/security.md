@@ -25,6 +25,35 @@ Additional hardening:
 
 ---
 
+## Client DEBUG logging and credentials
+
+`soapbar.client.client` and `soapbar.client.transport` emit request and response
+envelopes at `DEBUG`. Nothing is logged unless you opt in, and the envelopes are
+redacted before they reach a log record:
+
+- `wsse:Security` header blocks are emptied, so a `UsernameToken` password never
+  appears.
+- Elements whose local name names a secret — `Password`, `Senha`, `Secret` and
+  similar, in any namespace — have their text replaced **wherever they appear,
+  including the Body**. Not every service carries credentials in the WS-Security
+  header: `soapbar.contrib.ana`'s CotaOnline operations authenticate with
+  `Login`/`Senha` as plain Body elements.
+- Usernames are deliberately **not** redacted. Knowing which account was used is
+  most of a debug log's value, and a login is not a credential on its own.
+- Bodies that are not parseable XML — an MTOM multipart payload, a proxy's HTML
+  error page — are described (`<N bytes, not parseable as XML …>`) rather than
+  dumped, and every logged envelope is capped at 8192 characters.
+
+!!! warning "Redaction is best-effort"
+
+    soapbar cannot know the element names of every service it talks to. If your
+    service carries a secret in a field this list does not name, that field will
+    be logged. Treat `DEBUG` on the client as something you turn on deliberately,
+    for a bounded period, against a log sink you control — not as a level to leave
+    enabled in production.
+
+---
+
 ## Security assurance
 
 These protections are verified continuously, not just designed in:

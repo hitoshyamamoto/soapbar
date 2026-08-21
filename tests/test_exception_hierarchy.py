@@ -12,11 +12,18 @@ from __future__ import annotations
 import pytest
 
 from soapbar import SoapbarError, SoapFault
+from soapbar.client.client import NonSoapResponseError
 from soapbar.core.wssecurity import SecurityValidationError, XmlSecurityError
 from soapbar.core.xml import BodyTooLargeError
 
 # Core error types all root at SoapbarError.
-CORE_ERRORS = [SoapFault, XmlSecurityError, SecurityValidationError, BodyTooLargeError]
+CORE_ERRORS = [
+    SoapFault,
+    XmlSecurityError,
+    SecurityValidationError,
+    BodyTooLargeError,
+    NonSoapResponseError,
+]
 
 
 @pytest.mark.parametrize("cls", CORE_ERRORS)
