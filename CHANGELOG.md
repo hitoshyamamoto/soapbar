@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.0...v0.17.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **client:** redact Body credentials and bound the size of DEBUG log records ([#203](https://github.com/hitoshyamamoto/soapbar/issues/203)) ([3539b87](https://github.com/hitoshyamamoto/soapbar/commit/3539b877cb12341af698d7e26e32241971c77083))
+
 ## [0.17.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.16.1...v0.17.0) (2026-08-21)
 
 
