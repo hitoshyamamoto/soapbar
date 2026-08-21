@@ -134,6 +134,16 @@ def test_all_has_no_duplicates() -> None:
     assert len(soapbar.__all__) == len(set(soapbar.__all__)), "duplicate name in __all__"
 
 
+def test_wssecurity_all_exports_sign_element_by_id() -> None:
+    """``sign_element_by_id`` is re-exported from the ``soapbar`` package root
+    (``soapbar/__init__.py``) and used by ``soapbar.contrib.nfe``, so it must
+    also appear in ``soapbar.core.wssecurity.__all__`` to be reachable via
+    ``from soapbar.core.wssecurity import *`` alongside its fourteen siblings.
+    Regression for issue #223: it was absent from the module-level ``__all__``
+    despite being exported at the top level."""
+    assert "sign_element_by_id" in wssecurity.__all__
+
+
 @pytest.mark.parametrize("name", sorted(EXPECTED_ALL))
 def test_every_exported_name_is_importable(name: str) -> None:
     assert hasattr(soapbar, name), f"{name} is in __all__ but not importable from soapbar"

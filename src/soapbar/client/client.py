@@ -476,9 +476,23 @@ class SoapClient:
         return obj
 
     @classmethod
-    def from_wsdl_string(cls, wsdl: str | bytes, *, use_wsa: bool = False) -> SoapClient:
+    def from_wsdl_string(
+        cls,
+        wsdl: str | bytes,
+        *,
+        use_wsa: bool = False,
+        transport: HttpTransport | None = None,
+    ) -> SoapClient:
+        """Build a client from a WSDL document held in memory.
+
+        Args:
+            wsdl: The WSDL document as text or bytes.
+            use_wsa: Enable WS-Addressing request headers.
+            transport: Custom ``HttpTransport`` (e.g. for timeouts, mTLS,
+                or a stubbed transport in tests). Defaults to a plain one.
+        """
         obj: SoapClient = cls.__new__(cls)
-        obj._transport = HttpTransport()
+        obj._transport = transport or HttpTransport()
         obj._wsdl = None
         obj._address = ""
         obj._binding_style = BindingStyle.DOCUMENT_LITERAL_WRAPPED
