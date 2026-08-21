@@ -233,9 +233,11 @@ def test_divide_by_zero_faults():
     assert "divide by zero" in excinfo.value.faultstring
 ```
 
-Note `endswith` rather than `==`. The faultcode travels as a QName and comes
-back namespace-qualified, so an equality assertion on `"Client"` is a test that
-passes today and breaks the first time anything about prefixes changes.
+Note `endswith` rather than `==`. The faultcode travels as a QName — it goes on
+the wire as `soapenv:Client` — but `SoapFault` strips the prefix when it parses
+the reply, so `faultcode` is `"Client"` and `==` would pass too. `endswith` is
+simply the tolerant choice for a value that crosses a serialisation boundary; it
+is not a workaround for a prefix that survives the round trip, because none does.
 
 Through the fast path you assert on the response instead, which is where you
 can also check the HTTP status:
