@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from soapbar.client._redaction import redact_envelope
 from soapbar.client.transport import HttpTransport
 from soapbar.core.binding import (
     BindingStyle,
@@ -87,29 +88,6 @@ def _is_soap_envelope(body: bytes) -> bool:
 
 
 _log = logging.getLogger(__name__)
-
-
-def _redact_security_header(envelope_bytes: bytes) -> bytes:
-    """Return *envelope_bytes* with any ``wsse:Security`` header's contents
-    replaced by a placeholder.
-
-    Used only when composing a DEBUG log line, so a ``wsse:UsernameToken``
-    password is never written to a log. Returns the input unchanged if it
-    cannot be parsed or carries no security header.
-    """
-    from lxml import etree
-
-    try:
-        root = etree.fromstring(envelope_bytes)
-    except etree.XMLSyntaxError:
-        return envelope_bytes
-    redacted = False
-    for security in root.iter(f"{{{NS.WSSE}}}Security"):
-        for child in list(security):
-            security.remove(child)
-        security.text = "[REDACTED]"
-        redacted = True
-    return etree.tostring(root) if redacted else envelope_bytes
 
 
 class _ServiceProxy:
@@ -648,10 +626,7 @@ class SoapClient:
 
         req_bytes = envelope.to_bytes()
         if _log.isEnabledFor(logging.DEBUG):
-            _log.debug(
-                "Request envelope: %s",
-                _redact_security_header(req_bytes).decode("utf-8", "replace"),
-            )
+            _log.debug("Request envelope: %s", redact_envelope(req_bytes))
         headers = http_headers(self._soap_version, sig.soap_action)
         headers["Content-Type"] = headers.get("Content-Type", self._soap_version.content_type)
 
@@ -704,10 +679,7 @@ class SoapClient:
 
         req_bytes = envelope.to_bytes()
         if _log.isEnabledFor(logging.DEBUG):
-            _log.debug(
-                "Request envelope: %s",
-                _redact_security_header(req_bytes).decode("utf-8", "replace"),
-            )
+            _log.debug("Request envelope: %s", redact_envelope(req_bytes))
         headers = http_headers(self._soap_version, sig.soap_action)
 
         status, content_type, resp_body = await self._transport.send_async(
