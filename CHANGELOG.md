@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.3](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.2...v0.17.3) (2026-08-21)
+
+
+### Documentation
+
+* **testing:** correct why the faultcode assertion uses endswith ([#206](https://github.com/hitoshyamamoto/soapbar/issues/206)) ([483e8cc](https://github.com/hitoshyamamoto/soapbar/commit/483e8cc81baf7b95895d8661b74e29a56c8e4750))
+
 ## [0.17.2](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.1...v0.17.2) (2026-08-21)
 
 
