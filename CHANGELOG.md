@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.16.1...v0.17.0) (2026-08-21)
+
+
+### Features
+
+* **client:** add DEBUG logging to the client and transport path ([#193](https://github.com/hitoshyamamoto/soapbar/issues/193)) ([a8508b7](https://github.com/hitoshyamamoto/soapbar/commit/a8508b798bcfdb3edb5518d6083092e32364a102))
+
 ## [0.16.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.16.0...v0.16.1) (2026-08-21)
 
 
