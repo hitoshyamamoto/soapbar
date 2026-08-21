@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.2](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.1...v0.17.2) (2026-08-21)
+
+
+### Documentation
+
+* add a guide to testing a service built with soapbar ([#195](https://github.com/hitoshyamamoto/soapbar/issues/195)) ([9414284](https://github.com/hitoshyamamoto/soapbar/commit/94142848e50fa59d59f50754c10431066349e1be))
+
 ## [0.17.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.0...v0.17.1) (2026-08-21)
 
 
