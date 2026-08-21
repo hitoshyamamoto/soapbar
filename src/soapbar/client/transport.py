@@ -9,6 +9,8 @@ import urllib.request
 from typing import Any, Union
 from urllib.parse import urlparse
 
+from soapbar.client._redaction import redact_envelope
+
 _log = logging.getLogger(__name__)
 
 # A client certificate may be given as httpx-native file paths (a single
@@ -254,8 +256,8 @@ class HttpTransport:
         self._clear_cookies_if_stateless(client)
         if _log.isEnabledFor(logging.DEBUG):
             _log.debug(
-                "Response status=%s content-type=%s body=%r",
-                resp.status_code, ct, content,
+                "Response status=%s content-type=%s body=%s",
+                resp.status_code, ct, redact_envelope(content),
             )
         return resp.status_code, ct, content
 
@@ -274,7 +276,8 @@ class HttpTransport:
                 ct, raw = self._decode_mtom_if_needed(ct, raw)
                 if _log.isEnabledFor(logging.DEBUG):
                     _log.debug(
-                        "Response status=%s content-type=%s body=%r", resp.status, ct, raw,
+                        "Response status=%s content-type=%s body=%s",
+                        resp.status, ct, redact_envelope(raw),
                     )
                 return resp.status, ct, raw
         except urllib.error.HTTPError as e:
@@ -282,7 +285,8 @@ class HttpTransport:
             body = e.read()
             if _log.isEnabledFor(logging.DEBUG):
                 _log.debug(
-                    "Response status=%s content-type=%s body=%r", e.code, ct, body,
+                    "Response status=%s content-type=%s body=%s",
+                    e.code, ct, redact_envelope(body),
                 )
             return e.code, ct, body
 
@@ -307,8 +311,8 @@ class HttpTransport:
         self._clear_cookies_if_stateless(client)
         if _log.isEnabledFor(logging.DEBUG):
             _log.debug(
-                "Response status=%s content-type=%s body=%r",
-                resp.status_code, ct, content,
+                "Response status=%s content-type=%s body=%s",
+                resp.status_code, ct, redact_envelope(content),
             )
         return resp.status_code, ct, content
 
