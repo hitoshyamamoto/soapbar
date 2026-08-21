@@ -2071,7 +2071,7 @@ class TestSoapClientWsaHeaders:
 # =============================================================================
 
 class _InlineTransport(HttpTransport):
-    """Routes SoapClient.send() directly into SoapApplication.handle_request()."""
+    """Routes SoapClient requests directly into SoapApplication.handle_request()."""
 
     def __init__(self, app: SoapApplication) -> None:
         super().__init__()
@@ -2093,6 +2093,14 @@ class _InlineTransport(HttpTransport):
                     soap_action = part[len("action="):].strip('"')
                     break
         return self._app.handle_request(body, soap_action=soap_action)
+
+    async def send_async(
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str],
+    ) -> tuple[int, str, bytes]:
+        return self.send(url, body, headers)
 
 
 class TestEndToEnd:
@@ -4161,6 +4169,14 @@ class TestWsdlDrivenClientCall:
                             break
                 return app.handle_request(body, soap_action=soap_action)
 
+            async def send_async(
+                self,
+                url: str,
+                body: bytes,
+                headers: dict[str, str],
+            ) -> tuple[int, str, bytes]:
+                return self.send(url, body, headers)
+
         return _InlineTransport()
 
     def test_signatures_registered_after_wsdl_load(self) -> None:
@@ -4187,6 +4203,15 @@ class TestWsdlDrivenClientCall:
 
         result = client.call("Add", a=3, b=4)
         assert result == 7, f"Expected 7, got {result!r}"
+
+    async def test_dlw_wsdl_driven_call_async_round_trips(self) -> None:
+        """The inline transport must keep async calls off the network."""
+        app, wsdl = self._calc_app(BindingStyle.DOCUMENT_LITERAL_WRAPPED)
+        client = SoapClient.from_wsdl_string(wsdl)
+        client._transport = self._inline_transport(app)
+
+        result = await client.call_async("Add", a=5, b=6)
+        assert result == 11, f"Expected 11, got {result!r}"
 
     def test_rpc_wsdl_driven_call_round_trips(self) -> None:
         """Same pattern for RPC/Literal — exercises the non-DLW branch
