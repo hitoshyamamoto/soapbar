@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.16.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.16.0...v0.16.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **client:** raise NonSoapResponseError for non-SOAP HTTP responses ([#194](https://github.com/hitoshyamamoto/soapbar/issues/194)) ([80c6039](https://github.com/hitoshyamamoto/soapbar/commit/80c60394ba1ec5fd00ea4454a780cd20aae720fa))
+
 ## [0.16.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.15.13...v0.16.0) (2026-08-20)
 
 
