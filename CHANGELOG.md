@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.4](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.3...v0.17.4) (2026-08-26)
+
+
+### Bug Fixes
+
+* **client/server:** resolve three small API inconsistencies (from_wsdl_string transport, WSGI 400 reason phrase, wssecurity __all__) ([#225](https://github.com/hitoshyamamoto/soapbar/issues/225)) ([eefc142](https://github.com/hitoshyamamoto/soapbar/commit/eefc142fd146516e5a663bb2e3a5cb086d8ac163)), closes [#223](https://github.com/hitoshyamamoto/soapbar/issues/223)
+
 ## [0.17.3](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.2...v0.17.3) (2026-08-21)
 
 
