@@ -126,7 +126,12 @@ class WsgiSoapApp:
                     resp_body,
                     environ.get("HTTP_ACCEPT_ENCODING", ""),
                 )
-            _status_texts = {200: "OK", 202: "Accepted", 500: "Internal Server Error"}
+            _status_texts = {
+                200: "OK",
+                202: "Accepted",
+                400: "Bad Request",
+                500: "Internal Server Error",
+            }
             status_str = f"{status} {_status_texts.get(status, 'Error')}"
             resp_headers: list[tuple[str, str]] = [
                 ("Content-Type", resp_ct),

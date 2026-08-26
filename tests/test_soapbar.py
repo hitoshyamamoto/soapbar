@@ -1837,6 +1837,31 @@ class TestWsgiAdapter:
         app(environ, start_response)
         assert len(status_list) == 1  # responded (with fault or success)
 
+    def test_soap12_sender_fault_status_line_has_reason_phrase(self) -> None:
+        """A SOAP 1.2 Sender fault must surface as an RFC 9110 reason phrase
+        (``400 Bad Request``), not the fallback ``400 Error``. Regression for
+        issue #223: the WSGI adapter knew the 200/202/500 phrases but not 400,
+        even though ``handle_request`` returns it for Sender faults."""
+        app = self._make_app()
+        status_list: list = []
+
+        def start_response(status, headers):
+            status_list.append(status)
+
+        # SOAP 1.2 request for an operation the calculator does not register:
+        # --resolve_operation -> SoapFault("Client") -> 400 for SOAP 1.2.
+        soap12_payload = (
+            b'<?xml version="1.0" encoding="UTF-8"?>'
+            b'<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">'
+            b"<soap:Body><UnknownOp xmlns=\"urn:none\"/></soap:Body></soap:Envelope>"
+        )
+        environ = self._make_environ("POST", body=soap12_payload)
+        environ["CONTENT_TYPE"] = "application/soap+xml; charset=utf-8"
+        app(environ, start_response)
+        assert status_list[0] == "400 Bad Request", (
+            f"expected '400 Bad Request', got {status_list[0]!r}"
+        )
+
 
 # =============================================================================
 # 24. HTTP transport
@@ -4200,6 +4225,22 @@ class TestWsdlDrivenClientCall:
         app, wsdl = self._calc_app(BindingStyle.DOCUMENT_LITERAL_WRAPPED)
         client = SoapClient.from_wsdl_string(wsdl)
         client._transport = self._inline_transport(app)
+
+        result = client.call("Add", a=3, b=4)
+        assert result == 7, f"Expected 7, got {result!r}"
+
+    def test_from_wsdl_string_accepts_transport_arg(self) -> None:
+        """``from_wsdl_string(transport=...)`` uses the given transport instead
+        of building a default ``HttpTransport``. Regression for issue #223:
+        previously the transport argument was impossible to supply, so a WSDL
+        held in memory could not be driven through a stub/mTLS transport
+        without mutating the private ``_transport`` attribute."""
+        app, wsdl = self._calc_app(BindingStyle.DOCUMENT_LITERAL_WRAPPED)
+        transport = self._inline_transport(app)
+        client = SoapClient.from_wsdl_string(wsdl, transport=transport)
+        assert client._transport is transport, (
+            "from_wsdl_string ignored the transport= argument"
+        )
 
         result = client.call("Add", a=3, b=4)
         assert result == 7, f"Expected 7, got {result!r}"
