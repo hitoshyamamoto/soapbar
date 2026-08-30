@@ -1098,3 +1098,107 @@ class TestGzipCompression:
         assert start["status"] == 200
         body = next(r for r in responses if r["type"] == "http.response.body")["body"]
         assert b"PingResponse" in body
+
+    def test_wsgi_deflate_content_encoding_is_a_clean_client_fault(self):
+        """Content-Encoding: deflate is unimplemented — it must be rejected
+        with a clear SOAP Client fault, not silently passed through to the
+        XML parser (which used to match "gzip" by substring and skip
+        decompression, handing raw deflate bytes to the parser)."""
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app, xml = self._make_app(enable_gzip=True)
+        wsgi = WsgiSoapApp(app)
+
+        responses: list[tuple] = []
+        body_chunks = wsgi(
+            {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": "text/xml; charset=utf-8",
+                "CONTENT_LENGTH": str(len(xml)),
+                "HTTP_CONTENT_ENCODING": "deflate",
+                "HTTP_SOAPACTION": "Ping",
+                "wsgi.input": io.BytesIO(xml),
+            },
+            lambda status, headers: responses.append((status, headers)),
+        )
+        body = b"".join(body_chunks)
+        assert b"Client" in body
+        assert b"deflate" in body
+
+    def test_wsgi_content_encoding_notgzip_is_not_matched_by_substring(self):
+        """A Content-Encoding token that merely contains "gzip" as a
+        substring (e.g. "notgzip") must not be treated as gzip."""
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app, xml = self._make_app(enable_gzip=True)
+        wsgi = WsgiSoapApp(app)
+
+        responses: list[tuple] = []
+        body_chunks = wsgi(
+            {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": "text/xml; charset=utf-8",
+                "CONTENT_LENGTH": str(len(xml)),
+                "HTTP_CONTENT_ENCODING": "notgzip",
+                "HTTP_SOAPACTION": "Ping",
+                "wsgi.input": io.BytesIO(xml),
+            },
+            lambda status, headers: responses.append((status, headers)),
+        )
+        body = b"".join(body_chunks)
+        assert b"Client" in body
+        assert b"notgzip" in body
+
+    def test_accept_encoding_qvalue_zero_refuses_compression(self):
+        """RFC 9110 12.5.3: a qvalue of 0 means "not acceptable" — these
+        Accept-Encoding headers must NOT trigger gzip compression, even
+        though "gzip" appears as a substring."""
+        from soapbar.server._compression import compress_response
+
+        body = b"some response body"
+        refusing_headers = [
+            "gzip;q=0",
+            "identity, gzip;q=0",
+            "br, gzip;q=0.0",
+            "ungzip",
+            "not-gzipped",
+        ]
+        for header in refusing_headers:
+            out_body, out_encoding = compress_response(body, header)
+            assert out_encoding is None, f"{header!r} must not select gzip"
+            assert out_body == body
+
+    def test_accept_encoding_gzip_with_nonzero_qvalue_compresses(self):
+        import gzip
+
+        from soapbar.server._compression import compress_response
+
+        body = b"some response body"
+        accepting_headers = ["gzip", "gzip;q=1", "identity, gzip;q=0.5", "deflate, gzip"]
+        for header in accepting_headers:
+            out_body, out_encoding = compress_response(body, header)
+            assert out_encoding == "gzip", f"{header!r} should select gzip"
+            assert gzip.decompress(out_body) == body
+
+    def test_decompress_if_gzipped_rejects_unsupported_coding(self):
+        from soapbar.server._compression import (
+            UnsupportedContentEncodingError,
+            decompress_if_gzipped,
+        )
+
+        for header in ["deflate", "br", "notgzip"]:
+            try:
+                decompress_if_gzipped(b"irrelevant", header)
+            except UnsupportedContentEncodingError:
+                continue
+            raise AssertionError(f"{header!r} should have been rejected")
+
+    def test_decompress_if_gzipped_identity_is_passthrough(self):
+        from soapbar.server._compression import decompress_if_gzipped
+
+        assert decompress_if_gzipped(b"raw body", "identity") == b"raw body"
+        assert decompress_if_gzipped(b"raw body", "") == b"raw body"

@@ -360,6 +360,7 @@ class SoapApplication:
         content_type: str = "text/xml",
         accept_header: str = "",
         _force_oversize: bool = False,
+        _unsupported_encoding: str = "",
     ) -> tuple[int, str, bytes]:
         """Returns (http_status, content_type, response_body).
 
@@ -367,6 +368,11 @@ class SoapApplication:
         the normal fault path when the breach was detected upstream (a raw body
         over the limit, a gzip bomb, or MTOM/XOP amplification) without having
         to materialise the offending bytes here.
+
+        *_unsupported_encoding*, when non-empty, names a Content-Encoding
+        coding the adapter could not decode (anything but ``gzip``/``identity``,
+        e.g. ``deflate``); it is reported as a ``Client`` fault instead of
+        letting the undecoded bytes reach the XML parser.
         """
         # Detect SOAP version from content-type
         version = SoapVersion.SOAP_12 if "soap+xml" in content_type else SoapVersion.SOAP_11
@@ -384,6 +390,11 @@ class SoapApplication:
                     "Client",
                     f"Request body exceeds the server limit "
                     f"({self._max_body_size} bytes).",
+                )
+            if _unsupported_encoding:
+                raise SoapFault(
+                    "Client",
+                    f"Unsupported Content-Encoding: {_unsupported_encoding!r}",
                 )
             if len(body) > self._max_body_size:
                 raise SoapFault(
