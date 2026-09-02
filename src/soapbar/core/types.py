@@ -810,8 +810,15 @@ class _TypeRegistry:
             return self._parent.resolve(local)
         return found
 
-    def python_to_xsd(self, py_type: type) -> XsdType | None:
-        # bool must be checked before int (bool is subclass of int)
+    def python_to_xsd(self, py_type: object) -> XsdType | None:
+        # A parameterised generic (typing.Union[...], list[int], typing.Literal[...])
+        # is not a class, so issubclass() below raises TypeError. Degrade to the
+        # "unmapped" result instead of crashing at class-definition time.
+        if not isinstance(py_type, type):
+            return None
+        # Order matters: a subclass is tested before its base.
+        #   - bool before int     (bool is a subclass of int)
+        #   - datetime before date (datetime is a subclass of date)
         mapping: list[tuple[type, str]] = [
             (bool, "boolean"),
             (int, "int"),
@@ -819,9 +826,16 @@ class _TypeRegistry:
             (str, "string"),
             (Decimal, "decimal"),
             (bytes, "base64Binary"),
+            (datetime, "dateTime"),
+            (date, "date"),
+            (time, "time"),
         ]
         for py, xsd_name in mapping:
-            if issubclass(py_type, py):
+            try:
+                is_sub = issubclass(py_type, py)
+            except TypeError:
+                return None
+            if is_sub:
                 return self._by_name.get(xsd_name)
         return None
 

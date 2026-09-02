@@ -1,8 +1,10 @@
 """Comprehensive tests for soapbar — 31 tests covering all modules."""
 from __future__ import annotations
 
+import datetime
 import io
 import sys
+import typing
 import urllib.error
 import warnings
 from pathlib import Path
@@ -209,6 +211,27 @@ class TestTypes:
         assert int_type is not None
         assert bool_type.name == "boolean"
         assert int_type.name == "int"
+
+    def test_python_to_xsd_datetime_family(self) -> None:
+        """datetime/date/time map to their registered XSD types.
+
+        datetime is a subclass of date, so it must resolve to dateTime rather
+        than date.
+        """
+        dt_type = xsd.python_to_xsd(datetime.datetime)
+        date_type = xsd.python_to_xsd(datetime.date)
+        time_type = xsd.python_to_xsd(datetime.time)
+        assert dt_type is not None and dt_type.name == "dateTime"
+        assert date_type is not None and date_type.name == "date"
+        assert time_type is not None and time_type.name == "time"
+
+    def test_python_to_xsd_generic_alias_does_not_raise(self) -> None:
+        """A parameterised generic is not a class; it must degrade to None
+        rather than raise TypeError from issubclass()."""
+        assert xsd.python_to_xsd(int | str) is None
+        assert xsd.python_to_xsd(list[int]) is None
+        assert xsd.python_to_xsd(dict[str, int]) is None
+        assert xsd.python_to_xsd(typing.Literal["a", "b"]) is None
 
     def test_resolve_clark_notation(self) -> None:
         t = xsd.resolve(f"{{{NS.XSD}}}string")
@@ -938,6 +961,35 @@ class TestServer:
         assert len(sig.input_params) == 1
         assert sig.input_params[0].name == "message"
         assert sig.input_params[0].xsd_type.name == "string"
+
+    def test_soap_operation_introspects_datetime_params(self) -> None:
+        """datetime/date parameters survive introspection instead of being
+        silently dropped from the signature."""
+        class WhenService(SoapService):
+            __tns__ = "http://example.com/when"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation()
+            def when(self, ts: datetime.datetime, d: datetime.date, label: str) -> str:
+                return label
+
+        sig: OperationSignature = WhenService().get_operations()["when"].__soap_operation__
+        by_name = {p.name: p.xsd_type.name for p in sig.input_params}
+        assert by_name == {"ts": "dateTime", "d": "date", "label": "string"}
+
+    def test_soap_operation_unmappable_annotation_does_not_raise_at_import(self) -> None:
+        """A union / parameterised-generic annotation must not raise while the
+        service class body is evaluated; the parameter degrades to dropped."""
+        class UnionService(SoapService):
+            __tns__ = "http://example.com/union"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation()
+            def op(self, x: int | str, label: str) -> str:
+                return label
+
+        sig: OperationSignature = UnionService().get_operations()["op"].__soap_operation__
+        assert [p.name for p in sig.input_params] == ["label"]
 
 
 # =============================================================================
