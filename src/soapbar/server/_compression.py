@@ -20,7 +20,8 @@ class UnsupportedContentEncodingError(SoapbarError, ValueError):
     """Raised when Content-Encoding names a coding soapbar does not decode.
 
     ``gzip`` (and the no-op ``identity``) are the only inbound codings
-    soapbar implements. Anything else — ``deflate``, ``br``, a typo — used to
+    soapbar implements. Anything else — ``deflate``, ``br``, a typo, a
+    multi-coding stack like ``gzip, br`` — used to
     be silently ignored by a substring match, handing the undecoded bytes to
     the XML parser and producing a confusing 500 traceback instead of a
     client-facing fault. Raising here lets the caller translate it into a
@@ -28,17 +29,24 @@ class UnsupportedContentEncodingError(SoapbarError, ValueError):
     """
 
 
-def _content_encoding_coding(content_encoding: str) -> str:
-    """Return the single coding named by a Content-Encoding header, exactly
-    matched and case-folded (``""`` if the header is empty/whitespace).
+def _content_encoding_codings(content_encoding: str) -> list[str]:
+    """Return the effective codings named by a Content-Encoding header:
+    exactly tokenised, case-folded, with the legacy alias ``x-gzip``
+    normalised to ``gzip`` (RFC 9110 §8.4.1.3) and no-op ``identity``
+    tokens dropped.
 
     Content-Encoding (unlike Accept-Encoding) has no q-value parameters —
-    RFC 9110 §8.4 defines it as a plain comma-separated list of codings.
-    soapbar only ever applies one coding, so only the first token is
-    meaningful; a caller with more should reject it as unsupported.
+    RFC 9110 §8.4 defines it as a plain comma-separated list of codings in
+    application order. An empty list means the body carries no coding.
     """
-    token = content_encoding.split(",", 1)[0].strip().lower()
-    return token
+    codings = []
+    for coding in content_encoding.split(","):
+        coding = coding.strip().lower()
+        if coding == "x-gzip":
+            coding = "gzip"
+        if coding and coding != "identity":
+            codings.append(coding)
+    return codings
 
 
 def decompress_if_gzipped(
@@ -48,10 +56,13 @@ def decompress_if_gzipped(
 
     The caller is expected to gate this on ``soap_app.enable_gzip`` — the
     helper itself does no gating; it just honors what the Content-Encoding
-    header declares. If the header is empty or names ``identity``, the body
-    is returned unchanged. Any other coding (``deflate``, ``br``, ...) raises
-    ``UnsupportedContentEncodingError`` — matched exactly, not by substring,
-    so a header like ``notgzip`` is rejected rather than mistaken for gzip.
+    header declares. If the header is empty or names only no-op ``identity``
+    codings, the body is returned unchanged. A single ``gzip`` (or its legacy
+    alias ``x-gzip``, equivalent per RFC 9110 §8.4.1.3) is decompressed.
+    Anything else — an unknown coding (``deflate``, ``br``, a typo like
+    ``notgzip``, matched exactly rather than by substring) or a multi-coding
+    stack (``gzip, br``) — raises ``UnsupportedContentEncodingError`` naming
+    the offending codings.
 
     When *max_size* is given, decompression is **bounded**: a gzip
     "decompression bomb" (a few KB that inflates to gigabytes) is refused with
@@ -62,11 +73,11 @@ def decompress_if_gzipped(
     A malformed gzip payload raises ``gzip.BadGzipFile`` / ``zlib.error`` which
     the caller should translate into an HTTP 400 / SOAP ``Client`` fault.
     """
-    coding = _content_encoding_coding(content_encoding)
-    if not coding or coding == "identity":
+    codings = _content_encoding_codings(content_encoding)
+    if not codings:
         return body
-    if coding != "gzip":
-        raise UnsupportedContentEncodingError(coding)
+    if codings != ["gzip"]:
+        raise UnsupportedContentEncodingError(", ".join(codings))
     if max_size is None:
         return gzip.decompress(body)
     # Bounded, single-shot decompression: ``max_length`` caps the output; if the
@@ -95,11 +106,14 @@ def _accepts_gzip(accept_encoding: str) -> bool:
     ``gzip;q=0`` must be treated as a refusal, not a request, to compress.
     Each comma-separated item is matched on its coding token alone (the part
     before ``;``) so an unrelated token that merely contains "gzip" —
-    ``ungzip``, ``not-gzipped`` — no longer matches by substring.
+    ``ungzip``, ``not-gzipped`` — no longer matches by substring. The legacy
+    alias ``x-gzip`` counts as ``gzip`` (RFC 9110 §8.4.1.3).
     """
     for item in accept_encoding.split(","):
         params = item.split(";")
         coding = params[0].strip().lower()
+        if coding == "x-gzip":
+            coding = "gzip"
         if coding != "gzip":
             continue
         q = 1.0

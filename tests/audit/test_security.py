@@ -1202,3 +1202,89 @@ class TestGzipCompression:
 
         assert decompress_if_gzipped(b"raw body", "identity") == b"raw body"
         assert decompress_if_gzipped(b"raw body", "") == b"raw body"
+
+    def test_content_encoding_x_gzip_alias_is_decompressed(self):
+        """RFC 9110 §8.4.1.3: ``x-gzip`` is equivalent to ``gzip`` (same
+        RFC 1952 byte format under a historic name). The exact-token match
+        must not regress the legacy alias, which the old substring match
+        accepted by accident."""
+        import gzip
+
+        from soapbar.server._compression import decompress_if_gzipped
+
+        compressed = gzip.compress(b"raw body")
+        assert decompress_if_gzipped(compressed, "x-gzip") == b"raw body"
+        assert decompress_if_gzipped(compressed, "X-Gzip") == b"raw body"
+
+    def test_accept_encoding_x_gzip_selects_gzip(self):
+        """``Accept-Encoding: x-gzip`` counts as gzip (RFC 9110 §8.4.1.3);
+        ``x-gzip;q=0`` is still a refusal."""
+        import gzip
+
+        from soapbar.server._compression import compress_response
+
+        body = b"some response body"
+        out_body, out_encoding = compress_response(body, "x-gzip")
+        assert out_encoding == "gzip"
+        assert gzip.decompress(out_body) == body
+
+        out_body, out_encoding = compress_response(body, "x-gzip;q=0")
+        assert out_encoding is None
+        assert out_body == body
+
+    def test_content_encoding_identity_gzip_list_is_decompressed(self):
+        """``identity`` tokens are no-ops (RFC 9110 §8.4.1): a list like
+        ``identity, gzip`` names exactly one real coding and must be
+        decompressed, not rejected — and never passed through raw."""
+        import gzip
+
+        from soapbar.server._compression import decompress_if_gzipped
+
+        compressed = gzip.compress(b"raw body")
+        assert decompress_if_gzipped(compressed, "identity, gzip") == b"raw body"
+        assert decompress_if_gzipped(compressed, "gzip, identity") == b"raw body"
+
+    def test_content_encoding_multi_coding_stack_is_rejected(self):
+        """A stack of more than one real coding (``gzip, br``) is not
+        decodable here and must raise — naming every coding in the header,
+        not silently honoring only the first token."""
+        from soapbar.server._compression import (
+            UnsupportedContentEncodingError,
+            decompress_if_gzipped,
+        )
+
+        for header in ["gzip, br", "br, gzip", "gzip, gzip"]:
+            try:
+                decompress_if_gzipped(b"irrelevant", header)
+            except UnsupportedContentEncodingError as exc:
+                assert "gzip" in str(exc), f"{header!r}: fault should name codings"
+                continue
+            raise AssertionError(f"{header!r} should have been rejected")
+
+    def test_wsgi_x_gzip_inbound_round_trips(self):
+        """End to end: a legacy client sending ``Content-Encoding: x-gzip``
+        with a gzipped body gets a normal response, not a Client fault."""
+        import gzip
+        import io
+
+        from soapbar.server.wsgi import WsgiSoapApp
+
+        app, xml = self._make_app(enable_gzip=True)
+        compressed = gzip.compress(xml)
+        wsgi = WsgiSoapApp(app)
+
+        responses: list[tuple] = []
+        body_chunks = wsgi(
+            {
+                "REQUEST_METHOD": "POST",
+                "CONTENT_TYPE": "text/xml; charset=utf-8",
+                "CONTENT_LENGTH": str(len(compressed)),
+                "HTTP_CONTENT_ENCODING": "x-gzip",
+                "HTTP_SOAPACTION": "Ping",
+                "wsgi.input": io.BytesIO(compressed),
+            },
+            lambda status, headers: responses.append((status, headers)),
+        )
+        body = b"".join(body_chunks)
+        assert responses[0][0] == "200 OK"
+        assert b"PingResponse" in body
