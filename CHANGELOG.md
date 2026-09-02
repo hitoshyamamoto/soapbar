@@ -11,14 +11,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ### Bug Fixes
 
-* **server:** stop matching Accept-/Content-Encoding by substring ([#231](https://github.com/hitoshyamamoto/soapbar/issues/231)) ([2945086](https://github.com/hitoshyamamoto/soapbar/commit/2945086285a54328630c937a83c5883ce575021e))
+* **server:** stop matching Accept-/Content-Encoding by substring ([#231](https://github.com/hitoshyamamoto/soapbar/issues/231)) ([2945086](https://github.com/hitoshyamamoto/soapbar/commit/2945086285a54328630c937a83c5883ce575021e)) — contributed by [@Rehan30g](https://github.com/Rehan30g)
 
 ## [0.17.4](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.3...v0.17.4) (2026-08-26)
 
 
 ### Bug Fixes
 
-* **client/server:** resolve three small API inconsistencies (from_wsdl_string transport, WSGI 400 reason phrase, wssecurity __all__) ([#225](https://github.com/hitoshyamamoto/soapbar/issues/225)) ([eefc142](https://github.com/hitoshyamamoto/soapbar/commit/eefc142fd146516e5a663bb2e3a5cb086d8ac163)), closes [#223](https://github.com/hitoshyamamoto/soapbar/issues/223)
+* **client/server:** resolve three small API inconsistencies (from_wsdl_string transport, WSGI 400 reason phrase, wssecurity __all__) ([#225](https://github.com/hitoshyamamoto/soapbar/issues/225)) ([eefc142](https://github.com/hitoshyamamoto/soapbar/commit/eefc142fd146516e5a663bb2e3a5cb086d8ac163)), closes [#223](https://github.com/hitoshyamamoto/soapbar/issues/223) — contributed by [@Rehan30g](https://github.com/Rehan30g)
 
 ## [0.17.3](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.2...v0.17.3) (2026-08-21)
 
