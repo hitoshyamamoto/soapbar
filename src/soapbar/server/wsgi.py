@@ -87,8 +87,12 @@ class WsgiSoapApp:
             oversize = len(body_bytes) > max_size
 
             # C2 — HTTP-level gzip (opt-in via SoapApplication(enable_gzip=True))
+            unsupported_encoding = ""
             if not oversize and self.soap_app.enable_gzip:
-                from soapbar.server._compression import decompress_if_gzipped
+                from soapbar.server._compression import (
+                    UnsupportedContentEncodingError,
+                    decompress_if_gzipped,
+                )
                 content_encoding = environ.get("HTTP_CONTENT_ENCODING", "")
                 try:
                     body_bytes = decompress_if_gzipped(
@@ -96,9 +100,11 @@ class WsgiSoapApp:
                     )
                 except BodyTooLargeError:
                     oversize = True
+                except UnsupportedContentEncodingError as exc:
+                    unsupported_encoding = str(exc)
 
             # Decode MTOM/XOP into plain XML before dispatch
-            if not oversize and _is_mtom(content_type):
+            if not oversize and not unsupported_encoding and _is_mtom(content_type):
                 from soapbar.core.mtom import parse_mtom
                 try:
                     mtom_msg = parse_mtom(body_bytes, content_type, max_size)
@@ -112,11 +118,12 @@ class WsgiSoapApp:
                     oversize = True
 
             status, resp_ct, resp_body = self.soap_app.handle_request(
-                b"" if oversize else body_bytes,
+                b"" if (oversize or unsupported_encoding) else body_bytes,
                 soap_action=soap_action,
                 content_type=content_type,
                 accept_header=accept,
                 _force_oversize=oversize,
+                _unsupported_encoding=unsupported_encoding,
             )
             # C2 — compress outbound if the client advertised Accept-Encoding: gzip.
             resp_content_encoding: str | None = None
