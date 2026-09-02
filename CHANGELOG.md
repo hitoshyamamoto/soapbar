@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.5](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.4...v0.17.5) (2026-09-02)
+
+
+### Bug Fixes
+
+* **server:** stop matching Accept-/Content-Encoding by substring ([#231](https://github.com/hitoshyamamoto/soapbar/issues/231)) ([2945086](https://github.com/hitoshyamamoto/soapbar/commit/2945086285a54328630c937a83c5883ce575021e))
+
 ## [0.17.4](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.3...v0.17.4) (2026-08-26)
 
 
