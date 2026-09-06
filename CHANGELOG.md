@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.16](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.15...v0.17.16) (2026-09-06)
+
+
+### Bug Fixes
+
+* **client:** fail on unknown operations instead of dropping arguments ([#260](https://github.com/hitoshyamamoto/soapbar/issues/260)) ([93b6e20](https://github.com/hitoshyamamoto/soapbar/commit/93b6e2063f6b91ebdfb9a3df24f7f5a38946519a)), closes [#210](https://github.com/hitoshyamamoto/soapbar/issues/210)
+
 ## [0.17.15](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.14...v0.17.15) (2026-09-06)
 
 
