@@ -14,6 +14,53 @@ from soapbar.core.wsdl import WsdlBinding, WsdlDefinition
 from soapbar.core.xml import make_element, sub_element, to_bytes, to_string
 
 
+def build_types_schema(defn: WsdlDefinition) -> _Element | None:
+    """Build the auto-generated ``<xsd:schema>`` element for *defn*'s global
+    elements and complex types — the same element ``build_wsdl`` embeds under
+    ``<wsdl:types>`` — or ``None`` when there is nothing to declare.
+
+    Shared with ``SoapApplication._get_compiled_schema`` so that body-schema
+    validation compiles exactly the schema the published WSDL advertises.
+    """
+    if not (defn.complex_types or defn.global_elements):
+        return None
+    tns = defn.target_namespace
+    # Declare elementFormDefault to MATCH what the serializer emits, so the
+    # published schema never lies about the wire form. A type is "qualified"
+    # when it carries that flag (e.g. parsed from a qualified schema);
+    # hand-built types default to unqualified, which is soapbar's serializer
+    # default. Mixed sets are rare; if any type qualifies its children,
+    # declare the schema qualified.
+    _qualified = any(
+        getattr(ct, "qualified", False) for ct in defn.complex_types.values()
+    )
+    # Declare the ``xsd`` prefix on the schema element itself: type
+    # references inside global elements are QName strings ("xsd:string")
+    # that resolve via in-scope declarations. Embedded in a WSDL the prefix
+    # is inherited from <wsdl:definitions>; compiled standalone (body-schema
+    # validation) it must be declared here or XMLSchema compilation fails.
+    schema_elem = make_element(
+        f"{{{NS.XSD}}}schema",
+        attrib={
+            "targetNamespace": tns,
+            "elementFormDefault": "qualified" if _qualified else "unqualified",
+        },
+        nsmap={"xs": NS.XSD, "xsd": NS.XSD},
+    )
+    # Global <xsd:element> declarations (emitted first so they are
+    # discoverable before complex-type bodies reference them).
+    for global_elem in defn.global_elements:
+        schema_elem.append(copy.deepcopy(global_elem))
+    for ct in defn.complex_types.values():
+        if isinstance(ct, ComplexXsdType):
+            schema_elem.append(_complex_type_to_xsd(ct, tns))
+        elif isinstance(ct, ArrayXsdType):
+            schema_elem.append(_array_type_to_xsd(ct, tns))
+        elif isinstance(ct, ChoiceXsdType):
+            schema_elem.append(_choice_type_to_xsd(ct, tns))
+    return schema_elem
+
+
 def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
     """Build a WSDL 1.1 document element from *defn*.
 
@@ -68,35 +115,9 @@ def build_wsdl(defn: WsdlDefinition, address: str) -> _Element:
         types_elem = sub_element(root, f"{{{NS.WSDL}}}types")
         for schema_elem in defn.schema_elements:
             types_elem.append(copy.deepcopy(schema_elem))
-        if defn.complex_types or defn.global_elements:
-            # Declare elementFormDefault to MATCH what the serializer emits, so
-            # the published schema never lies about the wire form. A type is
-            # "qualified" when it carries that flag (e.g. parsed from a
-            # qualified schema); hand-built types default to unqualified, which
-            # is soapbar's serializer default. Mixed sets are rare; if any type
-            # qualifies its children, declare the schema qualified.
-            _qualified = any(
-                getattr(ct, "qualified", False) for ct in defn.complex_types.values()
-            )
-            schema_elem2 = sub_element(
-                types_elem,
-                f"{{{NS.XSD}}}schema",
-                attrib={
-                    "targetNamespace": tns,
-                    "elementFormDefault": "qualified" if _qualified else "unqualified",
-                },
-            )
-            # Global <xsd:element> declarations (emitted first so they are
-            # discoverable before complex-type bodies reference them).
-            for global_elem in defn.global_elements:
-                schema_elem2.append(copy.deepcopy(global_elem))
-            for ct in defn.complex_types.values():
-                if isinstance(ct, ComplexXsdType):
-                    schema_elem2.append(_complex_type_to_xsd(ct, tns))
-                elif isinstance(ct, ArrayXsdType):
-                    schema_elem2.append(_array_type_to_xsd(ct, tns))
-                elif isinstance(ct, ChoiceXsdType):
-                    schema_elem2.append(_choice_type_to_xsd(ct, tns))
+        generated_schema = build_types_schema(defn)
+        if generated_schema is not None:
+            types_elem.append(generated_schema)
 
     # Messages
     for msg in defn.messages.values():
