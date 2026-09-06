@@ -16,6 +16,15 @@ The VIES, WITSML and ANA examples run against live endpoints; the NF-e and MeF
 examples are faithful references (their `main()` prints guidance without
 network access).
 
+**NF-e scope.** `soapbar.contrib.nfe` owns the *protocol*, not the document
+model: it implements the service-status query (`status_servico`), the protocol
+consult (`consultar_protocolo`), and `<infNFe>` `Id`-targeted signing, over the
+mTLS transport SEFAZ requires. It does **not** implement issuance
+(`nfeAutorizacaoLote`), cancellation, correction letters, number invalidation,
+or events, and it ships no UF→endpoint map — the caller passes the authorizer's
+URL explicitly. To generate and validate full layout-4 NF-e documents, pair it
+with a dedicated NF-e library and use soapbar as the SOAP transport underneath.
+
 ```python
 from soapbar.contrib.vies import ViesClient
 
