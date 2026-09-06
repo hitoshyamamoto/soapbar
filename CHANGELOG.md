@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.17](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.16...v0.17.17) (2026-09-06)
+
+
+### Documentation
+
+* add deployment and debugging guides ([#261](https://github.com/hitoshyamamoto/soapbar/issues/261)) ([c73e1ac](https://github.com/hitoshyamamoto/soapbar/commit/c73e1aca58ec5c0a87053652757e2622cebb6f4e)), closes [#179](https://github.com/hitoshyamamoto/soapbar/issues/179) [#176](https://github.com/hitoshyamamoto/soapbar/issues/176)
+
 ## [0.17.16](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.15...v0.17.16) (2026-09-06)
 
 
