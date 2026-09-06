@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.18.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.17...v0.18.0) (2026-09-06)
+
+
+### Features
+
+* **client:** byte-faithful raw XML payloads (RawXmlType) ([#264](https://github.com/hitoshyamamoto/soapbar/issues/264)) ([46bac77](https://github.com/hitoshyamamoto/soapbar/commit/46bac7748e129cdd03c9cc295e49296e150676ed))
+
 ## [0.17.17](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.16...v0.17.17) (2026-09-06)
 
 
