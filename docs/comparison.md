@@ -40,6 +40,10 @@ Honesty builds trust, so: soapbar is not always the right choice.
 - **You need a full NF-e document builder.** soapbar's NF-e client is the SOAP transport + mutual-TLS + signing layer, not a fiscal-document library — pair it with a domain library such as PyNFe or PySIGNFe.
 - **You require a 1.0-stable, battle-tested dependency today.** soapbar is Beta (pre-1.0); evaluate the server side for your case.
 
+If you do decide to move, [Migrating from zeep or spyne](migrating.md) maps
+each construct to its soapbar equivalent — including the places where there is
+no equivalent.
+
 ## The wider landscape
 
 Beyond the four libraries above, most Python SOAP projects are no longer actively released. Last release on PyPI (accessed 2026-08-11):

@@ -62,6 +62,7 @@ nav:
       - Type system and encoding: types.md
       - Faults and one-way operations: faults.md
       - Testing your service: testing.md
+      - Migrating from zeep or spyne: migrating.md
       - Security: security.md
   - Reference:
       - API reference: api.md
