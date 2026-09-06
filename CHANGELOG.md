@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.15](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.14...v0.17.15) (2026-09-06)
+
+
+### Bug Fixes
+
+* **server:** surface operation collisions and emit one port per binding ([#256](https://github.com/hitoshyamamoto/soapbar/issues/256)) ([f94adc3](https://github.com/hitoshyamamoto/soapbar/commit/f94adc39c9d8742a94716b2017623ea02776b0a1)), closes [#181](https://github.com/hitoshyamamoto/soapbar/issues/181) [#216](https://github.com/hitoshyamamoto/soapbar/issues/216)
+
 ## [0.17.14](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.13...v0.17.14) (2026-09-06)
 
 
