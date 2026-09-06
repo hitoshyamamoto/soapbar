@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.10](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.9...v0.17.10) (2026-09-06)
+
+
+### Documentation
+
+* **contrib:** state the NF-e client's actual scope ([#246](https://github.com/hitoshyamamoto/soapbar/issues/246)) ([ffbe1ff](https://github.com/hitoshyamamoto/soapbar/commit/ffbe1ff71d0df2a170e9eafb03330deddc482130))
+
 ## [0.17.9](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.8...v0.17.9) (2026-09-06)
 
 
