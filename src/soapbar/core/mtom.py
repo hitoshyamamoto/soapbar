@@ -166,7 +166,7 @@ def _resolve_xop_includes(
                 inlined_total += len(encoded)
                 if inlined_total > max_resolved_size:
                     raise BodyTooLargeError(
-                        f"MTOM/XOP-resolved body exceeds the server limit "
+                        f"MTOM/XOP-resolved body exceeds the size limit "
                         f"({max_resolved_size} bytes); possible XOP amplification."
                     )
             parent = elem.getparent()

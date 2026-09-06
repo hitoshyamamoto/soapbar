@@ -3586,6 +3586,51 @@ class TestMtomTransport:
         assert ct_out == ct_in
         assert body_out == body
 
+    def test_transport_mtom_response_amplification_is_bounded(self) -> None:
+        """A hostile MTOM response referencing one small attachment from many
+        xop:Include elements must be refused *before* the amplified result is
+        allocated. Regression for issue #209: the client passed no limit to
+        parse_mtom, while both server adapters did.
+
+        The nominal resolved size here is 200 references x ~1.33 MB of base64
+        (~266 MB) against a 64 KiB cap; peak memory is asserted to stay two
+        orders of magnitude below the nominal expansion, which is what
+        distinguishes "refused early" from "allocated and then complained".
+        """
+        import tracemalloc
+
+        from soapbar.core.mtom import MtomAttachment, build_mtom
+        from soapbar.core.xml import BodyTooLargeError
+
+        include = (
+            b'<xop:Include xmlns:xop="http://www.w3.org/2004/08/xop/include"'
+            b' href="cid:blob"/>'
+        )
+        soap_xml = (
+            b'<?xml version="1.0" encoding="utf-8"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><data>" + include * 200 + b"</data></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        attachment = MtomAttachment(
+            content_id="blob",
+            content_type="application/octet-stream",
+            data=b"A" * (1024 * 1024),
+        )
+        body, outer_ct = build_mtom(soap_xml, [attachment], soap_version_content_type="text/xml")
+
+        transport = HttpTransport(max_response_size=64 * 1024)
+        tracemalloc.start()
+        try:
+            with pytest.raises(BodyTooLargeError, match="size limit"):
+                transport._decode_mtom_if_needed(outer_ct, body)
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert peak < 32 * 1024 * 1024, (
+            f"decode allocated {peak} bytes — the limit did not stop the expansion early"
+        )
+
 
 # ---------------------------------------------------------------------------
 # WS-Addressing
