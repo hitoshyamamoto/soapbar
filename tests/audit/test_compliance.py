@@ -536,8 +536,6 @@ class TestWsdl11Compliance:
 
     def test_wsdl_remote_import_allowed_when_opt_in(self, monkeypatch):
         """I04 — allow_remote_imports=True bypasses the SSRF guard."""
-        import urllib.request
-
         fake_wsdl = b"""
         <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
                      targetNamespace="http://example.com/remote">
@@ -552,7 +550,12 @@ class TestWsdl11Compliance:
             def __exit__(self, *_: object) -> None:
                 pass
 
-        monkeypatch.setattr(urllib.request, "urlopen", lambda _url: _FakeResp())
+        class _FakeOpener:
+            def open(self, _url, timeout=None):
+                return _FakeResp()
+
+        from soapbar.core.wsdl import parser as _parser
+        monkeypatch.setattr(_parser, "_no_redirect_opener", _FakeOpener())
 
         wsdl = b"""
         <definitions xmlns="http://schemas.xmlsoap.org/wsdl/"

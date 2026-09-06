@@ -3,8 +3,11 @@
 """WSDL parser — supports SOAP 1.1 and SOAP 1.2 binding extensions."""
 from __future__ import annotations
 
+import urllib.error
+import urllib.request
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
+from urllib.request import url2pathname
 
 from lxml.etree import _Element
 
@@ -60,11 +63,38 @@ def _resolve_location(location: str, base_url: str | None) -> str:
     return location
 
 
+_IMPORT_FETCH_TIMEOUT = 30.0
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects during import resolution.
+
+    ``allow_remote_imports=True`` authorises *one* host, not whatever chain
+    that host chooses to point at (cloud metadata endpoints being the
+    classic target). urllib follows redirects by default, so it is opted
+    out of here.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        raise urllib.error.HTTPError(
+            req.full_url, code,
+            f"Redirect blocked (SSRF guard): {req.full_url!r} -> {newurl!r}. "
+            "Redirects are not followed while resolving WSDL/XSD imports.",
+            headers, fp,
+        )
+
+
+_no_redirect_opener = urllib.request.build_opener(_NoRedirectHandler)
+
+
 def _fetch_wsdl_source(location: str) -> bytes:
-    if location.startswith(("http://", "https://", "file://")):
-        import urllib.request
-        with urllib.request.urlopen(location) as resp:  # noqa: S310
+    if location.startswith(("http://", "https://")):
+        with _no_redirect_opener.open(
+            location, timeout=_IMPORT_FETCH_TIMEOUT
+        ) as resp:
             return resp.read()  # type: ignore[no-any-return]
+    if location.startswith("file://"):
+        return Path(url2pathname(urlparse(location).path)).read_bytes()
     return Path(location).read_bytes()
 
 
