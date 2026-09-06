@@ -8,6 +8,11 @@ wsdl_bytes = soap_app.get_wsdl()
 
 Served automatically at `GET ?wsdl` when using `AsgiSoapApp` or `WsgiSoapApp`.
 
+For programmatic generation, `build_wsdl(defn, address)` returns the
+`wsdl:definitions` element for a `WsdlDefinition` and `build_wsdl_string`
+its serialized form; the `NS` class exposes the namespace URI constants
+(`NS.WSDL`, `NS.XSD`, `NS.SOAP_ENV`, ...) used throughout soapbar.
+
 ## Applications spanning several namespaces
 
 A `SoapApplication` can serve any number of services. Whenever they share a

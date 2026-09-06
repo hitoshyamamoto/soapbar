@@ -12,6 +12,7 @@
         { "type": "fix", "section": "Bug Fixes" },
         { "type": "perf", "section": "Performance" },
         { "type": "refactor", "section": "Refactoring" },
+        { "type": "deprecate", "section": "Deprecated" },
         { "type": "docs", "section": "Documentation" },
         { "type": "revert", "section": "Reverts" },
         { "type": "chore", "section": "Chores", "hidden": true },
