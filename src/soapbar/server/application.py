@@ -255,12 +255,45 @@ class SoapApplication:
                 f"service on an application without the flag, or use a "
                 f"wrapped binding style."
             )
+        ops = service.get_operations()
+
+        # Validate before mutating anything, so a rejected register leaves
+        # the application unchanged. A silent overwrite here left half the
+        # API unreachable while both services still appeared in the WSDL
+        # (issue #181); nobody collides on purpose, so a collision raises.
+        # Re-registering the same handler (same service instance, same
+        # method) is idempotent and stays allowed.
+        for op_name, method in ops.items():
+            existing = self._dispatch.get(op_name)
+            if existing is not None:
+                prev_service, prev_method = existing
+                if not (prev_service is service and prev_method == method):
+                    raise ValueError(
+                        f"Operation name collision: {op_name!r} is already "
+                        f"registered by {type(prev_service).__name__} and would "
+                        f"be overwritten by {type(service).__name__}. Operation "
+                        f"names must be unique within a SoapApplication; rename "
+                        f"one via @soap_operation(name=...)."
+                    )
+            sig: OperationSignature = method.__soap_operation__
+            if sig.soap_action:
+                for action in {sig.soap_action, sig.soap_action.strip('"')}:
+                    mapped = self._action_map.get(action)
+                    if mapped is not None and mapped != op_name:
+                        raise ValueError(
+                            f"soapAction collision: {action!r} already dispatches "
+                            f"to operation {mapped!r} and cannot also dispatch to "
+                            f"{op_name!r} ({type(service).__name__}). Give each "
+                            f"operation a distinct soapAction."
+                        )
+
         # A new service changes the generated schema — recompute lazily.
         self._compiled_schema = _UNSET
-        self._services.append(service)
-        for op_name, method in service.get_operations().items():
+        if service not in self._services:  # idempotent re-register
+            self._services.append(service)
+        for op_name, method in ops.items():
             self._dispatch[op_name] = (service, method)
-            sig: OperationSignature = method.__soap_operation__
+            sig = method.__soap_operation__
             if sig.soap_action:
                 self._action_map[sig.soap_action] = op_name
                 # Also register without quotes / with cleaned action
@@ -747,8 +780,35 @@ class SoapApplication:
             )
             subgroups.setdefault(key, []).append(service)
 
+        # Sub-groups sharing a service name (same name, different binding
+        # style or SOAP version — a supported layout) must not overwrite each
+        # other's portType/binding/service triple (issue #216). When a name
+        # has more than one sub-group, each group's portType/binding names are
+        # disambiguated by the components that actually differ, and all
+        # groups' ports land on ONE wsdl:service. A single-group name (the
+        # common case) keeps its exact historical names.
+        groups_per_name: dict[str, int] = {}
+        styles_per_name: dict[str, set[Any]] = {}
+        versions_per_name: dict[str, set[Any]] = {}
+        for name, style, version in subgroups:
+            groups_per_name[name] = groups_per_name.get(name, 0) + 1
+            styles_per_name.setdefault(name, set()).add(style)
+            versions_per_name.setdefault(name, set()).add(version)
+
         for (service_name, binding_style, soap_version), members in subgroups.items():
-            port_name = members[0].__port_name__ or f"{service_name}Port"
+            suffix = ""
+            if groups_per_name[service_name] > 1:
+                parts = []
+                if len(styles_per_name[service_name]) > 1:
+                    parts.append(
+                        "".join(w.capitalize() for w in binding_style.name.split("_"))
+                    )
+                if len(versions_per_name[service_name]) > 1:
+                    parts.append(
+                        "Soap11" if soap_version == SoapVersion.SOAP_11 else "Soap12"
+                    )
+                suffix = "".join(parts)
+            port_name = members[0].__port_name__ or f"{service_name}{suffix}Port"
             soap_ns = (
                 NS.WSDL_SOAP if soap_version == SoapVersion.SOAP_11 else NS.WSDL_SOAP12
             )
@@ -761,6 +821,7 @@ class SoapApplication:
                 soap_ns=soap_ns,
                 transport=transport,
                 tns=tns,
+                name_suffix=suffix,
             )
 
         return defn
@@ -776,9 +837,16 @@ class SoapApplication:
         soap_ns: str,
         transport: str,
         tns: str,
+        name_suffix: str = "",
     ) -> None:
-        """Append one portType/binding/service triple for *services* to *defn*."""
-        pt = WsdlPortType(name=f"{service_name}PortType")
+        """Append one portType/binding pair (and a port on *service_name*'s
+        wsdl:service) for *services* to *defn*.
+
+        *name_suffix* disambiguates the portType/binding names when several
+        sub-groups share a service name (issue #216); it is empty in the
+        single-group common case, keeping historical names byte-identical.
+        """
+        pt = WsdlPortType(name=f"{service_name}{name_suffix}PortType")
         binding_ops: list[WsdlBindingOperation] = []
 
         for svc_instance in services:
@@ -848,7 +916,7 @@ class SoapApplication:
 
         defn.port_types[pt.name] = pt
 
-        binding_name = f"{service_name}Binding"
+        binding_name = f"{service_name}{name_suffix}Binding"
         defn.bindings[binding_name] = WsdlBinding(
             name=binding_name,
             port_type=pt.name,
@@ -863,7 +931,14 @@ class SoapApplication:
             binding=binding_name,
             address=self.service_url,
         )
-        defn.services[service_name] = WsdlService(
-            name=service_name,
-            ports=[wsdl_port],
-        )
+        existing = defn.services.get(service_name)
+        if existing is not None:
+            # A second sub-group of the same service name contributes another
+            # wsdl:port on the SAME wsdl:service, the WSDL-idiomatic shape —
+            # not a second service element that would overwrite the first.
+            existing.ports.append(wsdl_port)
+        else:
+            defn.services[service_name] = WsdlService(
+                name=service_name,
+                ports=[wsdl_port],
+            )
