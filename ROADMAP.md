@@ -11,7 +11,7 @@ of this is [STABILITY.md](STABILITY.md).
 
 ## Where the project is
 
-soapbar is **Beta** (`0.15.x`). The public surface is frozen by a CI-enforced
+soapbar is **Beta** (`0.17.x`). The public surface is frozen by a CI-enforced
 snapshot test, the security posture is in place (hardened parser, WS-Security,
 CodeQL, weekly fuzzing, signed releases with SBOM), and the library is
 interoperable with zeep and spyne.
