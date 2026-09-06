@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.14](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.13...v0.17.14) (2026-09-06)
+
+
+### Documentation
+
+* add a zeep/spyne migration guide ([#255](https://github.com/hitoshyamamoto/soapbar/issues/255)) ([abf3adf](https://github.com/hitoshyamamoto/soapbar/commit/abf3adf65285294c07422820220300dc89791ed5)), closes [#158](https://github.com/hitoshyamamoto/soapbar/issues/158)
+
 ## [0.17.13](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.12...v0.17.13) (2026-09-06)
 
 
