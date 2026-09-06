@@ -41,6 +41,10 @@ from soapbar.server.service import SoapMethod, SoapService
 
 _log = logging.getLogger(__name__)
 
+# Sentinel for "not yet computed" cache slots, so a computed-None (schema
+# unavailable) is itself cacheable.
+_UNSET: Any = object()
+
 
 def _wsdl_selector(query_string: str) -> str | None:
     """Return the service named in a ``?wsdl=<name>`` query, or ``None``.
@@ -149,7 +153,10 @@ class SoapApplication:
         self._wsdl_access = wsdl_access  # X06
         self._wsdl_auth_hook = wsdl_auth_hook  # X06
         self.enable_gzip = enable_gzip  # C2: opt-in HTTP-level gzip
-        self._compiled_schema: Any = None  # etree.XMLSchema | None; lazy-built
+        # etree.XMLSchema | None once computed; _UNSET distinguishes "not yet
+        # computed" from "computed and unavailable" so a None result is cached
+        # too — otherwise the full WsdlDefinition is rebuilt on every request.
+        self._compiled_schema: Any = _UNSET
         self._services: list[SoapService] = []
         # operation_name → (service, method)
         self._dispatch: dict[str, tuple[SoapService, SoapMethod]] = {}
@@ -177,23 +184,31 @@ class SoapApplication:
     def _get_compiled_schema(self) -> Any:
         """Return a compiled lxml XMLSchema from registered services' WSDL types.
 
-        Builds a composite ``<xs:schema>`` element that imports each inline
-        ``<xsd:schema>`` block found in the registered services' WSDL types
-        sections, then compiles it once and caches the result.
-
-        Returns ``None`` if no embedded schemas are available.
+        Compiles the same ``<xsd:schema>`` the published WSDL advertises: any
+        inline ``<xsd:schema>`` blocks carried by the definition, plus the
+        schema auto-generated from the registered services' global elements
+        and complex types (``build_types_schema`` — the exact element
+        ``build_wsdl`` embeds under ``<wsdl:types>``). Compiled once and
+        cached; a ``None`` result (nothing to validate against, or an
+        uncompilable schema) is cached too.
         """
-        if self._compiled_schema is not None:
+        if self._compiled_schema is not _UNSET:
             return self._compiled_schema
 
         from lxml import etree
+
+        from soapbar.core.wsdl.builder import build_types_schema
 
         # Collect all <xsd:schema> elements from the combined WSDL definition
         schema_elems: list[Any] = []
         defn = self._build_wsdl_definition()
         schema_elems.extend(defn.schema_elements)
+        generated = build_types_schema(defn)
+        if generated is not None:
+            schema_elems.append(generated)
 
         if not schema_elems:
+            self._compiled_schema = None
             return None
 
         # Build a wrapper schema that imports all discovered schemas via xs:any
@@ -206,6 +221,7 @@ class SoapApplication:
                 self._compiled_schema = compile_schema(schema_elems[0])
                 return self._compiled_schema
             except etree.XMLSchemaParseError:
+                self._compiled_schema = None
                 return None
 
         # Multiple schemas: create a composite wrapper
@@ -220,6 +236,7 @@ class SoapApplication:
         try:
             self._compiled_schema = compile_schema(wrapper)
         except etree.XMLSchemaParseError:
+            self._compiled_schema = None
             return None
         return self._compiled_schema
 
@@ -229,6 +246,17 @@ class SoapApplication:
         SOAPAction values are indexed both quoted and unquoted so requests
         from either convention dispatch correctly.
         """
+        if self._validate_body_schema and not service.__binding_style__.is_wrapped:
+            raise ValueError(
+                f"validate_body_schema=True is only supported for wrapped "
+                f"binding styles; {type(service).__name__} uses "
+                f"{service.__binding_style__.name}, whose operations declare "
+                f"no global schema elements to validate against. Register the "
+                f"service on an application without the flag, or use a "
+                f"wrapped binding style."
+            )
+        # A new service changes the generated schema — recompute lazily.
+        self._compiled_schema = _UNSET
         self._services.append(service)
         for op_name, method in service.get_operations().items():
             self._dispatch[op_name] = (service, method)
@@ -493,12 +521,10 @@ class SoapApplication:
             for body_elem in envelope.body_elements:
                 container.append(body_elem)
 
-            kwargs = serializer.deserialize_request(sig, container)
-
-            # F09 — validate required input parameters before dispatch
-            _validate_input_params(sig, kwargs)
-
-            # X07 — optional WSDL schema validation of Body elements
+            # X07 — optional WSDL schema validation of Body elements. Runs
+            # BEFORE deserialization: a lexically invalid value (e.g. text in
+            # an xs:int element) must surface as a schema Client fault, not as
+            # a coercion crash inside the deserializer.
             if self._validate_body_schema:
                 schema = self._get_compiled_schema()
                 if schema is not None:
@@ -507,6 +533,11 @@ class SoapApplication:
                             errors = schema.error_log
                             first = errors[0].message if errors else "schema mismatch"
                             raise SoapFault("Client", f"Schema validation failed: {first}")
+
+            kwargs = serializer.deserialize_request(sig, container)
+
+            # F09 — validate required input parameters before dispatch
+            _validate_input_params(sig, kwargs)
 
             # Call the service method
             result = method(**kwargs)

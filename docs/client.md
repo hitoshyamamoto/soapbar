@@ -97,6 +97,17 @@ transport.cookies.set("JSESSIONID", "abc123", domain="service")
 Pass `HttpTransport(persist_cookies=False)` for stateless behaviour — the jar
 is cleared after every call. Session cookies require httpx (`soapbar[client]`).
 
+### Response size limit
+
+MTOM/XOP decoding of a response is bounded by
+`HttpTransport(max_response_size=10 * 1024 * 1024)` (10 MB, mirroring the
+server's `max_body_size`). A response can reference one small attachment from
+many `xop:Include` elements, so the *resolved* size can be far larger than the
+bytes on the wire; decoding stops with `BodyTooLargeError` as soon as the
+running resolved total crosses the cap, before the amplified result is
+allocated. The cap bounds XOP resolution — it is not a limit on the raw HTTP
+download itself.
+
 ## Advanced: manual client with explicit operation signature
 
 Use `register_operation` when you need full control over the operation schema without a WSDL:
