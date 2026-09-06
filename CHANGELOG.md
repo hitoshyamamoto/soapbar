@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.19.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.19.0...v0.19.1) (2026-09-06)
+
+
+### Documentation
+
+* document the WSDL object model and parser-produced types ([#271](https://github.com/hitoshyamamoto/soapbar/issues/271)) ([045ede0](https://github.com/hitoshyamamoto/soapbar/commit/045ede083e543bd8dd46f5385d7718d272e543c7))
+
 ## [0.19.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.18.1...v0.19.0) (2026-09-06)
 
 
