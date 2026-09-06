@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.12](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.11...v0.17.12) (2026-09-06)
+
+
+### Bug Fixes
+
+* bound client MTOM responses and make body-schema validation real ([#252](https://github.com/hitoshyamamoto/soapbar/issues/252)) ([444c66a](https://github.com/hitoshyamamoto/soapbar/commit/444c66ac72ab1500ab2eb869c1e68902bde6a44b)), closes [#209](https://github.com/hitoshyamamoto/soapbar/issues/209) [#211](https://github.com/hitoshyamamoto/soapbar/issues/211)
+
 ## [0.17.11](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.10...v0.17.11) (2026-09-06)
 
 
