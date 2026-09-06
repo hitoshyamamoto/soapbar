@@ -84,6 +84,13 @@ These are the responsibility of the WSGI/ASGI host:
 Deployers should configure suitable values at the host layer before exposing a soapbar
 service on a public network.
 
+On the client side, MTOM/XOP decoding of responses is bounded by
+`HttpTransport(max_response_size=...)` (default 10 MB, mirroring the server's
+`max_body_size`): a response referencing one attachment from many `xop:Include`
+elements amplifies N-fold on resolution, and decoding refuses with
+`BodyTooLargeError` before allocating the expansion. The cap bounds XOP
+resolution, not the raw HTTP download.
+
 ---
 
 ## WSDL/XSD import resolution (SSRF)

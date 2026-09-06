@@ -65,9 +65,16 @@ class HttpTransport:
         client_cert: ClientCert = None,
         ca_bundle: str | None = None,
         persist_cookies: bool = True,
+        max_response_size: int = 10 * 1024 * 1024,
     ) -> None:
         self.timeout = timeout
         self.verify_ssl = verify_ssl
+        # Cap on the XOP-resolved size of an MTOM response (mirrors
+        # SoapApplication.max_body_size, 10 MB). A hostile response can
+        # reference one small attachment from many xop:Include elements,
+        # amplifying it N-fold on decode; resolution stops with
+        # BodyTooLargeError as soon as the running total crosses this cap.
+        self.max_response_size = max_response_size
         # Mutual TLS: present *client_cert* on the handshake. ``ca_bundle`` is a
         # path to a custom CA bundle used to verify the server (e.g. a private
         # or government PKI root); when set it takes precedence over the
@@ -225,15 +232,15 @@ class HttpTransport:
         _log.debug("send: using the httpx transport")
         return self._send_httpx(url, body, headers)
 
-    @staticmethod
-    def _decode_mtom_if_needed(ct: str, body: bytes) -> tuple[str, bytes]:
+    def _decode_mtom_if_needed(self, ct: str, body: bytes) -> tuple[str, bytes]:
         """If *body* is an MTOM multipart response, resolve XOP includes and
         return the plain SOAP XML with a normalised content-type.  Otherwise
-        pass through unchanged."""
+        pass through unchanged. Resolution is bounded by
+        ``max_response_size`` against XOP amplification."""
         ct_lower = ct.lower()
         if "multipart/related" in ct_lower and "application/xop+xml" in ct_lower:
             from soapbar.core.mtom import parse_mtom
-            mtom_msg = parse_mtom(body, ct)
+            mtom_msg = parse_mtom(body, ct, self.max_response_size)
             normalised_ct = (
                 "application/soap+xml; charset=utf-8"
                 if "soap+xml" in ct_lower

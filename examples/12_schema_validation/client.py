@@ -10,12 +10,17 @@ import httpx
 
 URL = "http://127.0.0.1:8012/soap"
 
+# The wrapper element is qualified (it is a global element in the target
+# namespace) while its children are NOT: the generated schema declares
+# elementFormDefault="unqualified", matching soapbar's serializer. A payload
+# using a default xmlns (which qualifies the children too) violates the
+# published contract and is rejected once validation is on.
 VALID = (
     b'<?xml version="1.0" encoding="utf-8"?>'
     b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
-    b'  <soapenv:Body><square xmlns="http://example.com/calc">'
+    b'  <soapenv:Body><c:square xmlns:c="http://example.com/calc">'
     b'    <n>9</n>'
-    b'  </square></soapenv:Body>'
+    b'  </c:square></soapenv:Body>'
     b'</soapenv:Envelope>'
 )
 
@@ -24,9 +29,9 @@ VALID = (
 INVALID = (
     b'<?xml version="1.0" encoding="utf-8"?>'
     b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
-    b'  <soapenv:Body><square xmlns="http://example.com/calc">'
+    b'  <soapenv:Body><c:square xmlns:c="http://example.com/calc">'
     b'    <n>not-a-number</n>'
-    b'  </square></soapenv:Body>'
+    b'  </c:square></soapenv:Body>'
     b'</soapenv:Envelope>'
 )
 
