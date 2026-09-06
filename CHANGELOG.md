@@ -6,6 +6,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.13](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.12...v0.17.13) (2026-09-06)
+
+
+### Bug Fixes
+
+* validate NF-e chave input and honor WS-Security timestamp offsets ([#254](https://github.com/hitoshyamamoto/soapbar/issues/254)) ([3a0b8f9](https://github.com/hitoshyamamoto/soapbar/commit/3a0b8f9c3bcea08dcdf46ef03cacb08789edb9ca)), closes [#218](https://github.com/hitoshyamamoto/soapbar/issues/218) [#212](https://github.com/hitoshyamamoto/soapbar/issues/212)
+
+## [0.17.12](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.11...v0.17.12) (2026-09-06)
+
+
+### Bug Fixes
+
+* bound client MTOM responses and make body-schema validation real ([#252](https://github.com/hitoshyamamoto/soapbar/issues/252)) ([444c66a](https://github.com/hitoshyamamoto/soapbar/commit/444c66ac72ab1500ab2eb869c1e68902bde6a44b)), closes [#209](https://github.com/hitoshyamamoto/soapbar/issues/209) [#211](https://github.com/hitoshyamamoto/soapbar/issues/211)
+
 ## [0.17.11](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.10...v0.17.11) (2026-09-06)
 
 

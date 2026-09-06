@@ -102,6 +102,13 @@ def build_cons_stat_serv(uf: str, tp_amb: int = 2) -> str:
 
 def build_cons_sit_nfe(chave: str, tp_amb: int = 2) -> str:
     """Build a ``consSitNFe`` (protocol/consult) message for a 44-digit key."""
+    # chNFe is the 44-digit access key; validate before interpolating it into
+    # the body (an unchecked value is an XML-injection vector) — the same
+    # rule build_cons_stat_serv applies to cUF.
+    if not (len(chave) == 44 and chave.isdigit()):
+        raise NfeInputError(
+            f"chNFe (chave) must be the 44-digit access key, got {chave!r}"
+        )
     _check_tp_amb(tp_amb)
     return (
         f'<consSitNFe xmlns="{NFE_NS}" versao="4.00">'
@@ -112,10 +119,12 @@ def build_cons_sit_nfe(chave: str, tp_amb: int = 2) -> str:
 
 def extract_infnfe_id(nfe_xml: bytes | str) -> str:
     """Return the ``Id`` of the ``<infNFe>`` element (``NFe`` + 44-char key)."""
-    from lxml import etree
+    from soapbar.core.xml import parse_xml
 
-    data = nfe_xml.encode() if isinstance(nfe_xml, str) else nfe_xml
-    root = etree.fromstring(data)
+    # Hardened parser, like every other parse site in the codebase — entity
+    # expansion, DTDs, and network access are refused by construction rather
+    # than by the current libxml2's defaults.
+    root = parse_xml(nfe_xml)
     inf = root.find(f".//{{{NFE_NS}}}infNFe")
     if inf is None or not inf.get("Id"):
         raise NfeInputError("document has no <infNFe Id=...> element to sign")
@@ -170,9 +179,10 @@ class NfeStatusResult:
 
     @classmethod
     def from_xml(cls, xml: str) -> NfeStatusResult:
-        from lxml import etree
+        # Hardened parser: this method is fed the remote SEFAZ response.
+        from soapbar.core.xml import parse_xml
 
-        root = etree.fromstring(xml.encode())
+        root = parse_xml(xml)
         values: dict[str, str] = {}
         for child in root.iter():
             if isinstance(child.tag, str):
