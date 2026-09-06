@@ -39,7 +39,6 @@ EXPECTED_ALL = {
     "parse_xml",
     "parse_xml_document",
     "to_string",
-    "to_bytes",
     "local_name",
     "namespace_uri",
     "BodyTooLargeError",
@@ -60,14 +59,8 @@ EXPECTED_ALL = {
     "SoapHeaderBlock",
     "SoapVersion",
     "WsaHeaders",
-    "WsaEndpointReference",
     "WSA_ANONYMOUS",
     "WSA_NONE",
-    "build_request",
-    "build_response",
-    "build_fault",
-    "build_wsa_response_headers",
-    "http_headers",
     "WsdlBinding",
     "WsdlBindingOperation",
     "WsdlDefinition",
@@ -82,7 +75,6 @@ EXPECTED_ALL = {
     "parse_wsdl_file",
     "build_wsdl",
     "build_wsdl_string",
-    "build_wsdl_bytes",
     "MtomAttachment",
     "MtomMessage",
     "parse_mtom",
@@ -104,7 +96,6 @@ EXPECTED_ALL = {
     "decrypt_body",
     # server
     "SoapService",
-    "SoapMethod",
     "SoapApplication",
     "soap_operation",
     "AsgiSoapApp",
@@ -346,3 +337,43 @@ def test_config_objects_stay_mutable() -> None:
     wsa = WsaHeaders()
     wsa.action = "urn:x"                     # must not raise
     assert wsa.action == "urn:x"
+
+
+# ---------------------------------------------------------------------------
+# Deprecated top-level aliases (STABILITY.md deprecation policy)
+# ---------------------------------------------------------------------------
+
+DEPRECATED_ALIASES = {
+    "SoapMethod": "soapbar.server.service",
+    "WsaEndpointReference": "soapbar.core.envelope",
+    "build_fault": "soapbar.core.envelope",
+    "build_request": "soapbar.core.envelope",
+    "build_response": "soapbar.core.envelope",
+    "build_wsa_response_headers": "soapbar.core.envelope",
+    "http_headers": "soapbar.core.envelope",
+    "build_wsdl_bytes": "soapbar.core.wsdl.builder",
+    "to_bytes": "soapbar.core.xml",
+}
+
+
+@pytest.mark.parametrize("name", sorted(DEPRECATED_ALIASES))
+def test_deprecated_alias_warns_and_resolves(name: str) -> None:
+    """Each deprecated top-level alias still imports, emits a
+    DeprecationWarning naming its canonical module, and returns the very
+    object that module defines — the promise STABILITY.md makes, verified."""
+    import importlib
+
+    module_path = DEPRECATED_ALIASES[name]
+    with pytest.warns(DeprecationWarning, match=module_path.replace(".", r"\.")):
+        obj = getattr(soapbar, name)
+    canonical = getattr(importlib.import_module(module_path), name)
+    assert obj is canonical
+
+
+def test_deprecated_aliases_are_not_in_all() -> None:
+    assert not set(DEPRECATED_ALIASES) & set(soapbar.__all__)
+
+
+def test_unknown_attribute_still_raises_cleanly() -> None:
+    with pytest.raises(AttributeError, match="does_not_exist"):
+        _ = soapbar.does_not_exist
