@@ -104,7 +104,7 @@ Async (`await client.call_async(...)`), WSDL-less `SoapClient.manual(...)`, mutu
 - MTOM/XOP binary attachments on both client and server
 - Mutual TLS with PKCS#12 helper, session cookies, WS-Addressing 1.0, one-way MEP, opt-in WSDL schema validation
 - XSD type registry (27 built-in types), complex types, SOAP arrays, multi-reference encoding
-- Optional typed clients for real-world services: EU VIES, WITSML, SEFAZ NF-e, ANA (`soapbar.contrib.*`)
+- Optional typed clients for real-world services: EU VIES, WITSML, SEFAZ NF-e (status/protocol queries and `<infNFe>` signing — issuance is out of scope), ANA (`soapbar.contrib.*`)
 - Interoperable with zeep and spyne (the spyne suite runs on Python ≤ 3.11 — upstream spyne does not import on 3.12+); fully type-annotated (PEP 561); Python 3.10 – 3.14
 
 ---
