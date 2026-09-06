@@ -7974,6 +7974,68 @@ class TestWsuTimestamp:
         username = _V().validate(sec)
         assert username == "alice"
 
+    def test_parse_ws_datetime_converts_explicit_offsets(self) -> None:
+        """An explicit UTC offset is CONVERTED to UTC, not overwritten.
+        Regression for issue #212: replace(tzinfo=UTC) discarded the offset
+        fromisoformat had parsed, shifting the instant — 12:00+05:00 was
+        read as 12:00Z instead of 07:00Z."""
+        from datetime import UTC, datetime
+
+        from soapbar.core.wssecurity import UsernameTokenValidator
+
+        parse = UsernameTokenValidator._parse_ws_datetime
+        assert parse("2026-08-20T12:00:00+05:00") == datetime(
+            2026, 8, 20, 7, 0, 0, tzinfo=UTC
+        )
+        assert parse("2026-08-20T12:00:00-03:00") == datetime(
+            2026, 8, 20, 15, 0, 0, tzinfo=UTC
+        )
+        assert parse("2026-08-20T12:00:00Z") == datetime(
+            2026, 8, 20, 12, 0, 0, tzinfo=UTC
+        )
+        # Naive values are taken as UTC (WSS 1.0 §10 expresses timestamps in UTC).
+        assert parse("2026-08-20T12:00:00") == datetime(
+            2026, 8, 20, 12, 0, 0, tzinfo=UTC
+        )
+
+    def test_expires_with_offset_is_honored(self) -> None:
+        """A wsu:Expires carrying a positive offset used to be misread as UTC,
+        extending the timestamp's life by the offset. An Expires that is in
+        the past once correctly converted must be rejected even though its
+        wall-clock digits alone would still look fresh in UTC."""
+        from datetime import UTC, datetime, timedelta
+
+        from lxml import etree
+
+        from soapbar.core.wssecurity import (
+            SecurityValidationError,
+            UsernameTokenCredential,
+            UsernameTokenValidator,
+            build_security_header,
+        )
+
+        cred = UsernameTokenCredential(username="alice", password="s3cr3t")  # noqa: S106
+        sec = build_security_header(cred)
+        _wsu = self._WSU
+        now = datetime.now(UTC)
+        created = (now - timedelta(minutes=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Expired 2h ago in UTC, but its +05:00 wall-clock digits read ~3h
+        # in the future — the pre-fix code accepted exactly this shape.
+        expired_utc = now - timedelta(hours=2)
+        offset_form = (expired_utc + timedelta(hours=5)).strftime(
+            "%Y-%m-%dT%H:%M:%S+05:00"
+        )
+        ts = etree.SubElement(sec, f"{{{_wsu}}}Timestamp")
+        etree.SubElement(ts, f"{{{_wsu}}}Created").text = created
+        etree.SubElement(ts, f"{{{_wsu}}}Expires").text = offset_form
+
+        class _V(UsernameTokenValidator):
+            def get_password(self, u: str) -> str | None:
+                return "s3cr3t" if u == "alice" else None
+
+        with pytest.raises(SecurityValidationError, match="expired"):
+            _V().validate(sec)
+
     def test_validate_rejects_invalid_expires_format(self) -> None:
         from soapbar.core.wssecurity import (
             SecurityValidationError,
