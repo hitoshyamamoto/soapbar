@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.19.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.18.1...v0.19.0) (2026-09-06)
+
+
+### Features
+
+* **client:** raw exchange capture (on_exchange, last_request/last_response) ([#268](https://github.com/hitoshyamamoto/soapbar/issues/268)) ([cd40207](https://github.com/hitoshyamamoto/soapbar/commit/cd40207d6474180ad60e7d299f96a860f8d0d8c4))
+
 ## [0.18.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.18.0...v0.18.1) (2026-09-06)
 
 
