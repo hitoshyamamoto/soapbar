@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.11](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.10...v0.17.11) (2026-09-06)
+
+
+### Documentation
+
+* **roadmap:** correct the stated version ([#247](https://github.com/hitoshyamamoto/soapbar/issues/247)) ([5d33989](https://github.com/hitoshyamamoto/soapbar/commit/5d339896525d76e58b0242ddcae4e7bf3f39dcf1))
+
 ## [0.17.10](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.9...v0.17.10) (2026-09-06)
 
 
