@@ -3,6 +3,7 @@
 """SOAP service base class and decorator."""
 from __future__ import annotations
 
+import datetime
 import inspect
 import types
 import typing
@@ -69,9 +70,20 @@ def soap_operation(
                     if xsd_type is not None:
                         has_default = _param.default is not inspect.Parameter.empty
                         required = not (is_optional or has_default)
+                        # datetime/date/time deserialize to their lexical string
+                        # (a WSDL-path design); record the annotation so the
+                        # server request path can deliver the promised object.
+                        py_type = (
+                            inner_hint
+                            if inner_hint in (datetime.datetime, datetime.date, datetime.time)
+                            else None
+                        )
                         params.append(
                             OperationParameter(
-                                name=param_name, xsd_type=xsd_type, required=required
+                                name=param_name,
+                                xsd_type=xsd_type,
+                                required=required,
+                                py_type=py_type,
                             )
                         )
             input_params = params
@@ -80,6 +92,9 @@ def soap_operation(
             hints = typing.get_type_hints(func)
             ret = hints.get("return")
             if ret is not None and ret is not type(None):
+                # ``-> X | None`` publishes X, mirroring the input-side
+                # handling; a genuine union still degrades to no output.
+                ret, _ = _unwrap_optional(ret)
                 xsd_type = xsd.python_to_xsd(ret)
                 if xsd_type is not None:
                     output_params = [OperationParameter(name="return", xsd_type=xsd_type)]
