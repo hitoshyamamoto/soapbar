@@ -62,6 +62,7 @@ These protections are verified continuously, not just designed in:
 - **Fuzzing** — a coverage-guided [Atheris/libFuzzer harness](https://github.com/hitoshyamamoto/soapbar/blob/main/fuzz/fuzz_parsing.py) feeds arbitrary bytes into every parser that accepts untrusted input (`parse_xml`, `check_xml_depth`, `SoapEnvelope.from_xml`, `parse_wsdl`) on a weekly schedule; any exception outside the documented error contract counts as a crash.
 - **Property-based tests** — [Hypothesis properties](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/test_properties.py) assert round-trip and robustness invariants for the XSD type system, envelope serialisation, and the parsers, as part of the normal test suite.
 - **OpenSSF** — soapbar holds the [OpenSSF Best Practices passing badge](https://www.bestpractices.dev/projects/13849) and is monitored by [Scorecard](https://scorecard.dev/viewer/?uri=github.com/hitoshyamamoto/soapbar).
+- **Adversarial SSRF corpus** — [`tests/audit/test_ssrf_corpus.py`](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/audit/test_ssrf_corpus.py) throws seventeen import-resolution vectors (remote, transitive, entity/DTD, traversal, redirect) at the WSDL parser and asserts on a sentinel server's request log rather than on exceptions — a silently bypassed guard produces traffic even when nothing raises, so traffic is what the tests measure.
 
 ## Verifying a release
 

@@ -86,6 +86,39 @@ service on a public network.
 
 ---
 
+## WSDL/XSD import resolution (SSRF)
+
+Import resolution is the parser's only outbound surface, and it is closed by default:
+
+- **`parse_wsdl` fetches nothing.** A `wsdl:import`, `xsd:import`, or `xsd:include`
+  whose resolved location is remote (`http(s)://`) or local (`file://`, a bare path)
+  raises `ValueError` unless the caller opts in with `allow_remote_imports=True` or
+  `allow_local_imports=True` respectively. An untrusted in-memory WSDL can neither
+  trigger an outbound request nor read a local file.
+- **`parse_wsdl_file` reads local siblings only.** It enables local imports, but every
+  target must resolve — symlinks included — inside the root document's directory tree;
+  `../` traversal, absolute paths, and symlinks out raise `ValueError`
+  (path-confinement guard). Remote imports remain blocked.
+- **Redirects are not followed.** With `allow_remote_imports=True`, the opt-in
+  authorises the named host, not whatever chain it points at: a 3xx response during
+  import resolution raises instead of being followed, so an authorised server cannot
+  bounce the fetch to an internal target such as a cloud metadata endpoint.
+- **Remote fetches time out after 30 seconds**, so a slow server cannot pin a worker.
+- **The guard runs before any fetch and before cycle-detection bookkeeping.** For an
+  import encountered directly in the parsed document it always raises; inside a
+  *nested* `wsdl:import` chain, `strict=False` downgrades the error to a
+  `UserWarning` and skips the import — but no fetch occurs in either mode.
+- Entity and DTD fetches are inert at the XML layer: the lxml parser runs with
+  `resolve_entities=False`, `load_dtd=False`, and `no_network=True`.
+
+The executable evidence is
+[`tests/audit/test_ssrf_corpus.py`](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/audit/test_ssrf_corpus.py):
+seventeen adversarial vectors that assert on a sentinel server's request log — the
+invariant being that no packet leaves the process, not merely that an exception is
+raised.
+
+---
+
 ## WS-Addressing reply / fault routing (A04, A05)
 
 soapbar parses `wsa:ReplyTo` and `wsa:FaultTo` Endpoint References on incoming messages

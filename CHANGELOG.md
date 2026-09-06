@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.9](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.8...v0.17.9) (2026-09-06)
+
+
+### Documentation
+
+* **security:** document WSDL import resolution guarantees ([#245](https://github.com/hitoshyamamoto/soapbar/issues/245)) ([de51713](https://github.com/hitoshyamamoto/soapbar/commit/de517131e37495e0c095082246c5329f692a811c))
+
 ## [0.17.8](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.7...v0.17.8) (2026-09-06)
 
 
