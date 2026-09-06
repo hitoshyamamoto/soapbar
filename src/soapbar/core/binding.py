@@ -663,6 +663,29 @@ class DocumentLiteralWrappedSerializer(BindingSerializer):
         body_elem: _Element,
     ) -> dict[str, Any]:
         wrapper = body_elem[0] if len(body_elem) else body_elem
+        # Bare-shaped response: when the first Body child IS a declared
+        # output parameter (matched by local name, and by namespace when the
+        # parameter declares one), there is no wrapper to descend into —
+        # descending silently returned {} and the caller got None (issue
+        # #265; typical for AnyXmlType/RawXmlType outputs on a manual client
+        # left on the wrapped default). Extract at the container level, the
+        # plain document/literal path. A classic wrapped response keeps the
+        # current behavior: its wrapper is named after the operation, not
+        # after an output parameter.
+        if len(body_elem) and isinstance(wrapper.tag, str):
+            local = wrapper.tag.split("}", 1)[-1]
+            wrapper_ns = (
+                wrapper.tag[1:].split("}", 1)[0] if wrapper.tag.startswith("{") else ""
+            )
+            for param in sig.output_params:
+                if param.name != local:
+                    continue
+                declared_ns = param.namespace or sig.output_namespace or ""
+                if declared_ns and wrapper_ns and declared_ns != wrapper_ns:
+                    continue
+                return self._extract_params(
+                    sig.output_params, body_elem, sig.output_namespace or ""
+                )
         return self._extract_params(sig.output_params, wrapper, sig.output_namespace or "")
 
     def _extract_params(
