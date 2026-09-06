@@ -6,6 +6,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.20.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.19.1...v0.20.0) (2026-09-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** the nine top-level aliases above are deprecated; they keep working with a DeprecationWarning and will be removed no sooner than the next minor release, per STABILITY.md.
+
+### Deprecated
+
+* **api:** retire internal helpers from the top-level surface ([#273](https://github.com/hitoshyamamoto/soapbar/issues/273)) ([8f08a14](https://github.com/hitoshyamamoto/soapbar/commit/8f08a143d4d62f434703319fbda780c3bc644438))
+
 ## [0.19.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.19.0...v0.19.1) (2026-09-06)
 
 
