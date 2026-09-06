@@ -113,9 +113,11 @@ Import resolution is the parser's only outbound surface, and it is closed by def
 
 The executable evidence is
 [`tests/audit/test_ssrf_corpus.py`](https://github.com/hitoshyamamoto/soapbar/blob/main/tests/audit/test_ssrf_corpus.py):
-seventeen adversarial vectors that assert on a sentinel server's request log — the
+twenty-nine adversarial vectors that assert on a sentinel server's request log — the
 invariant being that no packet leaves the process, not merely that an exception is
-raised.
+raised. The corpus covers both escape vectors and legitimate imports that must keep
+resolving — the latter half is what keeps the guard from being tightened until it
+breaks real multi-directory WSDL layouts.
 
 ---
 
