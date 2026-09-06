@@ -109,6 +109,59 @@ class AnyXmlType(XsdType):
         return s
 
 
+class RawXmlType(XsdType):
+    """Pre-built XML payload, inserted into the envelope without re-serializing.
+
+    ``AnyXmlType`` parses and re-emits the value, which drops comments and
+    processing instructions (hardened parser), normalizes quoting and
+    empty-element forms, and — for inclusive-C14N signatures such as the NF-e
+    profile — lets the envelope's namespace declarations leak into the
+    fragment's canonical form. ``RawXmlType`` preserves the caller's bytes
+    exactly as received: use it for a payload that is already built and
+    signed; use ``AnyXmlType`` for a payload you want soapbar to model.
+
+    Accepted input values: ``bytes`` (used as-is), ``str`` (UTF-8 encoded,
+    nothing else), or an ``lxml`` element (serialized once, never again).
+    On output, the matching response element is returned as ``bytes``
+    (detached-subtree serialization; the tree-verbatim contract is validated
+    by the fidelity suite under exclusive C14N — byte-exact archival of the
+    full response belongs to the transport's raw-exchange capture).
+
+    Not usable with the encoded binding styles, whose serializers place
+    values as escaped text; those combinations raise ``ValueError`` instead
+    of silently corrupting the payload.
+    """
+
+    name = "raw"
+
+    @staticmethod
+    def normalize_input(value: Any) -> bytes:
+        """Normalize the three accepted input forms to bytes, exactly once."""
+        if isinstance(value, bytes):
+            return value
+        if isinstance(value, str):
+            return value.encode("utf-8")
+        from lxml import etree
+        if isinstance(value, etree._Element):
+            return etree.tostring(value)
+        raise TypeError(
+            f"RawXmlType accepts bytes, str, or an lxml element; "
+            f"got {type(value).__name__}"
+        )
+
+    def to_xml(self, value: Any) -> str:
+        raise ValueError(
+            "RawXmlType cannot be serialized by an encoded binding style: the "
+            "encoded serializers place values as escaped text, which would "
+            "corrupt a raw XML payload. Use a literal binding style."
+        )
+
+    def from_xml(self, s: str) -> str:
+        """Identity — extraction is handled at the element level by the
+        binding serializer, which returns the element's bytes."""
+        return s
+
+
 # ---------------------------------------------------------------------------
 # Integer types
 # ---------------------------------------------------------------------------

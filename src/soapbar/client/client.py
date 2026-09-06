@@ -15,6 +15,7 @@ from soapbar.core.binding import (
     OperationParameter,
     OperationSignature,
     get_serializer,
+    substitute_raw_placeholders,
 )
 from soapbar.core.envelope import SoapEnvelope, SoapVersion, http_headers
 from soapbar.core.exceptions import SoapbarError
@@ -661,7 +662,7 @@ class SoapClient:
         for child in body_container:
             envelope.add_body_content(child)
 
-        req_bytes = envelope.to_bytes()
+        req_bytes = substitute_raw_placeholders(envelope.to_bytes())
         if _log.isEnabledFor(logging.DEBUG):
             _log.debug("Request envelope: %s", redact_envelope(req_bytes))
         headers = http_headers(self._soap_version, sig.soap_action)
@@ -718,7 +719,7 @@ class SoapClient:
         for child in body_container:
             envelope.add_body_content(child)
 
-        req_bytes = envelope.to_bytes()
+        req_bytes = substitute_raw_placeholders(envelope.to_bytes())
         if _log.isEnabledFor(logging.DEBUG):
             _log.debug("Request envelope: %s", redact_envelope(req_bytes))
         headers = http_headers(self._soap_version, sig.soap_action)

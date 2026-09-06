@@ -50,6 +50,7 @@ from soapbar.core.types import (
     ArrayXsdType,
     ChoiceXsdType,
     ComplexXsdType,
+    RawXmlType,
     XsdType,
     xsd,
 )
@@ -116,6 +117,7 @@ __all__ = [  # noqa: RUF022
     "ArrayXsdType",
     "ChoiceXsdType",
     "AnyXmlType",
+    "RawXmlType",
     "SoapbarError",
     "SoapFault",
     "BindingStyle",
