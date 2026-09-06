@@ -217,8 +217,18 @@ class UsernameTokenValidator(ABC):
 
     @staticmethod
     def _parse_ws_datetime(text: str) -> datetime:
-        """Parse a WS-Security timestamp (ISO 8601, trailing ``Z``) as UTC."""
-        return datetime.fromisoformat(text.strip().rstrip("Z")).replace(tzinfo=UTC)
+        """Parse a WS-Security timestamp to an aware UTC datetime.
+
+        An explicit offset (``+05:00``, or ``Z``) is *converted* to UTC —
+        ``replace(tzinfo=UTC)`` would silently overwrite it and shift the
+        instant by the offset. A naive value is taken as UTC, which is what
+        WS-Security timestamps are (WSS 1.0 §10: wsu:Created/Expires are
+        expressed in UTC).
+        """
+        parsed = datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
 
     def _check_created_freshness(self, created_text: str, label: str) -> None:
         """Reject a ``Created`` value that is stale (replay) or implausibly
@@ -279,8 +289,7 @@ class UsernameTokenValidator(ABC):
             exp_elem = ts_elem.find(f"{{{wsu_ns}}}Expires")
             if exp_elem is not None and exp_elem.text:
                 try:
-                    exp_text = exp_elem.text.rstrip("Z")
-                    expires = datetime.fromisoformat(exp_text).replace(tzinfo=UTC)
+                    expires = self._parse_ws_datetime(exp_elem.text)
                 except ValueError as exc:
                     raise SecurityValidationError(
                         f"Invalid wsu:Expires value: {exp_elem.text!r}"
