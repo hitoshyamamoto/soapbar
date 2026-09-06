@@ -3586,6 +3586,51 @@ class TestMtomTransport:
         assert ct_out == ct_in
         assert body_out == body
 
+    def test_transport_mtom_response_amplification_is_bounded(self) -> None:
+        """A hostile MTOM response referencing one small attachment from many
+        xop:Include elements must be refused *before* the amplified result is
+        allocated. Regression for issue #209: the client passed no limit to
+        parse_mtom, while both server adapters did.
+
+        The nominal resolved size here is 200 references x ~1.33 MB of base64
+        (~266 MB) against a 64 KiB cap; peak memory is asserted to stay two
+        orders of magnitude below the nominal expansion, which is what
+        distinguishes "refused early" from "allocated and then complained".
+        """
+        import tracemalloc
+
+        from soapbar.core.mtom import MtomAttachment, build_mtom
+        from soapbar.core.xml import BodyTooLargeError
+
+        include = (
+            b'<xop:Include xmlns:xop="http://www.w3.org/2004/08/xop/include"'
+            b' href="cid:blob"/>'
+        )
+        soap_xml = (
+            b'<?xml version="1.0" encoding="utf-8"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><data>" + include * 200 + b"</data></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        attachment = MtomAttachment(
+            content_id="blob",
+            content_type="application/octet-stream",
+            data=b"A" * (1024 * 1024),
+        )
+        body, outer_ct = build_mtom(soap_xml, [attachment], soap_version_content_type="text/xml")
+
+        transport = HttpTransport(max_response_size=64 * 1024)
+        tracemalloc.start()
+        try:
+            with pytest.raises(BodyTooLargeError, match="size limit"):
+                transport._decode_mtom_if_needed(outer_ct, body)
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert peak < 32 * 1024 * 1024, (
+            f"decode allocated {peak} bytes — the limit did not stop the expansion early"
+        )
+
 
 # ---------------------------------------------------------------------------
 # WS-Addressing
@@ -6342,8 +6387,12 @@ class TestBodySchemaValidation:
         app = SoapApplication(validate_body_schema=True)
         assert app._validate_body_schema is True
 
-    def test_get_compiled_schema_returns_none_when_no_schema_elements(self) -> None:
-        """Without embedded schema in services, _get_compiled_schema returns None."""
+    def test_get_compiled_schema_builds_from_generated_types(self) -> None:
+        """A class-built service compiles a real schema — the one the
+        published WSDL advertises. Regression for issue #211, where
+        _get_compiled_schema read only schema_elements (parser-populated)
+        and always returned None for @soap_operation services, leaving
+        validate_body_schema silently inert."""
         from soapbar.server.application import SoapApplication
         from soapbar.server.service import SoapService, soap_operation
 
@@ -6355,9 +6404,10 @@ class TestBodySchemaValidation:
         app = SoapApplication()
         app.register(Svc())
         schema = app._get_compiled_schema()
-        # Services auto-generated from service class have no embedded XSD types
-        # so schema_elements is empty and _get_compiled_schema returns None
-        assert schema is None
+        assert schema is not None, (
+            "validate_body_schema has no schema to enforce for a class-built "
+            "service — issue #211 regressed"
+        )
 
     def test_get_compiled_schema_cached(self) -> None:
         """_get_compiled_schema caches the result after first call."""
@@ -6412,8 +6462,12 @@ class TestBodySchemaValidation:
         )
         assert validate_schema(schema, bad_elem) is False
 
-    def test_validate_body_schema_no_crash_without_schema(self) -> None:
-        """With validate_body_schema=True but no embedded schema, request passes."""
+    def test_validate_body_schema_accepts_contract_conformant_request(self) -> None:
+        """With validate_body_schema=True, a request in the published wire
+        form (qualified wrapper, unqualified children) passes. Before #211
+        this test sent an unqualified <Ping/> and passed vacuously because
+        no schema was ever compiled; now the schema is real and the request
+        must actually conform to the generated contract."""
         from soapbar.server.application import SoapApplication
         from soapbar.server.service import SoapService, soap_operation
 
@@ -6424,12 +6478,114 @@ class TestBodySchemaValidation:
 
         app = SoapApplication(validate_body_schema=True)
         app.register(Svc())
+        tns = app._build_wsdl_definition().target_namespace
         body = (
             b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
-            b"<soapenv:Body><Ping/></soapenv:Body></soapenv:Envelope>"
+            b'<soapenv:Body><t:Ping xmlns:t="' + tns.encode() + b'"/></soapenv:Body>'
+            b"</soapenv:Envelope>"
         )
-        status, _, _ = app.handle_request(body, soap_action="Ping")
-        assert status == 200
+        status, _, resp = app.handle_request(body, soap_action="Ping")
+        assert status == 200, resp
+        assert b"pong" in resp
+
+    @staticmethod
+    def _calc_app():
+        import warnings
+
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Calc(SoapService):
+            __service_name__ = "Calc"
+            __tns__ = "http://example.com/calc"
+
+            @soap_operation(name="square", soap_action="square")
+            def square(self, n: int) -> int:
+                return n * n
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication(validate_body_schema=True)
+        app.register(Calc())
+        return app
+
+    @staticmethod
+    def _envelope(inner: bytes) -> bytes:
+        return (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body>" + inner + b"</soapenv:Body></soapenv:Envelope>"
+        )
+
+    def test_schema_rejects_lexically_invalid_value_before_coercion(self) -> None:
+        """Text in an xs:int element is a *schema* Client fault, not an
+        'invalid literal for int()' crash from the deserializer — validation
+        runs before deserialization. This is the distinction the shipped
+        example could not previously demonstrate (issue #211)."""
+        app = self._calc_app()
+        bad = self._envelope(
+            b'<c:square xmlns:c="http://example.com/calc"><n>not-a-number</n></c:square>'
+        )
+        _status, _, resp = app.handle_request(bad, soap_action="square")
+        assert b"Schema validation failed" in resp, resp
+        assert b"invalid literal" not in resp
+
+    def test_schema_rejects_wire_form_that_violates_the_contract(self) -> None:
+        """The generated schema declares elementFormDefault="unqualified"; a
+        payload using a default xmlns qualifies the children too and violates
+        the published contract, so strict mode rejects it."""
+        app = self._calc_app()
+        qualified = self._envelope(
+            b'<square xmlns="http://example.com/calc"><n>9</n></square>'
+        )
+        _status, _, resp = app.handle_request(qualified, soap_action="square")
+        assert b"Schema validation failed" in resp, resp
+
+    def test_definition_is_built_once_for_many_requests(self) -> None:
+        """A None-or-compiled result is cached either way (sentinel, not
+        None-means-unset): the full WsdlDefinition must not be rebuilt per
+        request when the flag is on."""
+        app = self._calc_app()
+        ok = self._envelope(
+            b'<c:square xmlns:c="http://example.com/calc"><n>3</n></c:square>'
+        )
+        builds = 0
+        original = app._build_wsdl_definition
+
+        def counting():
+            nonlocal builds
+            builds += 1
+            return original()
+
+        app._build_wsdl_definition = counting  # type: ignore[method-assign]
+        for _ in range(5):
+            status, _, _resp = app.handle_request(ok, soap_action="square")
+            assert status == 200
+        assert builds <= 1, f"definition rebuilt {builds} times for 5 requests"
+
+    def test_flag_with_unwrapped_style_raises_at_register(self) -> None:
+        """Non-wrapped binding styles declare no global schema elements, so
+        there is nothing to validate against; the combination is refused
+        loudly at register() instead of leaving the flag silently inert."""
+        import warnings
+
+        from soapbar.core.binding import BindingStyle
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Rpc(SoapService):
+            __service_name__ = "R"
+            __tns__ = "http://example.com/r"
+            __binding_style__ = BindingStyle.RPC_LITERAL
+
+            @soap_operation(soap_action="Op")
+            def Op(self) -> str:  # noqa: N802
+                return "x"
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication(validate_body_schema=True)
+        with pytest.raises(ValueError, match="wrapped"):
+            app.register(Rpc())
 
 
 # ===========================================================================

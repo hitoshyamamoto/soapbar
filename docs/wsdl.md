@@ -81,4 +81,19 @@ soap_app = SoapApplication(
 soap_app.register(MyService())
 ```
 
-When enabled, the compiled `lxml.etree.XMLSchema` is built once from the WSDL-embedded `<xs:schema>` elements and cached. Any Body element that fails schema validation results in a `Client` fault with the first schema error message. Requests to services with no embedded schemas pass through unchanged.
+When enabled, the compiled `lxml.etree.XMLSchema` is built once — from any
+WSDL-embedded `<xs:schema>` elements plus the schema auto-generated from the
+registered services' types (exactly the schema the published WSDL advertises) —
+and cached, including a computed-unavailable result. Validation runs *before*
+deserialization, so a lexically invalid value (text in an `xs:int` element)
+surfaces as a `Client` fault with the first schema error message rather than a
+coercion error.
+
+Strict mode enforces the published contract exactly: the generated schema
+declares `elementFormDefault="unqualified"` (matching soapbar's serializer), so
+a request that qualifies the wrapper's children — for example via a default
+`xmlns` on the wrapper — is rejected even though the lenient dispatcher would
+have accepted it. Only wrapped binding styles declare the global elements the
+validator needs; registering a non-wrapped service on an application with
+`validate_body_schema=True` raises `ValueError` instead of leaving the flag
+silently inert.
