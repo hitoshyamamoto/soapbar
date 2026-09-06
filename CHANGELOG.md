@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.18.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.18.0...v0.18.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* **client:** return bare outputs under the wrapped default ([#267](https://github.com/hitoshyamamoto/soapbar/issues/267)) ([1e92fd1](https://github.com/hitoshyamamoto/soapbar/commit/1e92fd149e9d41654d68431d30c73d2b347629c1)), closes [#265](https://github.com/hitoshyamamoto/soapbar/issues/265)
+
 ## [0.18.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.17...v0.18.0) (2026-09-06)
 
 
