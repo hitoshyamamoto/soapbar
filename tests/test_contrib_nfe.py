@@ -264,3 +264,48 @@ def test_live_status_servico() -> None:
     with NfeClient(pfx_path=pfx, pfx_password=os.environ.get("NFE_PFX_PASSWORD")) as nfe:
         result = nfe.status_servico(url, uf=os.environ["NFE_UF"], tp_amb=2)
     assert result.c_stat is not None
+
+
+@pytest.mark.parametrize(
+    "bad_chave",
+    [
+        "1" * 43,
+        "1" * 45,
+        "",
+        "A" * 44,
+        "</chNFe><xServ>INJETADO</xServ><chNFe>",
+    ],
+)
+def test_build_cons_sit_nfe_rejects_bad_chave(bad_chave: str) -> None:
+    """chNFe is interpolated into the body; anything but the 44-digit access
+    key (including an XML injection attempt) is rejected, not emitted —
+    the same rule build_cons_stat_serv applies to cUF. Issue #218."""
+    from soapbar.contrib.nfe import build_cons_sit_nfe
+
+    with pytest.raises(NfeError, match="chNFe"):
+        build_cons_sit_nfe(bad_chave, 2)
+
+
+def test_build_cons_sit_nfe_accepts_valid_chave() -> None:
+    from soapbar.contrib.nfe import build_cons_sit_nfe
+
+    msg = build_cons_sit_nfe("1" * 44, 2)
+    assert f"<chNFe>{'1' * 44}</chNFe>" in msg
+
+
+def test_nfe_parses_use_the_hardened_parser() -> None:
+    """NfeStatusResult.from_xml (fed the remote SEFAZ response) must go
+    through soapbar's hardened parser, which refuses to expand entities by
+    its own policy rather than relying on the current libxml2's defaults.
+    A raw etree.fromstring would expand the internal entity below to "y";
+    the hardened parser leaves it unexpanded. Issue #218."""
+    from soapbar.contrib.nfe import NfeStatusResult
+
+    doc = (
+        '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x "y">]>'
+        "<retConsStatServ><xMotivo>&x;</xMotivo></retConsStatServ>"
+    )
+    result = NfeStatusResult.from_xml(doc)
+    assert result.x_motivo != "y", (
+        "internal entity was expanded — the hardened parser is not in use"
+    )
