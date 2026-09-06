@@ -7979,9 +7979,9 @@ class TestWsuTimestamp:
         Regression for issue #212: replace(tzinfo=UTC) discarded the offset
         fromisoformat had parsed, shifting the instant — 12:00+05:00 was
         read as 12:00Z instead of 07:00Z."""
-        from datetime import UTC, datetime
+        from datetime import datetime
 
-        from soapbar.core.wssecurity import UsernameTokenValidator
+        from soapbar.core.wssecurity import UTC, UsernameTokenValidator
 
         parse = UsernameTokenValidator._parse_ws_datetime
         assert parse("2026-08-20T12:00:00+05:00") == datetime(
@@ -8003,11 +8003,12 @@ class TestWsuTimestamp:
         extending the timestamp's life by the offset. An Expires that is in
         the past once correctly converted must be rejected even though its
         wall-clock digits alone would still look fresh in UTC."""
-        from datetime import UTC, datetime, timedelta
+        from datetime import datetime, timedelta
 
         from lxml import etree
 
         from soapbar.core.wssecurity import (
+            UTC,
             SecurityValidationError,
             UsernameTokenCredential,
             UsernameTokenValidator,
