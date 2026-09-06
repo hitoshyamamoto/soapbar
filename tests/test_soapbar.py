@@ -4927,10 +4927,20 @@ class TestWsdlStrictMode:
             parse_wsdl(self._WSDL_WITH_BAD_IMPORT, allow_local_imports=True)
 
     def test_parse_wsdl_file_strict_false(self, tmp_path: pytest.TempPathFactory) -> None:  # type: ignore[override]
-        """parse_wsdl_file(strict=False) passes strict flag through."""
+        """parse_wsdl_file(strict=False) passes strict flag through.
+
+        Uses a missing *sibling* import rather than ``_WSDL_WITH_BAD_IMPORT``:
+        that fixture's absolute ``/nonexistent/path.wsdl`` location is now
+        rejected by the path-confinement guard (ValueError) before the fetch
+        can fail, and this test exercises the fetch-failed -> warning path.
+        """
         import warnings
         wsdl_file = tmp_path / "bad_import.wsdl"  # type: ignore[operator]
-        wsdl_file.write_bytes(self._WSDL_WITH_BAD_IMPORT)
+        wsdl_file.write_bytes(b"""<?xml version="1.0"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/"
+             targetNamespace="urn:test" name="Test">
+  <import location="missing_sibling.wsdl" namespace="urn:missing"/>
+</definitions>""")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             defn = parse_wsdl_file(wsdl_file, strict=False)

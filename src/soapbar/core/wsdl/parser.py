@@ -99,7 +99,10 @@ def _fetch_wsdl_source(location: str) -> bytes:
 
 
 def _check_import_allowed(
-    resolved: str, allow_remote_imports: bool, allow_local_imports: bool
+    resolved: str,
+    allow_remote_imports: bool,
+    allow_local_imports: bool,
+    root_dir: Path | None = None,
 ) -> None:
     """Enforce the import-fetch policy for a resolved ``import`` /
     ``schemaLocation`` target, raising ``ValueError`` when it is not permitted.
@@ -130,6 +133,26 @@ def _check_import_allowed(
             "parse_wsdl_file() for a trusted local WSDL, or pass "
             "allow_local_imports=True."
         )
+    if root_dir is not None:
+        target = (
+            url2pathname(urlparse(resolved).path)
+            if resolved.startswith("file://")
+            else resolved
+        )
+        try:
+            real = Path(target).resolve(strict=False)
+            base = Path(root_dir).resolve(strict=False)
+        except (OSError, RuntimeError) as exc:  # pragma: no cover
+            raise ValueError(
+                f"Unresolvable local import path {resolved!r}: {exc}"
+            ) from exc
+        if not real.is_relative_to(base):
+            raise ValueError(
+                f"Local import escapes the WSDL directory "
+                f"(path-confinement guard): {resolved!r} resolves to {real}, "
+                f"outside {base}. Imports must stay within the root "
+                "document's directory tree."
+            )
 
 
 def _merge_definition(target: WsdlDefinition, source: WsdlDefinition) -> None:
@@ -155,6 +178,7 @@ def _resolve_schema_imports(
     strict: bool,
     depth: int,
     registry: _TypeRegistry,
+    root_dir: Path | None = None,
 ) -> dict[str, XsdType]:
     """Walk ``<xsd:import>`` and ``<xsd:include>`` children of ``schema_elem``
     and return the merged complex-type dictionary harvested from each
@@ -181,7 +205,9 @@ def _resolve_schema_imports(
             # declarations). Nothing to fetch.
             continue
         resolved = _resolve_location(loc, base_url)
-        _check_import_allowed(resolved, allow_remote_imports, allow_local_imports)
+        _check_import_allowed(
+            resolved, allow_remote_imports, allow_local_imports, root_dir
+        )
         if resolved in visited:
             continue  # already fetched (cycle); skip silently
         visited.add(resolved)
@@ -217,6 +243,7 @@ def _resolve_schema_imports(
             strict=strict,
             depth=depth + 1,
             registry=registry,
+            root_dir=root_dir,
         ))
     return result
 
@@ -229,6 +256,7 @@ def parse_wsdl(
     allow_local_imports: bool = False,
     strict: bool = True,
     _registry: _TypeRegistry | None = None,
+    _root_dir: Path | None = None,
 ) -> WsdlDefinition:
     """Parse a WSDL document from *source*.
 
@@ -278,7 +306,9 @@ def parse_wsdl(
             location = child.get("location")
             if location:
                 resolved = _resolve_location(location, base_url)
-                _check_import_allowed(resolved, allow_remote_imports, allow_local_imports)
+                _check_import_allowed(
+                    resolved, allow_remote_imports, allow_local_imports, _root_dir
+                )
                 if resolved not in _visited:
                     _visited.add(resolved)
                     try:
@@ -290,6 +320,7 @@ def parse_wsdl(
                             allow_local_imports=allow_local_imports,
                             strict=strict,
                             _registry=_registry,
+                            _root_dir=_root_dir,
                         )
                         _merge_definition(defn, imported)
                     except Exception as exc:
@@ -323,6 +354,7 @@ def parse_wsdl(
                         strict=strict,
                         depth=0,
                         registry=_registry,
+                        root_dir=_root_dir,
                     ))
                     defn.complex_types.update(parsed)
                     for t in parsed.values():
@@ -353,7 +385,11 @@ def parse_wsdl_file(path: str | Path, strict: bool = True) -> WsdlDefinition:
 
     Unlike ``parse_wsdl`` on in-memory or remote content, imports that
     resolve to local files are allowed: a WSDL on disk is trusted to
-    reference its sibling documents. Remote (``http(s)://``) imports remain
+    reference its sibling documents. That trust is enforced, not assumed:
+    every local import must resolve (symlinks included) inside the root
+    document's directory tree, and a path that escapes it — ``../``
+    traversal, an absolute path, a symlink out — raises ``ValueError``
+    (path-confinement guard). Remote (``http(s)://``) imports remain
     blocked. With ``strict=False``, unresolvable imports are skipped
     instead of raising.
     """
@@ -366,6 +402,7 @@ def parse_wsdl_file(path: str | Path, strict: bool = True) -> WsdlDefinition:
         base_url=p.resolve().parent.as_uri() + "/",
         allow_local_imports=True,
         strict=strict,
+        _root_dir=p.resolve().parent,
     )
 
 
