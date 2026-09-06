@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.8](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.7...v0.17.8) (2026-09-06)
+
+
+### Bug Fixes
+
+* **wsdl:** confine local imports to the root document's directory ([#242](https://github.com/hitoshyamamoto/soapbar/issues/242)) ([a739ca4](https://github.com/hitoshyamamoto/soapbar/commit/a739ca4f4ce4f38e71963a8a131fc2417b535f1a))
+
 ## [0.17.7](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.6...v0.17.7) (2026-09-06)
 
 
