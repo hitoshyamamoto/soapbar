@@ -215,7 +215,7 @@ class ViesClient:
             raise ViesInputError(f"invalid VAT number: {vat_number!r}")
 
         # Only send the optional fields the caller supplied (they are minOccurs=0).
-        optional = {
+        optional: dict[str, Any] = {
             "traderName": trader_name,
             "traderCompanyType": trader_company_type,
             "traderStreet": trader_street,

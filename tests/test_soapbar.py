@@ -9678,3 +9678,87 @@ class TestOperationCollisions:
         wsdl = app.get_wsdl().decode()
         names = re.findall(r'(?:portType|binding|service|port) name="([^"]+)"', wsdl)
         assert names == ["SoloPortType", "SoloBinding", "Solo", "SoloPort"]
+
+
+# ===========================================================================
+# Unknown operations on the client (#210)
+# ===========================================================================
+
+class TestUnknownOperations:
+    """call()/call_async and the .service proxy must fail on unknown
+    operations instead of silently dropping every argument (issue #210 — the
+    silent half of the 0.6.3 empty-_signatures bug). A bare manual client
+    sending an argument-less request stays supported, as does an explicit
+    allow_unknown=True."""
+
+    class _CapturingTransport(HttpTransport):
+        def __init__(self) -> None:
+            super().__init__()
+            self.last_body: bytes = b""
+
+        def send(self, url, body, headers):
+            self.last_body = body
+            resp = (
+                b'<?xml version="1.0"?>'
+                b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+                b"<soapenv:Body/></soapenv:Envelope>"
+            )
+            return 200, "text/xml", resp
+
+    def _manual(self) -> tuple[SoapClient, _CapturingTransport]:  # type: ignore[name-defined]
+        transport = self._CapturingTransport()
+        client = SoapClient.manual("https://example.com/soap", transport=transport)
+        return client, transport
+
+    def test_unknown_operation_with_kwargs_raises(self) -> None:
+        client, transport = self._manual()
+        with pytest.raises(ValueError, match="silently dropped"):
+            client.call("DoesNotExist", a=1, b=2)
+        assert transport.last_body == b"", "the request must not be sent"
+
+    def test_known_client_rejects_unknown_even_without_kwargs(self) -> None:
+        from soapbar.core.binding import OperationSignature
+
+        client, _transport = self._manual()
+        client.register_operation(OperationSignature(name="Known"))
+        with pytest.raises(ValueError, match="Unknown operation"):
+            client.call("Typo")
+
+    def test_service_proxy_raises_attribute_error_when_signatures_exist(self) -> None:
+        from soapbar.core.binding import OperationSignature
+
+        client, _transport = self._manual()
+        client.register_operation(OperationSignature(name="Known"))
+        with pytest.raises(AttributeError, match="Unknown operation"):
+            client.service.Tpyo(x=1)
+
+    def test_bare_manual_client_still_sends_argumentless_requests(self) -> None:
+        """A manual client with zero signatures sending no kwargs gets
+        exactly what it asked for: an empty <Op/> wrapper. Nothing is
+        silently lost, so nothing raises."""
+        client, transport = self._manual()
+        client.call("Ping")
+        assert b"Ping" in transport.last_body
+
+    def test_allow_unknown_sends_bare_request(self) -> None:
+        from soapbar.core.binding import OperationSignature
+
+        client, transport = self._manual()
+        client.register_operation(OperationSignature(name="Known"))
+        client.call("Other", allow_unknown=True)
+        assert b"Other" in transport.last_body
+
+    def test_register_operation_then_call_works(self) -> None:
+        from soapbar.core.binding import OperationParameter, OperationSignature
+        from soapbar.core.types import xsd
+
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        client, transport = self._manual()
+        client.register_operation(OperationSignature(
+            name="Add",
+            input_params=[OperationParameter("a", int_type)],
+            soap_action="Add",
+        ))
+        client.call("Add", a=7)
+        assert b"<a>7</a>" in transport.last_body

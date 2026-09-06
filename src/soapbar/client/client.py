@@ -95,6 +95,21 @@ class _ServiceProxy:
         self._client = client
 
     def __getattr__(self, name: str) -> Any:
+        # On a client that knows its operations (WSDL-driven or with
+        # register_operation calls), an unknown attribute is a typo — raise
+        # AttributeError like any Python object would, so IDEs, hasattr(),
+        # and the user all learn immediately (issue #210). A bare manual
+        # client (no signatures at all) keeps returning a caller and the
+        # decision is deferred to call().
+        signatures = self._client._signatures
+        if signatures and name not in signatures:
+            known = ", ".join(sorted(signatures))
+            raise AttributeError(
+                f"Unknown operation {name!r}. Known operations: {known}. "
+                f"Use client.call({name!r}, ..., allow_unknown=True) to send "
+                f"it anyway."
+            )
+
         def caller(**kwargs: Any) -> Any:
             return self._client.call(name, **kwargs)
         return caller
@@ -594,7 +609,7 @@ class SoapClient:
 
         return [msg_id, action]
 
-    def call(self, operation: str, **kwargs: Any) -> Any:
+    def call(self, operation: str, *, allow_unknown: bool = False, **kwargs: Any) -> Any:
         """Invoke *operation* with keyword arguments and return the parsed result.
 
         The return shape depends on how many output parameters the operation
@@ -610,7 +625,15 @@ class SoapClient:
         (The single-output unwrapping is a deliberate ergonomic choice; callers
         that want a uniform mapping can read the operation's output parameter
         names from its ``OperationSignature``.)
+
+        An *operation* with no registered signature raises ``ValueError``
+        when the client knows its operations or when keyword arguments were
+        passed — a signatureless fallback has empty ``input_params``, so the
+        serializer would silently drop every argument on the wire (issue
+        #210). Pass ``allow_unknown=True`` to send a bare, argument-less
+        request for an unregistered operation deliberately.
         """
+        self._check_known_operation(operation, kwargs, allow_unknown)
         sig = self._get_sig(operation)
         _log.debug(
             "call %r: binding_style=%s soap_version=%s",
@@ -658,12 +681,16 @@ class SoapClient:
         status, content_type, resp_body = self._transport.send(self._address, req_bytes, headers)
         return self._parse_response(sig, resp_body, status, content_type)
 
-    async def call_async(self, operation: str, **kwargs: Any) -> Any:
+    async def call_async(
+        self, operation: str, *, allow_unknown: bool = False, **kwargs: Any
+    ) -> Any:
         """Async counterpart of ``call``; same arity-based return contract.
 
         Requires httpx. WS-Security and WS-Addressing headers are applied
-        exactly as in ``call``.
+        exactly as in ``call``, and unknown operations are rejected under the
+        same rules.
         """
+        self._check_known_operation(operation, kwargs, allow_unknown)
         sig = self._get_sig(operation)
         _log.debug(
             "call_async %r: binding_style=%s soap_version=%s",
@@ -700,6 +727,32 @@ class SoapClient:
             self._address, req_bytes, headers
         )
         return self._parse_response(sig, resp_body, status, content_type)
+
+    def _check_known_operation(
+        self, operation: str, kwargs: dict[str, Any], allow_unknown: bool
+    ) -> None:
+        """Reject a call to an operation with no registered signature.
+
+        The signatureless fallback has empty ``input_params``, so the
+        serializer writes an empty wrapper and every keyword argument is
+        silently dropped on the wire — the failure mode of issue #210 (and
+        the silent half of the 0.6.3 empty-``_signatures`` bug, which was
+        never addressed). Raise when arguments would be lost, and also on a
+        client that knows its operations (a WSDL-driven client mistyping a
+        name). A bare manual client calling with no kwargs keeps working:
+        an empty ``<Op/>`` request is exactly what it asks for.
+        """
+        if allow_unknown or operation in self._signatures:
+            return
+        if kwargs or self._signatures:
+            known = ", ".join(sorted(self._signatures)) or "(none registered)"
+            raise ValueError(
+                f"Unknown operation {operation!r}: no registered signature, so "
+                f"keyword arguments would be silently dropped from the request. "
+                f"Known operations: {known}. Register a signature with "
+                f"register_operation(), or pass allow_unknown=True to send a "
+                f"bare request deliberately."
+            )
 
     def _get_sig(self, operation: str) -> OperationSignature:
         if operation in self._signatures:
