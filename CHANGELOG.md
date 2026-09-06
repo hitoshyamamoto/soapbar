@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.7](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.6...v0.17.7) (2026-09-06)
+
+
+### Bug Fixes
+
+* **wsdl:** do not follow redirects when resolving remote imports ([#240](https://github.com/hitoshyamamoto/soapbar/issues/240)) ([bf9084f](https://github.com/hitoshyamamoto/soapbar/commit/bf9084f4e2471bef9c6bc26b9143fc608c79835b))
+
 ## [0.17.6](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.5...v0.17.6) (2026-09-06)
 
 
