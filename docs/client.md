@@ -108,6 +108,31 @@ running resolved total crosses the cap, before the amplified result is
 allocated. The cap bounds XOP resolution — it is not a limit on the raw HTTP
 download itself.
 
+### Raw exchange capture (archival)
+
+Some integrations are legally required to retain exactly what crossed the
+wire — Brazilian fiscal documents, for instance, carry a five-year retention
+obligation for the XML as sent and as received. `on_exchange` fires on every
+send, success or HTTP error, with the exact wire bytes:
+
+```python
+def archive(request: bytes, response: bytes, url: str, headers: dict) -> None:
+    store.save(url=url, sent=request, received=response)   # your storage
+
+transport = HttpTransport(on_exchange=archive)
+client = SoapClient(wsdl_url="https://example.com/soap?wsdl", transport=transport)
+```
+
+The callback is stateless and safe under concurrency; an exception it raises
+propagates — a failed archive must be visible, never swallowed. The captured
+request is the body as sent (after MTOM packaging); the captured response is
+the body as received (before MTOM decoding). WSDL retrieval (`fetch()`) is
+not part of the exchange capture.
+
+For quick debugging, `transport.last_request` / `transport.last_response`
+mirror the most recent exchange — per-transport state, not thread-safe; use
+the callback for anything concurrent or durable.
+
 ## Advanced: manual client with explicit operation signature
 
 Use `register_operation` when you need full control over the operation schema without a WSDL:

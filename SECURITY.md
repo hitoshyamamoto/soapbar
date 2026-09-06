@@ -84,6 +84,12 @@ These are the responsibility of the WSGI/ASGI host:
 Deployers should configure suitable values at the host layer before exposing a soapbar
 service on a public network.
 
+The client's raw-exchange capture (`HttpTransport(on_exchange=...)`,
+`last_request`/`last_response`) carries the exact wire bytes and does **not**
+pass through the DEBUG log's credential redaction — that is its purpose
+(faithful archival), so the owner of the capture sink is responsible for its
+storage security and access control.
+
 On the client side, MTOM/XOP decoding of responses is bounded by
 `HttpTransport(max_response_size=...)` (default 10 MB, mirroring the server's
 `max_body_size`): a response referencing one attachment from many `xop:Include`
