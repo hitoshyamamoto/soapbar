@@ -1,8 +1,10 @@
 """Comprehensive tests for soapbar — 31 tests covering all modules."""
 from __future__ import annotations
 
+import datetime
 import io
 import sys
+import typing
 import urllib.error
 import warnings
 from pathlib import Path
@@ -209,6 +211,27 @@ class TestTypes:
         assert int_type is not None
         assert bool_type.name == "boolean"
         assert int_type.name == "int"
+
+    def test_python_to_xsd_datetime_family(self) -> None:
+        """datetime/date/time map to their registered XSD types.
+
+        datetime is a subclass of date, so it must resolve to dateTime rather
+        than date.
+        """
+        dt_type = xsd.python_to_xsd(datetime.datetime)
+        date_type = xsd.python_to_xsd(datetime.date)
+        time_type = xsd.python_to_xsd(datetime.time)
+        assert dt_type is not None and dt_type.name == "dateTime"
+        assert date_type is not None and date_type.name == "date"
+        assert time_type is not None and time_type.name == "time"
+
+    def test_python_to_xsd_generic_alias_does_not_raise(self) -> None:
+        """A parameterised generic is not a class; it must degrade to None
+        rather than raise TypeError from issubclass()."""
+        assert xsd.python_to_xsd(int | str) is None
+        assert xsd.python_to_xsd(list[int]) is None
+        assert xsd.python_to_xsd(dict[str, int]) is None
+        assert xsd.python_to_xsd(typing.Literal["a", "b"]) is None
 
     def test_resolve_clark_notation(self) -> None:
         t = xsd.resolve(f"{{{NS.XSD}}}string")
@@ -938,6 +961,35 @@ class TestServer:
         assert len(sig.input_params) == 1
         assert sig.input_params[0].name == "message"
         assert sig.input_params[0].xsd_type.name == "string"
+
+    def test_soap_operation_introspects_datetime_params(self) -> None:
+        """datetime/date parameters survive introspection instead of being
+        silently dropped from the signature."""
+        class WhenService(SoapService):
+            __tns__ = "http://example.com/when"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation()
+            def when(self, ts: datetime.datetime, d: datetime.date, label: str) -> str:
+                return label
+
+        sig: OperationSignature = WhenService().get_operations()["when"].__soap_operation__
+        by_name = {p.name: p.xsd_type.name for p in sig.input_params}
+        assert by_name == {"ts": "dateTime", "d": "date", "label": "string"}
+
+    def test_soap_operation_unmappable_annotation_does_not_raise_at_import(self) -> None:
+        """A union / parameterised-generic annotation must not raise while the
+        service class body is evaluated; the parameter degrades to dropped."""
+        class UnionService(SoapService):
+            __tns__ = "http://example.com/union"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation()
+            def op(self, x: int | str, label: str) -> str:
+                return label
+
+        sig: OperationSignature = UnionService().get_operations()["op"].__soap_operation__
+        assert [p.name for p in sig.input_params] == ["label"]
 
 
 # =============================================================================
@@ -4244,6 +4296,110 @@ class TestWsdlDrivenClientCall:
 
         result = client.call("Add", a=3, b=4)
         assert result == 7, f"Expected 7, got {result!r}"
+
+    @staticmethod
+    def _when_app() -> tuple[SoapApplication, bytes]:
+        """A service whose operations exercise the datetime/date/time and
+        Optional-return introspection paths end to end (issue #213 asked for
+        round-trip coverage, not just signature introspection)."""
+        import warnings
+
+        from soapbar.server.application import SoapApplication
+        from soapbar.server.service import SoapService, soap_operation
+
+        class When(SoapService):
+            __service_name__ = "When"
+            __tns__ = "http://example.com/when"
+            __binding_style__ = BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation(name="Describe", soap_action="Describe")
+            def describe(
+                self, ts: datetime.datetime, d: datetime.date, t: datetime.time
+            ) -> str:
+                # The annotation must hold at runtime, not just in the WSDL.
+                return (
+                    f"{type(ts).__name__}|{type(d).__name__}|{type(t).__name__}"
+                    f"|{ts.year}|{d.month}|{t.minute}|{ts.tzinfo is not None}"
+                )
+
+            @soap_operation(name="Stamp", soap_action="Stamp")
+            def stamp(
+                self, label: str, ts: datetime.datetime = datetime.datetime(2020, 1, 1)
+            ) -> str:
+                return f"{label}:{type(ts).__name__}|{ts.year}"
+
+            @soap_operation(name="Now", soap_action="Now")
+            def now(self) -> datetime.datetime:
+                return datetime.datetime(2026, 9, 6, 12, 30)
+
+            @soap_operation(name="Maybe", soap_action="Maybe")
+            def maybe(self, s: str) -> str | None:
+                return s.upper()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            app = SoapApplication(service_url="http://localhost:8000/soap")
+        app.register(When())
+        return app, app.get_wsdl()
+
+    def test_datetime_params_round_trip_as_objects(self) -> None:
+        """A datetime/date/time-annotated handler receives the annotated
+        objects through a real WSDL-driven call, not lexical strings."""
+        app, wsdl = self._when_app()
+        client = SoapClient.from_wsdl_string(wsdl, transport=self._inline_transport(app))
+
+        result = client.call(
+            "Describe",
+            ts=datetime.datetime(2026, 9, 6, 12, 30),
+            d=datetime.date(2026, 9, 6),
+            t=datetime.time(12, 30),
+        )
+        assert result == "datetime|date|time|2026|9|30|False", result
+
+    def test_datetime_params_convert_xsd_timezone_forms(self) -> None:
+        """The XSD ``Z`` suffix and a date with a timezone (both valid lexical
+        forms a foreign client may send) convert instead of crashing; the
+        string values pass through the client's ``to_xml`` unchanged."""
+        app, wsdl = self._when_app()
+        client = SoapClient.from_wsdl_string(wsdl, transport=self._inline_transport(app))
+
+        result = client.call(
+            "Describe",
+            ts="2026-09-06T12:30:00Z",
+            d="2026-09-06+02:00",
+            t="12:30:00Z",
+        )
+        assert result == "datetime|date|time|2026|9|30|True", result
+
+    def test_datetime_default_param_is_object_sent_or_omitted(self) -> None:
+        """A defaulted datetime param is a datetime whether the client sends
+        it or omits it — never a str."""
+        app, wsdl = self._when_app()
+        client = SoapClient.from_wsdl_string(wsdl, transport=self._inline_transport(app))
+
+        sent = client.call("Stamp", label="x", ts=datetime.datetime(2026, 9, 6))
+        assert sent == "x:datetime|2026", sent
+
+        # Omitted: hand-built request so the client cannot fill anything in.
+        envelope = (
+            b'<?xml version="1.0"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body>"
+            b'<ns:Stamp xmlns:ns="http://example.com/when"><label>y</label></ns:Stamp>'
+            b"</soapenv:Body></soapenv:Envelope>"
+        )
+        status, _ct, body = app.handle_request(envelope, soap_action="Stamp")
+        assert status == 200
+        assert b"y:datetime|2020" in body, body
+
+    def test_datetime_return_serializes_and_optional_return_publishes(self) -> None:
+        """``-> datetime`` serializes to the lexical form; ``-> str | None``
+        publishes the return instead of silently discarding it."""
+        app, wsdl = self._when_app()
+        client = SoapClient.from_wsdl_string(wsdl, transport=self._inline_transport(app))
+
+        assert client.call("Now") == "2026-09-06T12:30:00"
+        assert client.call("Maybe", s="abc") == "ABC"
 
     async def test_dlw_wsdl_driven_call_async_round_trips(self) -> None:
         """The inline transport must keep async calls off the network."""

@@ -68,12 +68,21 @@ class BindingStyle(Enum):
 
 @dataclass(frozen=True)
 class OperationParameter:
-    """An operation's input/output parameter descriptor (an immutable value object)."""
+    """An operation's input/output parameter descriptor (an immutable value object).
+
+    ``py_type`` is set only by ``soap_operation``'s type-hint introspection, and
+    only for annotations whose XSD type deserializes to a lexical string rather
+    than the annotated Python type (``datetime``/``date``/``time``): it lets the
+    server-side request path deliver the value the annotation promises. It is
+    ``None`` for explicitly supplied parameters and for WSDL-parsed operations,
+    which keep their lexical-string behavior.
+    """
 
     name: str
     xsd_type: XsdType
     required: bool = True
     namespace: str | None = None
+    py_type: type | None = None
 
 
 @dataclass
@@ -140,6 +149,27 @@ class BindingSerializer(ABC):
             sub_element(parent, full_tag, text=param.xsd_type.to_xml(value))
 
     @staticmethod
+    def _to_annotated_type(value: str, py_type: type) -> Any:
+        """Convert a lexical date/time value to the Python type the handler's
+        annotation promises.
+
+        Uses the exact parse expressions the corresponding ``from_xml``
+        validators use (``Z`` normalised to ``+00:00``; xsd:date's optional
+        timezone stripped, since a Python ``date`` cannot carry one), so any
+        value that passed validation converts without error.
+        """
+        from datetime import date, datetime, time
+
+        from soapbar.core.types import _strip_xsd_timezone
+        if py_type is datetime:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if py_type is date:
+            return date.fromisoformat(_strip_xsd_timezone(value))
+        if py_type is time:
+            return time.fromisoformat(value.replace("Z", "+00:00"))
+        return value
+
+    @staticmethod
     def _deserialize_param_value(child: _Element, param: OperationParameter) -> Any:
         """Deserialize a single parameter from an XML element."""
         from soapbar.core.types import AnyXmlType, ArrayXsdType, ChoiceXsdType, ComplexXsdType
@@ -164,7 +194,10 @@ class BindingSerializer(ABC):
                 return param.xsd_type.from_xml("")
             except ValueError:
                 return None
-        return param.xsd_type.from_xml(text)
+        value = param.xsd_type.from_xml(text)
+        if param.py_type is not None and isinstance(value, str):
+            return BindingSerializer._to_annotated_type(value, param.py_type)
+        return value
 
     @abstractmethod
     def serialize_request(
@@ -384,7 +417,10 @@ class RpcEncodedSerializer(BindingSerializer):
                 xsd_type = xsd_registry.resolve(xsi_type) if xsi_type else param.xsd_type
                 if xsd_type is None:
                     xsd_type = param.xsd_type
-                result[param.name] = xsd_type.from_xml(child.text or "")
+                value = xsd_type.from_xml(child.text or "")
+                if param.py_type is not None and isinstance(value, str):
+                    value = BindingSerializer._to_annotated_type(value, param.py_type)
+                result[param.name] = value
         return result
 
 
@@ -713,7 +749,10 @@ class DocumentEncodedSerializer(BindingSerializer):
                 xsd_type = xsd_registry.resolve(xsi_type) if xsi_type else param.xsd_type
                 if xsd_type is None:
                     xsd_type = param.xsd_type
-                result[param.name] = xsd_type.from_xml(child.text or "")
+                value = xsd_type.from_xml(child.text or "")
+                if param.py_type is not None and isinstance(value, str):
+                    value = BindingSerializer._to_annotated_type(value, param.py_type)
+                result[param.name] = value
         return result
 
 

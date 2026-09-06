@@ -33,6 +33,16 @@ Python → XSD mapping:
 | `str` | `string` |
 | `Decimal` | `decimal` |
 | `bytes` | `base64Binary` |
+| `datetime.datetime` | `dateTime` |
+| `datetime.date` | `date` |
+| `datetime.time` | `time` |
+
+An annotation that is not a class (`int | str`, `list[int]`, `typing.Literal[...]`)
+maps to `None` — in a `soap_operation` signature the parameter is dropped from the
+published contract. `Optional[X]` / `X | None` unwraps to `X` for both parameters
+and the return type. On the server, `datetime`/`date`/`time` parameters are
+delivered to the handler as the annotated objects; everywhere else (client
+results, WSDL-parsed operations) these XSD types keep their lexical string form.
 
 ---
 
