@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from typing import Any, Union
 from urllib.parse import urlparse
 
@@ -66,9 +67,22 @@ class HttpTransport:
         ca_bundle: str | None = None,
         persist_cookies: bool = True,
         max_response_size: int = 10 * 1024 * 1024,
+        on_exchange: Callable[[bytes, bytes, str, dict[str, str]], None] | None = None,
     ) -> None:
         self.timeout = timeout
         self.verify_ssl = verify_ssl
+        # Raw-exchange capture. ``on_exchange(request_bytes, response_bytes,
+        # url, request_headers)`` fires after every send — success or HTTP
+        # error — with the exact wire bytes (post-MTOM request packaging,
+        # pre-MTOM response decoding). This is the mechanism for mandatory
+        # archival (e.g. fiscal-document retention): it is stateless and safe
+        # under concurrency, and an exception it raises propagates — a failed
+        # archive must be visible, not swallowed. ``last_request`` /
+        # ``last_response`` mirror the most recent exchange as a debugging
+        # convenience; they are per-transport state and NOT thread-safe.
+        self.on_exchange = on_exchange
+        self.last_request: bytes | None = None
+        self.last_response: bytes | None = None
         # Cap on the XOP-resolved size of an MTOM response (mirrors
         # SoapApplication.max_body_size, 10 MB). A hostile response can
         # reference one small attachment from many xop:Include elements,
@@ -250,6 +264,19 @@ class HttpTransport:
             return normalised_ct, mtom_msg.soap_xml
         return ct, body
 
+    def _record_exchange(
+        self, request: bytes, response: bytes, url: str, headers: dict[str, str]
+    ) -> None:
+        """Store and report the exact wire bytes of one exchange.
+
+        Runs on every send, including HTTP error responses — an archival
+        obligation covers failures too. A callback exception propagates
+        deliberately: a failed archive must be visible."""
+        self.last_request = request
+        self.last_response = response
+        if self.on_exchange is not None:
+            self.on_exchange(request, response, url, headers)
+
     def _send_httpx(
         self,
         url: str,
@@ -258,6 +285,7 @@ class HttpTransport:
     ) -> tuple[int, str, bytes]:
         client = self._get_httpx_client()
         resp = client.post(url, content=body, headers=headers)
+        self._record_exchange(body, resp.content, url, headers)
         ct = resp.headers.get("content-type", "text/xml")
         ct, content = self._decode_mtom_if_needed(ct, resp.content)
         self._clear_cookies_if_stateless(client)
@@ -275,11 +303,15 @@ class HttpTransport:
         headers: dict[str, str],
     ) -> tuple[int, str, bytes]:
         _require_http_url(url)
+        # The HTTPError branch below rebinds ``body`` to the RESPONSE bytes;
+        # keep the request bytes for exchange capture before that happens.
+        req_bytes = body
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")  # noqa: S310 — scheme restricted to http(s) by _require_http_url
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 — scheme restricted to http(s) by _require_http_url
                 ct = resp.headers.get("Content-Type", "text/xml")
                 raw = resp.read()
+                self._record_exchange(req_bytes, raw, url, headers)
                 ct, raw = self._decode_mtom_if_needed(ct, raw)
                 if _log.isEnabledFor(logging.DEBUG):
                     _log.debug(
@@ -290,6 +322,7 @@ class HttpTransport:
         except urllib.error.HTTPError as e:
             ct = e.headers.get("Content-Type", "text/xml")
             body = e.read()
+            self._record_exchange(req_bytes, body, url, headers)
             if _log.isEnabledFor(logging.DEBUG):
                 _log.debug(
                     "Response status=%s content-type=%s body=%s",
@@ -313,6 +346,7 @@ class HttpTransport:
 
         client = self._get_httpx_async_client()
         resp = await client.post(url, content=body, headers=headers)
+        self._record_exchange(body, resp.content, url, headers)
         ct = resp.headers.get("content-type", "text/xml")
         ct, content = self._decode_mtom_if_needed(ct, resp.content)
         self._clear_cookies_if_stateless(client)
