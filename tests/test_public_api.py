@@ -49,6 +49,7 @@ EXPECTED_ALL = {
     "ArrayXsdType",
     "ChoiceXsdType",
     "AnyXmlType",
+    "RawXmlType",
     "SoapbarError",
     "SoapFault",
     "BindingStyle",

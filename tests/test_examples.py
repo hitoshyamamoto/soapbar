@@ -286,3 +286,15 @@ def test_nfe_and_mef_reference_scripts_run() -> None:
         result = _run(EXAMPLES / script)
         _ok(result, script)
         assert needle in result.stdout
+
+
+def test_raw_payload_example_runs_offline() -> None:
+    """22_raw_payload uses a stub transport, so unlike the real-world demos
+    it can be executed end to end: its own assertion proves the payload
+    bytes survived verbatim."""
+    script = EXAMPLES / "22_raw_payload/raw_payload_demo.py"
+    spec = importlib.util.spec_from_file_location("_ex_raw_payload", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.main()

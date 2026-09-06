@@ -37,6 +37,15 @@ Python → XSD mapping:
 | `datetime.date` | `date` |
 | `datetime.time` | `time` |
 
+Two passthrough types carry pre-built XML instead of modeled values:
+`AnyXmlType` for a payload you want soapbar to parse and model, and
+`RawXmlType` for a payload that is already built and signed — it is inserted
+into the envelope without re-serializing, so comments, processing
+instructions, quoting, and the bytes a signature was computed over all
+survive exactly. `RawXmlType` accepts `bytes`, `str`, or an lxml element,
+returns the matching response element as `bytes`, and refuses the encoded
+binding styles (whose serializers would escape the payload into text).
+
 An annotation that is not a class (`int | str`, `list[int]`, `typing.Literal[...]`)
 maps to `None` — in a `soap_operation` signature the parameter is dropped from the
 published contract. `Optional[X]` / `X | None` unwraps to `X` for both parameters

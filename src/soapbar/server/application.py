@@ -613,7 +613,8 @@ class SoapApplication:
                 ):
                     resp_envelope.add_header(hdr)
 
-            resp_bytes = resp_envelope.to_bytes()
+            from soapbar.core.binding import substitute_raw_placeholders
+            resp_bytes = substitute_raw_placeholders(resp_envelope.to_bytes())
             return 200, version.content_type, resp_bytes
 
         except SoapFault as exc_sf:

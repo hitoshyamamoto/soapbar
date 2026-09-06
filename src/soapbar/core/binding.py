@@ -3,6 +3,8 @@
 """SOAP binding styles and serializers."""
 from __future__ import annotations
 
+import base64
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -13,6 +15,34 @@ from lxml.etree import _Element
 from soapbar.core.namespaces import NS
 from soapbar.core.types import XsdType
 from soapbar.core.xml import sub_element
+
+#: Reserved namespace for RawXmlType's internal placeholder elements. Never
+#: appears on the wire: substitute_raw_placeholders() replaces every
+#: placeholder with the caller's exact payload bytes after serialization.
+_RAW_PLACEHOLDER_NS = "urn:soapbar:raw-placeholder"
+
+#: Matches one serialized placeholder element. The base64 alphabet contains
+#: neither ``<`` nor ``>``, so the element body can never terminate early,
+#: and the placeholder is always an empty element (self-closing).
+_RAW_PLACEHOLDER_RE = re.compile(
+    rb"<[^<>]*" + _RAW_PLACEHOLDER_NS.encode() + rb"[^<>]*?/>"
+)
+_RAW_B64_RE = re.compile(rb'b64="([A-Za-z0-9+/=]*)"')
+
+
+def substitute_raw_placeholders(data: bytes) -> bytes:
+    """Replace RawXmlType placeholder elements in serialized XML with the
+    exact payload bytes they carry. No-op (and cheap) when no placeholder is
+    present. Must run on every serialization seam that can carry a
+    RawXmlType value, or the placeholder would leak to the wire."""
+    if _RAW_PLACEHOLDER_NS.encode() not in data:
+        return data
+
+    def _replace(match: re.Match[bytes]) -> bytes:
+        b64 = _RAW_B64_RE.search(match.group(0))
+        return base64.b64decode(b64.group(1)) if b64 else b""
+
+    return _RAW_PLACEHOLDER_RE.sub(_replace, data)
 
 
 def _first_child_by_local_name(parent: _Element, name: str) -> _Element | None:
@@ -121,9 +151,31 @@ class BindingSerializer(ABC):
         parent: _Element, tag: str, ns: str, param: OperationParameter, value: Any
     ) -> None:
         """Serialize a single parameter to an XML element under parent."""
-        from soapbar.core.types import AnyXmlType, ArrayXsdType, ChoiceXsdType, ComplexXsdType
+        from soapbar.core.types import (
+            AnyXmlType,
+            ArrayXsdType,
+            ChoiceXsdType,
+            ComplexXsdType,
+            RawXmlType,
+        )
         if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
             parent.append(param.xsd_type.to_element(tag, value or {}, ns))
+        elif isinstance(param.xsd_type, RawXmlType):
+            # Byte-faithful passthrough: the payload must never be parsed or
+            # re-serialized. A self-contained placeholder element carries the
+            # exact bytes (base64) through tree serialization; the caller of
+            # envelope.to_bytes() swaps them back in with
+            # substitute_raw_placeholders(). Self-contained so it survives
+            # the children being moved between trees and needs no state
+            # threaded through the serializer.
+            full_tag = f"{{{ns}}}{tag}" if ns else tag
+            carrier = sub_element(parent, full_tag)
+            raw = RawXmlType.normalize_input(value) if value is not None else b""
+            if raw:
+                import uuid
+                ph = sub_element(carrier, f"{{{_RAW_PLACEHOLDER_NS}}}raw")
+                ph.set("token", uuid.uuid4().hex)
+                ph.set("b64", base64.b64encode(raw).decode("ascii"))
         elif isinstance(param.xsd_type, AnyXmlType):
             # xsd:any passthrough: emit the carrier element and graft the
             # caller's raw XML in as child element(s), verbatim.
@@ -172,9 +224,23 @@ class BindingSerializer(ABC):
     @staticmethod
     def _deserialize_param_value(child: _Element, param: OperationParameter) -> Any:
         """Deserialize a single parameter from an XML element."""
-        from soapbar.core.types import AnyXmlType, ArrayXsdType, ChoiceXsdType, ComplexXsdType
+        from soapbar.core.types import (
+            AnyXmlType,
+            ArrayXsdType,
+            ChoiceXsdType,
+            ComplexXsdType,
+            RawXmlType,
+        )
         if isinstance(param.xsd_type, (ComplexXsdType, ArrayXsdType, ChoiceXsdType)):
             return param.xsd_type.from_element(child)
+        if isinstance(param.xsd_type, RawXmlType):
+            # Return the matching element's bytes (detached-subtree
+            # serialization, with_tail off so trailing whitespace between
+            # body parts never leaks in). Tree-verbatim contract — see
+            # RawXmlType's docstring; byte-exact archival of the full
+            # response belongs to the transport's raw-exchange capture.
+            from lxml import etree
+            return etree.tostring(child, with_tail=False)
         if isinstance(param.xsd_type, AnyXmlType):
             # Return the carrier's inner XML (the wrapped message) as a string.
             from lxml import etree
