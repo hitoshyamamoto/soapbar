@@ -68,6 +68,7 @@ nav:
       - Security: security.md
   - Reference:
       - API reference: api.md
+      - WSDL object model: wsdl-model.md
       - Security assurance case: assurance-case.md
       - Interoperability: interoperability.md
       - Real-world services: real-world.md

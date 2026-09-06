@@ -15,6 +15,14 @@ lxml.etree.XMLParser(
 
 Entity references (potential XXE payloads) are silently dropped rather than expanded. No network connections are made during parsing. DTDs are not loaded.
 
+The hardened parser has two public entry points: `parse_xml(data)` takes
+`str | bytes`, and `parse_xml_document(source)` is its polymorphic variant
+accepting `str | bytes | Path | _Element` (a `Path` is read from disk; an
+already-parsed element passes through unchanged). Both apply the exact
+configuration above; `parse_xml_document` is what `parse_wsdl` itself uses to
+load documents and resolve imports. Use either instead of a raw
+`lxml.etree.fromstring` whenever the input is not fully trusted.
+
 Additional hardening:
 
 - **SSRF guard on WSDL imports**: `wsdl:import` / `xsd:import` locations are not fetched by default — remote (`http(s)://`) imports require `parse_wsdl(..., allow_remote_imports=True)` and local-file imports require `allow_local_imports=True`, so a hostile WSDL cannot reach internal hosts or read local files.
@@ -238,6 +246,12 @@ bst = build_binary_security_token(certificate, token_id="MyToken-1")
 ## MTOM/XOP
 
 soapbar supports MTOM (Message Transmission Optimization Mechanism, W3C) for sending and receiving SOAP messages with binary attachments. The `multipart/related` MIME packaging is handled transparently — the core envelope sees resolved base64 data; your service code sees plain bytes.
+
+For inspection before resolution, `extract_xop_elements(xml_bytes)` returns
+the `(parent_tag, xop_include_element)` pairs found in a document — which
+elements reference which attachments — without touching the attachment data.
+The transparent path never needs it; it exists for tooling that wants to look
+at XOP references before (or instead of) resolving them.
 
 ### Client — sending attachments
 

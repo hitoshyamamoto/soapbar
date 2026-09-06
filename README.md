@@ -42,6 +42,8 @@ uv add "soapbar[security]"
 uv add "soapbar[all]"
 ```
 
+The installed version is available as `soapbar.__version__`.
+
 Optional contrib extras install typed clients for real-world services: `soapbar[vies]`, `soapbar[witsml]`, `soapbar[ana]`, `soapbar[nfe]` — coverage varies by service, and [Real-world services](https://hitoshyamamoto.github.io/soapbar/real-world/) states each client's scope.
 
 ---

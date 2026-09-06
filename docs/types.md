@@ -37,6 +37,30 @@ Python → XSD mapping:
 | `datetime.date` | `date` |
 | `datetime.time` | `time` |
 
+## Parser-produced complex types
+
+Beyond the built-ins, the WSDL parser manufactures type objects from the
+schemas embedded in a contract: a `ComplexXsdType` for an ordinary
+`xsd:complexType`, an `ArrayXsdType` when an element repeats
+(`maxOccurs > 1`, or a SOAP-encoded `soapenc:Array`), and a `ChoiceXsdType`
+for an `xsd:choice` content model. They land in
+`WsdlDefinition.complex_types` and are what the serializers use for
+round-tripping structured values. To inspect what a contract produced:
+
+```python
+from soapbar import ArrayXsdType, ChoiceXsdType, parse_wsdl
+
+defn = parse_wsdl(wsdl_bytes)
+for name, ct in defn.complex_types.items():
+    if isinstance(ct, ArrayXsdType):
+        print(name, "is an array of", ct.element_type.name)
+    elif isinstance(ct, ChoiceXsdType):
+        print(name, "is a choice of", [n for n, _ in ct.options])
+```
+
+See the [WSDL object model](wsdl-model.md) for how these hang off a parsed
+definition.
+
 Two passthrough types carry pre-built XML instead of modeled values:
 `AnyXmlType` for a payload you want soapbar to parse and model, and
 `RawXmlType` for a payload that is already built and signed — it is inserted
