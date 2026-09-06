@@ -9762,3 +9762,89 @@ class TestUnknownOperations:
         ))
         client.call("Add", a=7)
         assert b"<a>7</a>" in transport.last_body
+
+
+# ===========================================================================
+# Bare-shaped outputs under the wrapped default (#265)
+# ===========================================================================
+
+class TestBareOutputUnderWrappedDefault:
+    """A manual client on the DOCUMENT_LITERAL_WRAPPED default whose response
+    is bare-shaped (the output element IS the first Body child — the shape
+    AnyXmlType/RawXmlType outputs produce) must return the value instead of
+    silently None (issue #265); classic wrapped responses are unchanged."""
+
+    _NS = "http://example.com/q"
+
+    def _client(self, response: bytes) -> SoapClient:
+        class _T(HttpTransport):
+            def send(self, url, body, headers):
+                return 200, "text/xml", response
+
+        return SoapClient.manual("https://example.com/soap", transport=_T())
+
+    @staticmethod
+    def _envelope(inner: bytes) -> bytes:
+        return (
+            b'<?xml version="1.0"?>'
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body>" + inner + b"</soapenv:Body></soapenv:Envelope>"
+        )
+
+    def test_bare_anyxml_output_returns_inner_xml(self) -> None:
+        from soapbar.core.binding import OperationParameter, OperationSignature
+        from soapbar.core.types import AnyXmlType
+
+        inner = b'<ret xmlns="http://x.example/nfe"><cStat>107</cStat></ret>'
+        response = self._envelope(
+            b'<resultMsg xmlns="' + self._NS.encode() + b'">' + inner + b"</resultMsg>"
+        )
+        client = self._client(response)
+        client.register_operation(OperationSignature(
+            name="Query",
+            output_params=[
+                OperationParameter("resultMsg", AnyXmlType(), namespace=self._NS)
+            ],
+            soap_action="Query",
+        ))
+        result = client.call("Query")
+        assert result is not None, "bare AnyXmlType output was dropped (issue #265)"
+        assert "cStat" in result
+
+    def test_bare_output_with_wrong_namespace_is_not_matched(self) -> None:
+        """A first Body child whose local name collides with an output param
+        but whose namespace differs is NOT treated as bare-shaped."""
+        from soapbar.core.binding import OperationParameter, OperationSignature
+        from soapbar.core.types import AnyXmlType
+
+        response = self._envelope(
+            b'<resultMsg xmlns="http://other.example/ns"><x/></resultMsg>'
+        )
+        client = self._client(response)
+        client.register_operation(OperationSignature(
+            name="Query",
+            output_params=[
+                OperationParameter("resultMsg", AnyXmlType(), namespace=self._NS)
+            ],
+            soap_action="Query",
+        ))
+        assert client.call("Query") is None
+
+    def test_classic_wrapped_response_is_unchanged(self) -> None:
+        from soapbar.core.binding import OperationParameter, OperationSignature
+        from soapbar.core.types import xsd
+
+        int_type = xsd.resolve("int")
+        assert int_type is not None
+        response = self._envelope(
+            b'<QueryResponse xmlns="' + self._NS.encode() + b'">'
+            b"<total>41</total></QueryResponse>"
+        )
+        client = self._client(response)
+        client.register_operation(OperationSignature(
+            name="Query",
+            output_params=[OperationParameter("total", int_type)],
+            output_namespace=self._NS,
+            soap_action="Query",
+        ))
+        assert client.call("Query") == 41
