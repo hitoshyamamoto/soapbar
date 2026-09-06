@@ -1817,7 +1817,7 @@ wheels = [
 
 [[package]]
 name = "soapbar"
-version = "0.17.15"
+version = "0.17.16"
 source = { editable = "." }
 dependencies = [
     { name = "lxml" },
