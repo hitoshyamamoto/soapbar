@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.17.6](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.5...v0.17.6) (2026-09-06)
+
+
+### Bug Fixes
+
+* **types:** map datetime/date/time and don't crash on generic annotations ([#237](https://github.com/hitoshyamamoto/soapbar/issues/237)) ([c1e6292](https://github.com/hitoshyamamoto/soapbar/commit/c1e62925b5c7a5d497a7f5610401220f1831f0aa))
+
 ## [0.17.5](https://github.com/hitoshyamamoto/soapbar/compare/v0.17.4...v0.17.5) (2026-09-02)
 
 
