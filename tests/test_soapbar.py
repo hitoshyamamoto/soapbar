@@ -9559,3 +9559,122 @@ class TestSimpleTypeParsing:
         amount = parse_wsdl(_SIMPLE_TYPE_WSDL).complex_types["Amount"]
         # minInclusive="0" is not enforced here by design.
         assert amount.from_xml("-5") == Decimal("-5")
+
+
+# ===========================================================================
+# Operation collisions (#181) and per-binding WSDL ports (#216)
+# ===========================================================================
+
+class TestOperationCollisions:
+    """register() must surface collisions instead of silently overwriting
+    dispatch entries (issue #181), while idempotent re-registration and
+    distinct services keep working; the generated WSDL must emit one
+    portType/binding per sub-group and one port per binding on a single
+    wsdl:service instead of dropping all but the last (issue #216)."""
+
+    @staticmethod
+    def _make(service_name: str, tns: str, op: str, style=None):
+        from soapbar.core.binding import BindingStyle
+        from soapbar.server.service import SoapService, soap_operation
+
+        class Svc(SoapService):
+            __service_name__ = service_name
+            __tns__ = tns
+            __binding_style__ = style or BindingStyle.DOCUMENT_LITERAL_WRAPPED
+
+            @soap_operation(name=op, soap_action=op)
+            def handler(self) -> str:
+                return service_name
+
+        return Svc()
+
+    @staticmethod
+    def _app():
+        import warnings
+
+        from soapbar.server.application import SoapApplication
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return SoapApplication()
+
+    def test_operation_name_collision_raises_naming_both_services(self) -> None:
+        app = self._app()
+        app.register(self._make("Alpha", "http://e.com/a", "ping"))
+        with pytest.raises(ValueError, match=r"ping.*collision|collision.*ping"):
+            app.register(self._make("Beta", "http://e.com/a", "ping"))
+        # The rejected register left the application unchanged.
+        assert len(app._services) == 1
+
+    def test_soap_action_collision_raises(self) -> None:
+        from soapbar.server.service import SoapService, soap_operation
+
+        class One(SoapService):
+            __tns__ = "http://e.com/a"
+
+            @soap_operation(name="OpA", soap_action="SharedAction")
+            def a(self) -> str:
+                return "a"
+
+        class Two(SoapService):
+            __tns__ = "http://e.com/a"
+
+            @soap_operation(name="OpB", soap_action="SharedAction")
+            def b(self) -> str:
+                return "b"
+
+        app = self._app()
+        app.register(One())
+        with pytest.raises(ValueError, match="soapAction collision"):
+            app.register(Two())
+
+    def test_idempotent_reregister_and_distinct_services_still_work(self) -> None:
+        app = self._app()
+        svc = self._make("Alpha", "http://e.com/a", "ping")
+        app.register(svc)
+        app.register(svc)  # same instance, same handlers — allowed
+        app.register(self._make("Gamma", "http://e.com/a", "pong"))
+        assert len(app._services) == 2
+        assert set(app._dispatch) == {"ping", "pong"}
+
+    def test_wsdl_emits_one_port_per_binding_for_shared_service_name(self) -> None:
+        """Issue #216: two sub-groups sharing a service name used to
+        overwrite each other's portType/binding/service triple, orphaning
+        the first group's messages. Both must be emitted, as two ports of
+        one wsdl:service, and the document must parse back cleanly."""
+        import re
+
+        from soapbar import parse_wsdl
+        from soapbar.core.binding import BindingStyle
+
+        app = self._app()
+        app.register(
+            self._make("Calc", "http://e.com/c", "Add", BindingStyle.DOCUMENT_LITERAL_WRAPPED)
+        )
+        app.register(
+            self._make("Calc", "http://e.com/c", "Mul", BindingStyle.RPC_LITERAL)
+        )
+        wsdl = app.get_wsdl().decode()
+        assert sorted(re.findall(r'portType name="([^"]+)"', wsdl)) == [
+            "CalcDocumentLiteralWrappedPortType",
+            "CalcRpcLiteralPortType",
+        ]
+        assert len(re.findall(r'service name="', wsdl)) == 1
+        assert len(re.findall(r'<port name="|port name="', wsdl)) == 2
+
+        defn = parse_wsdl(wsdl.encode())
+        ops = {pt: [o.name for o in v.operations] for pt, v in defn.port_types.items()}
+        assert ops["CalcDocumentLiteralWrappedPortType"] == ["Add"]
+        assert ops["CalcRpcLiteralPortType"] == ["Mul"]
+
+    def test_single_group_wsdl_names_are_unchanged(self) -> None:
+        """The disambiguating suffix applies only when a name actually has
+        several sub-groups; the common single-group case keeps its exact
+        historical names."""
+        import re
+
+        app = self._app()
+        app.register(self._make("Solo", "http://e.com/s", "Op"))
+        wsdl = app.get_wsdl().decode()
+        names = re.findall(r'(?:portType|binding|service|port) name="([^"]+)"', wsdl)
+        assert names == ["SoloPortType", "SoloBinding", "Solo", "SoloPort"]
