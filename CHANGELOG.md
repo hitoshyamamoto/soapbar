@@ -6,6 +6,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.20.2](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.1...v0.20.2) (2026-10-07)
+
+
+### Bug Fixes
+
+* **client:** parse the response body once instead of twice ([#292](https://github.com/hitoshyamamoto/soapbar/issues/292)) ([510804f](https://github.com/hitoshyamamoto/soapbar/commit/510804f0677392e566e4673607a8f4352bbaaa01))
+
+## [0.20.1](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.0...v0.20.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **server:** answer malformed XML with a Client fault instead of a 500 Receiver ([#291](https://github.com/hitoshyamamoto/soapbar/issues/291)) ([9cd26e6](https://github.com/hitoshyamamoto/soapbar/commit/9cd26e6acf4a38525d1e859432d1ced7028902f2))
+
 ## [0.20.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.19.1...v0.20.0) (2026-09-06)
 
 

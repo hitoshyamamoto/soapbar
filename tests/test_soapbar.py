@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import logging
 import sys
 import typing
 import urllib.error
@@ -939,10 +940,53 @@ class TestServer:
         assert b"Fault" in body
 
     def test_handle_malformed_xml(self) -> None:
+        """SOAP 1.1: a body that is not XML is a *Client* fault (issue #214).
+
+        WS-I BP 1.1 R1126 keeps the HTTP status at 500 for every SOAP 1.1
+        fault, so only the faultcode distinguishes this from a server error.
+        """
         app = self._make_app()
         status, _ct, body = app.handle_request(b"not xml at all")
         assert status == 500
-        assert b"Fault" in body
+        root = etree.fromstring(body)
+        fc = root.find(f".//{{{NS.SOAP_ENV}}}Body/{{{NS.SOAP_ENV}}}Fault/faultcode")
+        assert fc is not None and (fc.text or "").endswith(":Client")
+        assert b"An internal error occurred" not in body
+
+    def test_handle_malformed_xml_soap12_is_sender_400(self) -> None:
+        """SOAP 1.2: malformed XML is env:Sender and maps to HTTP 400 (§5.4.6, [SOAP12-P2] §7.4).
+
+        Before the fix lxml's XMLSyntaxError (a SyntaxError, not a ValueError)
+        fell through to the catch-all and came back as Receiver/500.
+        """
+        app = self._make_app()
+        status, _ct, body = app.handle_request(
+            b"<nao bem formado", content_type="application/soap+xml; charset=utf-8"
+        )
+        assert status == 400
+        root = etree.fromstring(body)
+        val = root.find(
+            f".//{{{NS.SOAP12_ENV}}}Fault/{{{NS.SOAP12_ENV}}}Code/{{{NS.SOAP12_ENV}}}Value"
+        )
+        assert val is not None and (val.text or "").endswith(":Sender")
+        assert b"Receiver" not in body
+
+    def test_handle_malformed_xml_does_not_log_a_traceback(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Client-caused parse failures must not write ERROR tracebacks (issue #214).
+
+        A request-triggered ERROR record is a cheap way for an unauthenticated
+        peer to fill a log budget; the rejection is recorded at DEBUG only.
+        """
+        app = self._make_app()
+        caplog.set_level(logging.DEBUG, logger="soapbar.server.application")
+        for raw in (b"not xml at all", b"<unclosed>", b"<a><b></a>", b""):
+            app.handle_request(raw)
+        server_records = [r for r in caplog.records if r.name == "soapbar.server.application"]
+        assert server_records, "the rejection should be visible at DEBUG"
+        assert all(r.levelno < logging.WARNING for r in server_records)
+        assert all(r.exc_info is None for r in server_records)
 
     def test_soap_operation_decorator_introspection(self) -> None:
         """Decorator auto-introspects type hints."""
@@ -7880,6 +7924,48 @@ class TestSoapClientCallCoverage:
         fault_xml = _build_soap11_fault("Server", "Oops")
         with pytest.raises(SoapFault):
             client._parse_response(sig, fault_xml, 500)
+
+    def test_parse_response_parses_the_body_exactly_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The envelope-shape check and SoapEnvelope.from_xml share one parse (issue #221).
+
+        The shape check introduced for #180 built a tree, threw it away, and
+        from_xml parsed the same bytes again — doubling response-parse time
+        on large payloads. The check must stay; the second parse must not.
+        """
+        import soapbar.core.xml as xml_mod
+        from soapbar.client.client import NonSoapResponseError, SoapClient
+        from soapbar.core.binding import OperationParameter, OperationSignature
+
+        real_parse_xml = xml_mod.parse_xml
+        calls: list[int] = []
+
+        def counting_parse_xml(data: str | bytes) -> Any:
+            calls.append(len(data))
+            return real_parse_xml(data)
+
+        monkeypatch.setattr(xml_mod, "parse_xml", counting_parse_xml)
+
+        client = SoapClient.manual("http://example.com/")
+        sig = OperationSignature(
+            name="op",
+            output_params=[OperationParameter("result", xsd.resolve("int"))],  # type: ignore[arg-type]
+        )
+        resp_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><opResponse><result>7</result></opResponse></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        assert client._parse_response(sig, resp_xml, 200) == 7
+        assert len(calls) == 1, f"response body parsed {len(calls)} times, expected once"
+
+        # The shape check still rejects non-SOAP bodies, and does so after a
+        # single parse attempt as well.
+        calls.clear()
+        with pytest.raises(NonSoapResponseError):
+            client._parse_response(sig, b"<html><body>502 Bad Gateway</body></html>", 502)
+        assert len(calls) == 1
 
     @pytest.mark.parametrize(
         "body",

@@ -8,6 +8,8 @@ import warnings
 from collections.abc import Callable
 from typing import Any, Literal
 
+from lxml.etree import XMLSyntaxError as _XMLSyntaxError
+
 from soapbar.core.binding import (
     OperationSignature,
     get_serializer,
@@ -619,6 +621,19 @@ class SoapApplication:
 
         except SoapFault as exc_sf:
             caught_fault = exc_sf
+
+        except _XMLSyntaxError as exc:
+            # A body that is not well-formed XML is the client's fault, never
+            # the server's (SOAP 1.2 Part 1 §5.4.6 makes it a Sender condition).
+            # lxml's XMLSyntaxError derives from SyntaxError, not ValueError, so
+            # without this clause it fell through to the catch-all below and was
+            # answered with a Receiver fault plus a full ERROR traceback per
+            # request — a log-amplification lever any unauthenticated client
+            # could pull (issue #214). The lxml message only describes the
+            # client's own input, but the response is kept generic to match the
+            # scrubbing policy around it; the detail stays available at DEBUG.
+            _log.debug("Rejected request body that is not well-formed XML: %s", exc)
+            caught_fault = SoapFault("Client", "Request body is not well-formed XML.")
 
         except (ValueError, TypeError) as exc:
             caught_fault = SoapFault("Client", str(exc))
