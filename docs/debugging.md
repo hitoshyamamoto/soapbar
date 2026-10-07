@@ -10,8 +10,8 @@ Three loggers carry the traffic, named after their modules:
 
 | Logger | Emits |
 |---|---|
-| `soapbar.client.client` | operation dispatch, parsed results |
-| `soapbar.client.transport` | request/response envelopes, status, content type |
+| `soapbar.client.client` | operation dispatch; request and response envelopes, status, content type (logged on the client side of the transport seam, so a custom or in-process transport is covered too) |
+| `soapbar.client.transport` | transport-level events: which HTTP path was taken (httpx or the urllib fallback), MTOM/XOP response decoding |
 | `soapbar.server.application` | inbound dispatch on the server side |
 
 ```python
