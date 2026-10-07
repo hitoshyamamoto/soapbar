@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.20.3](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.2...v0.20.3) (2026-10-07)
+
+
+### Bug Fixes
+
+* **client:** honour use_mtom in call_async and stop stranding attachments ([#293](https://github.com/hitoshyamamoto/soapbar/issues/293)) ([0393d7a](https://github.com/hitoshyamamoto/soapbar/commit/0393d7a55e2629c596139500e4d7d317baa891b2))
+
 ## [0.20.2](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.1...v0.20.2) (2026-10-07)
 
 
