@@ -648,6 +648,44 @@ class SoapClient:
             "call %r: binding_style=%s soap_version=%s",
             operation, self._binding_style, self._soap_version,
         )
+        req_bytes, headers = self._build_request(sig, kwargs)
+        status, content_type, resp_body = self._transport.send(self._address, req_bytes, headers)
+        return self._parse_response(sig, resp_body, status, content_type)
+
+    async def call_async(
+        self, operation: str, *, allow_unknown: bool = False, **kwargs: Any
+    ) -> Any:
+        """Async counterpart of ``call``; same arity-based return contract.
+
+        Requires httpx. WS-Security and WS-Addressing headers are applied
+        exactly as in ``call``, and unknown operations are rejected under the
+        same rules.
+        """
+        self._check_known_operation(operation, kwargs, allow_unknown)
+        sig = self._get_sig(operation)
+        _log.debug(
+            "call_async %r: binding_style=%s soap_version=%s",
+            operation, self._binding_style, self._soap_version,
+        )
+        req_bytes, headers = self._build_request(sig, kwargs)
+        status, content_type, resp_body = await self._transport.send_async(
+            self._address, req_bytes, headers
+        )
+        return self._parse_response(sig, resp_body, status, content_type)
+
+    def _build_request(
+        self, sig: OperationSignature, kwargs: dict[str, Any]
+    ) -> tuple[bytes, dict[str, str]]:
+        """Serialize one request: the wire bytes plus the HTTP headers to send.
+
+        Shared by ``call`` and ``call_async`` so the two paths cannot drift.
+        They already had, once: ``call_async`` carried no MTOM packaging, so
+        ``use_mtom=True`` was silently ignored on the async path and the
+        queued attachment — drained only inside the block the async path
+        skipped — was smuggled onto the *next sync call*, which never asked
+        for it (issue #217). Attachments are consumed here, on every call,
+        whichever path runs.
+        """
         serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
@@ -686,56 +724,7 @@ class SoapClient:
                 soap_version_content_type=self._soap_version.content_type,
                 soap_action=sig.soap_action or "",
             )
-
-        status, content_type, resp_body = self._transport.send(self._address, req_bytes, headers)
-        return self._parse_response(sig, resp_body, status, content_type)
-
-    async def call_async(
-        self, operation: str, *, allow_unknown: bool = False, **kwargs: Any
-    ) -> Any:
-        """Async counterpart of ``call``; same arity-based return contract.
-
-        Requires httpx. WS-Security and WS-Addressing headers are applied
-        exactly as in ``call``, and unknown operations are rejected under the
-        same rules.
-        """
-        self._check_known_operation(operation, kwargs, allow_unknown)
-        sig = self._get_sig(operation)
-        _log.debug(
-            "call_async %r: binding_style=%s soap_version=%s",
-            operation, self._binding_style, self._soap_version,
-        )
-        serializer = get_serializer(self._binding_style, self._soap_version)
-
-        envelope = SoapEnvelope(version=self._soap_version)
-
-        # G09: inject WS-Security header before other headers (mirrors call())
-        if self._wss_credential is not None:
-            from soapbar.core.wssecurity import build_security_header
-            envelope.add_header(build_security_header(
-                self._wss_credential,
-                soap_ns=self._soap_version.envelope_ns,
-            ))
-
-        if self._use_wsa:
-            for hdr in self._build_wsa_headers(sig):
-                envelope.add_header(hdr)
-
-        from lxml import etree
-        body_container = etree.Element("_body")
-        serializer.serialize_request(sig, kwargs, body_container)
-        for child in body_container:
-            envelope.add_body_content(child)
-
-        req_bytes = substitute_raw_placeholders(envelope.to_bytes())
-        if _log.isEnabledFor(logging.DEBUG):
-            _log.debug("Request envelope: %s", redact_envelope(req_bytes))
-        headers = http_headers(self._soap_version, sig.soap_action)
-
-        status, content_type, resp_body = await self._transport.send_async(
-            self._address, req_bytes, headers
-        )
-        return self._parse_response(sig, resp_body, status, content_type)
+        return req_bytes, headers
 
     def _check_known_operation(
         self, operation: str, kwargs: dict[str, Any], allow_unknown: bool

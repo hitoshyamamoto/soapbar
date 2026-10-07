@@ -2104,6 +2104,64 @@ class TestSoapClientCall:
         result = await client.call_async("Add", a=3, b=4)
         assert result == 7
 
+    def _mtom_client(self) -> tuple[SoapClient, MagicMock]:
+        mock_transport = MagicMock(spec=HttpTransport)
+        mock_transport.send.return_value = (200, "text/xml", _ADD_RESPONSE_XML)
+        mock_transport.send_async = AsyncMock(
+            return_value=(200, "text/xml", _ADD_RESPONSE_XML)
+        )
+        client = SoapClient.manual(
+            "http://example.com/soap",
+            binding_style=BindingStyle.DOCUMENT_LITERAL_WRAPPED,
+            transport=mock_transport,
+            use_mtom=True,
+        )
+        client.register_operation(self._int_sig())
+        return client, mock_transport
+
+    async def test_call_async_sends_mtom_and_drains_the_queue(self) -> None:
+        """call_async honours use_mtom exactly as call does (issue #217).
+
+        Before the fix the async path had no MTOM block: with use_mtom=True
+        and a queued attachment it sent a plain text/xml body, and because
+        the queue was only drained inside the block it skipped, the
+        attachment survived to be sent on the next sync call.
+        """
+        client, transport = self._mtom_client()
+        cid = client.add_attachment(b"X" * 500, "application/octet-stream")
+
+        await client.call_async("Add", a=3, b=4)
+
+        _url, body, headers = transport.send_async.call_args[0]
+        assert headers["Content-Type"].startswith("multipart/related"), headers["Content-Type"]
+        assert b"application/xop+xml" in body
+        assert f"<{cid}>".encode() in body
+        assert b"X" * 500 in body
+        assert client._mtom_attachments == [], "attachments must be consumed by the async call"
+
+        # A second, unrelated sync call must not inherit the attachment.
+        client.call("Add", a=1, b=2)
+        _url, body2, headers2 = transport.send.call_args[0]
+        assert headers2["Content-Type"].startswith("text/xml"), headers2["Content-Type"]
+        assert b"multipart" not in body2 and b"X" * 500 not in body2
+
+    def test_call_sync_still_sends_mtom_after_refactor(self) -> None:
+        """The shared request builder keeps the sync MTOM path intact."""
+        client, transport = self._mtom_client()
+        client.add_attachment(b"Y" * 64, "image/png")
+        client.call("Add", a=3, b=4)
+        _url, body, headers = transport.send.call_args[0]
+        assert headers["Content-Type"].startswith("multipart/related")
+        assert b"Y" * 64 in body
+        assert client._mtom_attachments == []
+
+    async def test_call_async_sets_content_type_header(self) -> None:
+        """call_async sends an explicit Content-Type, like call (the second drift #217 found)."""
+        client, transport = self._mtom_client()
+        await client.call_async("Add", a=3, b=4)
+        _url, _body, headers = transport.send_async.call_args[0]
+        assert headers["Content-Type"].startswith("text/xml")
+
 
 class TestSoapClientWsaHeaders:
     """Client-side WS-Addressing header injection (use_wsa=True)."""
