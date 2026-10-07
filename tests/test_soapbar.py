@@ -7867,6 +7867,48 @@ class TestSoapClientCallCoverage:
         with pytest.raises(SoapFault):
             client._parse_response(sig, fault_xml, 500)
 
+    def test_parse_response_parses_the_body_exactly_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The envelope-shape check and SoapEnvelope.from_xml share one parse (issue #221).
+
+        The shape check introduced for #180 built a tree, threw it away, and
+        from_xml parsed the same bytes again — doubling response-parse time
+        on large payloads. The check must stay; the second parse must not.
+        """
+        import soapbar.core.xml as xml_mod
+        from soapbar.client.client import NonSoapResponseError, SoapClient
+        from soapbar.core.binding import OperationParameter, OperationSignature
+
+        real_parse_xml = xml_mod.parse_xml
+        calls: list[int] = []
+
+        def counting_parse_xml(data: str | bytes) -> Any:
+            calls.append(len(data))
+            return real_parse_xml(data)
+
+        monkeypatch.setattr(xml_mod, "parse_xml", counting_parse_xml)
+
+        client = SoapClient.manual("http://example.com/")
+        sig = OperationSignature(
+            name="op",
+            output_params=[OperationParameter("result", xsd.resolve("int"))],  # type: ignore[arg-type]
+        )
+        resp_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><opResponse><result>7</result></opResponse></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        assert client._parse_response(sig, resp_xml, 200) == 7
+        assert len(calls) == 1, f"response body parsed {len(calls)} times, expected once"
+
+        # The shape check still rejects non-SOAP bodies, and does so after a
+        # single parse attempt as well.
+        calls.clear()
+        with pytest.raises(NonSoapResponseError):
+            client._parse_response(sig, b"<html><body>502 Bad Gateway</body></html>", 502)
+        assert len(calls) == 1
+
     @pytest.mark.parametrize(
         "body",
         [

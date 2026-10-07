@@ -8,6 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from lxml.etree import _Element
+
 from soapbar.client._redaction import redact_envelope
 from soapbar.client.transport import HttpTransport
 from soapbar.core.binding import (
@@ -66,13 +68,17 @@ class NonSoapResponseError(SoapbarError):
         self.body_excerpt = excerpt
 
 
-def _is_soap_envelope(body: bytes) -> bool:
-    """True if *body* parses as XML whose root is a SOAP 1.1/1.2 Envelope.
+def _soap_envelope_root(body: bytes) -> _Element | None:
+    """Parse *body* and return its root if that root is a SOAP 1.1/1.2 Envelope.
 
-    Checked before handing the body to ``SoapEnvelope.from_xml`` so malformed
-    XML, a wrong-but-valid XML document (HTML, JSON-as-text, an empty body),
-    or any other non-SOAP payload gets a clear ``NonSoapResponseError``
-    instead of an unguarded parser exception or a misleading fault.
+    Returns ``None`` for malformed XML, a wrong-but-valid XML document (HTML,
+    JSON-as-text, an empty body), or any other non-SOAP payload, so the caller
+    can raise a clear ``NonSoapResponseError`` instead of surfacing an
+    unguarded parser exception or a misleading fault.
+
+    The parsed root is returned rather than a bool so the caller can hand it
+    straight to ``SoapEnvelope.from_xml`` — parsing a large response twice
+    doubled the client's response-parse time (issue #221).
     """
     from lxml import etree
 
@@ -81,11 +87,13 @@ def _is_soap_envelope(body: bytes) -> bool:
     try:
         root = parse_xml(body)
     except etree.XMLSyntaxError:
-        return False
-    return local_name(root) == "Envelope" and namespace_uri(root) in (
+        return None
+    if local_name(root) == "Envelope" and namespace_uri(root) in (
         NS.SOAP_ENV,
         NS.SOAP12_ENV,
-    )
+    ):
+        return root
+    return None
 
 
 _log = logging.getLogger(__name__)
@@ -768,10 +776,13 @@ class SoapClient:
         status: int,
         content_type: str = "",
     ) -> Any:
-        if not _is_soap_envelope(resp_body):
+        root = _soap_envelope_root(resp_body)
+        if root is None:
             raise NonSoapResponseError(status, content_type, resp_body)
 
-        envelope = SoapEnvelope.from_xml(resp_body)
+        # Reuse the tree the shape check already built: from_xml accepts an
+        # element and returns it unchanged through parse_xml_document.
+        envelope = SoapEnvelope.from_xml(root)
         if envelope.is_fault:
             fault = envelope.fault
             raise fault  # type: ignore[misc]
