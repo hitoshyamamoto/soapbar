@@ -5599,6 +5599,77 @@ class TestMtomCore:
         assert expected_b64.encode() in msg.soap_xml
         assert b"xop:Include" not in msg.soap_xml
 
+    # -- issue #215: XOP resolution must respect the Include's position -------
+
+    @staticmethod
+    def _resolve(body_inner: bytes, **blobs: bytes) -> etree._Element:
+        """Package *body_inner* with the given cid→bytes attachments, parse it
+        back, and return the first Body child of the resolved envelope."""
+        from soapbar.core.mtom import MtomAttachment, build_mtom, parse_mtom
+
+        soap_xml = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+            b' xmlns:xop="http://www.w3.org/2004/08/xop/include"><soapenv:Body>'
+            + body_inner
+            + b"</soapenv:Body></soapenv:Envelope>"
+        )
+        atts = [
+            MtomAttachment(content_id=cid, content_type="application/octet-stream", data=data)
+            for cid, data in blobs.items()
+        ]
+        body, ct = build_mtom(soap_xml, atts)
+        resolved = etree.fromstring(parse_mtom(body, ct).soap_xml)
+        return resolved.find(f"{{{NS.SOAP_ENV}}}Body")[0]
+
+    def test_xop_include_after_a_sibling_lands_after_it(self) -> None:
+        """<doc><kid/><Include/></doc> → the base64 follows <kid/>, not precedes it."""
+        doc = self._resolve(b'<doc><kid/><xop:Include href="cid:a"/></doc>', a=b"AAA")
+        assert doc.text in (None, "")
+        kid = doc[0]
+        assert kid.tag == "kid"
+        assert kid.tail == "QUFB"  # base64("AAA")
+
+    def test_xop_include_tail_text_is_preserved(self) -> None:
+        """<doc>lead<Include/>tail<kid/></doc> keeps 'tail' — it used to be dropped."""
+        doc = self._resolve(
+            b'<doc>lead<xop:Include href="cid:a"/>tail<kid/></doc>', a=b"AAA"
+        )
+        assert doc.text == "leadQUFBtail"
+        assert len(doc) == 1 and doc[0].tag == "kid"
+
+    def test_xop_include_tail_preserved_after_sibling(self) -> None:
+        """Tail text survives when the Include follows an element sibling too."""
+        doc = self._resolve(
+            b'<doc><kid/><xop:Include href="cid:a"/> after</doc>', a=b"AAA"
+        )
+        assert doc[0].tail == "QUFB after"
+
+    def test_two_xop_includes_in_one_element_are_rejected(self) -> None:
+        """Two Includes in one parent would merge two attachments into one text node.
+
+        base64('AAA') + base64('BBB') decodes to b'AAABBB' with no boundary
+        left, so the shape is refused (XOP §3.1 allows one optimised value per
+        element) instead of silently handing the consumer a corrupt value.
+        """
+        with pytest.raises(ValueError, match="more than one xop:Include"):
+            self._resolve(
+                b'<two><xop:Include href="cid:a"/><xop:Include href="cid:b"/></two>',
+                a=b"AAA", b=b"BBB",
+            )
+
+    def test_xop_includes_in_separate_elements_stay_distinct(self) -> None:
+        """One Include per element — the conformant shape — resolves each in place."""
+        doc = self._resolve(
+            b'<pair><x><xop:Include href="cid:a"/></x><y><xop:Include href="cid:b"/></y></pair>',
+            a=b"AAA", b=b"BBB",
+        )
+        assert [c.text for c in doc] == ["QUFB", "QkJC"]
+
+    def test_unresolvable_xop_include_is_left_in_place(self) -> None:
+        """An Include whose cid has no part is left untouched for the caller to see."""
+        doc = self._resolve(b'<doc><xop:Include href="cid:missing"/></doc>', a=b"AAA")
+        assert doc[0].tag == "{http://www.w3.org/2004/08/xop/include}Include"
+
     def test_add_attachment_and_use_mtom_client(self) -> None:
         """SoapClient.add_attachment() queues attachments; call() packages them via MTOM."""
         from unittest.mock import MagicMock
@@ -6633,10 +6704,14 @@ class TestIngressDosLimits:
 
     def _mtom_with_amplification(self, includes: int) -> tuple[bytes, str]:
         from soapbar.core.mtom import MtomAttachment, build_mtom
+        # One Include per element: XOP §3.1 optimises a single binary value
+        # per element, and since #215 a parent carrying several Includes is
+        # rejected as malformed. The amplification being probed here — one
+        # small part referenced many times — is unchanged by that shape.
         soap = (
             b'<?xml version="1.0"?>'
             b'<Env xmlns:xop="http://www.w3.org/2004/08/xop/include"><B>'
-            + b'<xop:Include href="cid:a"/>' * includes
+            + b'<p><xop:Include href="cid:a"/></p>' * includes
             + b"</B></Env>"
         )
         att = MtomAttachment(content_id="a", content_type="application/octet-stream",
