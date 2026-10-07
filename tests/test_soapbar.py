@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import io
+import logging
 import sys
 import typing
 import urllib.error
@@ -939,10 +940,53 @@ class TestServer:
         assert b"Fault" in body
 
     def test_handle_malformed_xml(self) -> None:
+        """SOAP 1.1: a body that is not XML is a *Client* fault (issue #214).
+
+        WS-I BP 1.1 R1126 keeps the HTTP status at 500 for every SOAP 1.1
+        fault, so only the faultcode distinguishes this from a server error.
+        """
         app = self._make_app()
         status, _ct, body = app.handle_request(b"not xml at all")
         assert status == 500
-        assert b"Fault" in body
+        root = etree.fromstring(body)
+        fc = root.find(f".//{{{NS.SOAP_ENV}}}Body/{{{NS.SOAP_ENV}}}Fault/faultcode")
+        assert fc is not None and (fc.text or "").endswith(":Client")
+        assert b"An internal error occurred" not in body
+
+    def test_handle_malformed_xml_soap12_is_sender_400(self) -> None:
+        """SOAP 1.2: malformed XML is env:Sender and maps to HTTP 400 (§5.4.6, [SOAP12-P2] §7.4).
+
+        Before the fix lxml's XMLSyntaxError (a SyntaxError, not a ValueError)
+        fell through to the catch-all and came back as Receiver/500.
+        """
+        app = self._make_app()
+        status, _ct, body = app.handle_request(
+            b"<nao bem formado", content_type="application/soap+xml; charset=utf-8"
+        )
+        assert status == 400
+        root = etree.fromstring(body)
+        val = root.find(
+            f".//{{{NS.SOAP12_ENV}}}Fault/{{{NS.SOAP12_ENV}}}Code/{{{NS.SOAP12_ENV}}}Value"
+        )
+        assert val is not None and (val.text or "").endswith(":Sender")
+        assert b"Receiver" not in body
+
+    def test_handle_malformed_xml_does_not_log_a_traceback(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Client-caused parse failures must not write ERROR tracebacks (issue #214).
+
+        A request-triggered ERROR record is a cheap way for an unauthenticated
+        peer to fill a log budget; the rejection is recorded at DEBUG only.
+        """
+        app = self._make_app()
+        caplog.set_level(logging.DEBUG, logger="soapbar.server.application")
+        for raw in (b"not xml at all", b"<unclosed>", b"<a><b></a>", b""):
+            app.handle_request(raw)
+        server_records = [r for r in caplog.records if r.name == "soapbar.server.application"]
+        assert server_records, "the rejection should be visible at DEBUG"
+        assert all(r.levelno < logging.WARNING for r in server_records)
+        assert all(r.exc_info is None for r in server_records)
 
     def test_soap_operation_decorator_introspection(self) -> None:
         """Decorator auto-introspects type hints."""
