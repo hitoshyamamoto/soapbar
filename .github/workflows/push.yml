@@ -37,6 +37,9 @@ jobs:
     name: Test (Python ${{ matrix.python-version }})
     needs: quality
     runs-on: ubuntu-latest
+    # A healthy matrix leg finishes in about a minute; anything past this is a
+    # hung runner, not a slow test suite.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -58,9 +61,28 @@ jobs:
         # that can pin a since-superseded version (e.g. libnss3-dev), which then
         # 404s at download time and fails the whole job. Refreshing the index
         # resolves the current versions.
+        #
+        # Bounded and retried: on 2026-10-07 several jobs sat in this step for
+        # over 30 minutes — an apt mirror that accepted the connection and then
+        # stalled, which apt waits on indefinitely by default. A stalled fetch
+        # now gives up after 30 s, apt retries it, the whole step retries up to
+        # three times, and the step itself cannot run past five minutes, so an
+        # infrastructure hiccup fails fast (and can be re-run) instead of
+        # pinning a runner for the six-hour job default.
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl pkg-config
+          apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          for attempt in 1 2 3; do
+            if sudo apt-get "${apt_opts[@]}" update \
+               && sudo apt-get "${apt_opts[@]}" install -y \
+                    libxml2-dev libxmlsec1-dev libxmlsec1-openssl pkg-config; then
+              exit 0
+            fi
+            echo "::warning::apt attempt ${attempt} failed; retrying in 15 s"
+            sleep 15
+          done
+          echo "::error::apt failed after 3 attempts"
+          exit 1
 
       - name: Install dev dependencies
         run: uv sync --group dev --group crypto-interop

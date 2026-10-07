@@ -8,6 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from lxml.etree import _Element
+
 from soapbar.client._redaction import redact_envelope
 from soapbar.client.transport import HttpTransport
 from soapbar.core.binding import (
@@ -66,13 +68,17 @@ class NonSoapResponseError(SoapbarError):
         self.body_excerpt = excerpt
 
 
-def _is_soap_envelope(body: bytes) -> bool:
-    """True if *body* parses as XML whose root is a SOAP 1.1/1.2 Envelope.
+def _soap_envelope_root(body: bytes) -> _Element | None:
+    """Parse *body* and return its root if that root is a SOAP 1.1/1.2 Envelope.
 
-    Checked before handing the body to ``SoapEnvelope.from_xml`` so malformed
-    XML, a wrong-but-valid XML document (HTML, JSON-as-text, an empty body),
-    or any other non-SOAP payload gets a clear ``NonSoapResponseError``
-    instead of an unguarded parser exception or a misleading fault.
+    Returns ``None`` for malformed XML, a wrong-but-valid XML document (HTML,
+    JSON-as-text, an empty body), or any other non-SOAP payload, so the caller
+    can raise a clear ``NonSoapResponseError`` instead of surfacing an
+    unguarded parser exception or a misleading fault.
+
+    The parsed root is returned rather than a bool so the caller can hand it
+    straight to ``SoapEnvelope.from_xml`` — parsing a large response twice
+    doubled the client's response-parse time (issue #221).
     """
     from lxml import etree
 
@@ -81,11 +87,13 @@ def _is_soap_envelope(body: bytes) -> bool:
     try:
         root = parse_xml(body)
     except etree.XMLSyntaxError:
-        return False
-    return local_name(root) == "Envelope" and namespace_uri(root) in (
+        return None
+    if local_name(root) == "Envelope" and namespace_uri(root) in (
         NS.SOAP_ENV,
         NS.SOAP12_ENV,
-    )
+    ):
+        return root
+    return None
 
 
 _log = logging.getLogger(__name__)
@@ -640,6 +648,44 @@ class SoapClient:
             "call %r: binding_style=%s soap_version=%s",
             operation, self._binding_style, self._soap_version,
         )
+        req_bytes, headers = self._build_request(sig, kwargs)
+        status, content_type, resp_body = self._transport.send(self._address, req_bytes, headers)
+        return self._parse_response(sig, resp_body, status, content_type)
+
+    async def call_async(
+        self, operation: str, *, allow_unknown: bool = False, **kwargs: Any
+    ) -> Any:
+        """Async counterpart of ``call``; same arity-based return contract.
+
+        Requires httpx. WS-Security and WS-Addressing headers are applied
+        exactly as in ``call``, and unknown operations are rejected under the
+        same rules.
+        """
+        self._check_known_operation(operation, kwargs, allow_unknown)
+        sig = self._get_sig(operation)
+        _log.debug(
+            "call_async %r: binding_style=%s soap_version=%s",
+            operation, self._binding_style, self._soap_version,
+        )
+        req_bytes, headers = self._build_request(sig, kwargs)
+        status, content_type, resp_body = await self._transport.send_async(
+            self._address, req_bytes, headers
+        )
+        return self._parse_response(sig, resp_body, status, content_type)
+
+    def _build_request(
+        self, sig: OperationSignature, kwargs: dict[str, Any]
+    ) -> tuple[bytes, dict[str, str]]:
+        """Serialize one request: the wire bytes plus the HTTP headers to send.
+
+        Shared by ``call`` and ``call_async`` so the two paths cannot drift.
+        They already had, once: ``call_async`` carried no MTOM packaging, so
+        ``use_mtom=True`` was silently ignored on the async path and the
+        queued attachment — drained only inside the block the async path
+        skipped — was smuggled onto the *next sync call*, which never asked
+        for it (issue #217). Attachments are consumed here, on every call,
+        whichever path runs.
+        """
         serializer = get_serializer(self._binding_style, self._soap_version)
 
         envelope = SoapEnvelope(version=self._soap_version)
@@ -678,56 +724,7 @@ class SoapClient:
                 soap_version_content_type=self._soap_version.content_type,
                 soap_action=sig.soap_action or "",
             )
-
-        status, content_type, resp_body = self._transport.send(self._address, req_bytes, headers)
-        return self._parse_response(sig, resp_body, status, content_type)
-
-    async def call_async(
-        self, operation: str, *, allow_unknown: bool = False, **kwargs: Any
-    ) -> Any:
-        """Async counterpart of ``call``; same arity-based return contract.
-
-        Requires httpx. WS-Security and WS-Addressing headers are applied
-        exactly as in ``call``, and unknown operations are rejected under the
-        same rules.
-        """
-        self._check_known_operation(operation, kwargs, allow_unknown)
-        sig = self._get_sig(operation)
-        _log.debug(
-            "call_async %r: binding_style=%s soap_version=%s",
-            operation, self._binding_style, self._soap_version,
-        )
-        serializer = get_serializer(self._binding_style, self._soap_version)
-
-        envelope = SoapEnvelope(version=self._soap_version)
-
-        # G09: inject WS-Security header before other headers (mirrors call())
-        if self._wss_credential is not None:
-            from soapbar.core.wssecurity import build_security_header
-            envelope.add_header(build_security_header(
-                self._wss_credential,
-                soap_ns=self._soap_version.envelope_ns,
-            ))
-
-        if self._use_wsa:
-            for hdr in self._build_wsa_headers(sig):
-                envelope.add_header(hdr)
-
-        from lxml import etree
-        body_container = etree.Element("_body")
-        serializer.serialize_request(sig, kwargs, body_container)
-        for child in body_container:
-            envelope.add_body_content(child)
-
-        req_bytes = substitute_raw_placeholders(envelope.to_bytes())
-        if _log.isEnabledFor(logging.DEBUG):
-            _log.debug("Request envelope: %s", redact_envelope(req_bytes))
-        headers = http_headers(self._soap_version, sig.soap_action)
-
-        status, content_type, resp_body = await self._transport.send_async(
-            self._address, req_bytes, headers
-        )
-        return self._parse_response(sig, resp_body, status, content_type)
+        return req_bytes, headers
 
     def _check_known_operation(
         self, operation: str, kwargs: dict[str, Any], allow_unknown: bool
@@ -768,10 +765,13 @@ class SoapClient:
         status: int,
         content_type: str = "",
     ) -> Any:
-        if not _is_soap_envelope(resp_body):
+        root = _soap_envelope_root(resp_body)
+        if root is None:
             raise NonSoapResponseError(status, content_type, resp_body)
 
-        envelope = SoapEnvelope.from_xml(resp_body)
+        # Reuse the tree the shape check already built: from_xml accepts an
+        # element and returns it unchanged through parse_xml_document.
+        envelope = SoapEnvelope.from_xml(root)
         if envelope.is_fault:
             fault = envelope.fault
             raise fault  # type: ignore[misc]

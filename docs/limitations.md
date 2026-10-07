@@ -4,7 +4,7 @@ The following features are intentionally out-of-scope for the current release.  
 
 | Area | Status | Notes |
 |------|--------|-------|
-| **MTOM/XOP** | Fully implemented | `parse_mtom` / `build_mtom` handle `multipart/related` MIME packaging and XOP Include resolution. `AsgiSoapApp` and `WsgiSoapApp` decode inbound MTOM automatically. `SoapClient` sends MTOM when `use_mtom=True`. |
+| **MTOM/XOP** | Fully implemented | `parse_mtom` / `build_mtom` handle `multipart/related` MIME packaging and XOP Include resolution. `AsgiSoapApp` and `WsgiSoapApp` decode inbound MTOM automatically. `SoapClient` sends MTOM when `use_mtom=True`, on both `call` and `call_async`. |
 | **WS-Security** | Fully implemented | `UsernameTokenCredential` / `UsernameTokenValidator` for PasswordText and PasswordDigest. `sign_envelope` / `verify_envelope` for XML-DSIG. `encrypt_body` / `decrypt_body` for XML Encryption (AES-256-GCM authenticated + RSA-OAEP). `sign_envelope_bsp` / `verify_envelope_bsp` + `build_binary_security_token` for WS-I BSP X.509 token profile (S10). All require `soapbar[security]`. |
 | **WS-Addressing** | Fully parsed + response headers generated | Inbound headers (`MessageID`, `To`, `Action`, `ReplyTo`, `FaultTo`, `ReferenceParameters`) are parsed into `WsaHeaders`. Response headers (`MessageID`, `RelatesTo`, `Action`, ReferenceParameters) are generated automatically when `use_wsa=True`. |
 | **SOAP 1.2 `relay` attribute** | Parsed and exposed on `SoapHeaderBlock` | The `relay` boolean is available on each `SoapHeaderBlock` instance. Full SOAP intermediary forwarding (actually relaying the message) is not implemented. |

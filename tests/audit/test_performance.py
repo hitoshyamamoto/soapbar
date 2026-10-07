@@ -368,3 +368,47 @@ class TestPerformanceBenchmarks:
         stats = _percentiles(times)
         _print_table("BENCH: Complex WSDL parse (20 ops, N=50)", stats)
         assert stats["p99_us"] < 100_000  # Under 100ms
+
+    def test_bench_client_response_parse_large_payload(self):
+        """Client response path: NonSoap shape check + envelope parse + deserialize.
+
+        Issue #221: the shape check added for #180 parsed the body and threw
+        the tree away, and SoapEnvelope.from_xml parsed the same bytes again —
+        a 2x regression on exactly the path that dominates large responses
+        (a few thousand rows is an ordinary SOAP payload). Nothing in this
+        suite covered the client side, so the regression was invisible to
+        CI. This benchmark puts the path under a budget; the companion unit
+        test in tests/test_soapbar.py pins the parse count to one.
+        """
+        from soapbar.client.client import SoapClient
+
+        rows = "".join(
+            f"<row><id>{i}</id><name>row-{i}</name><value>{i * 3.5:.2f}</value></row>"
+            for i in range(3000)
+        )
+        resp_body = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b'<soapenv:Body><addResponse xmlns="http://example.com/calc">'
+            b"<result>42</result>" + rows.encode()
+            + b"</addResponse></soapenv:Body></soapenv:Envelope>"
+        )
+        assert len(resp_body) > 150_000  # a genuinely large document, ~170 KiB
+
+        client = SoapClient.manual("http://example.com/calc")
+        sig = _make_sig()
+
+        times: list[float] = []
+        for _ in range(50):
+            t0 = time.perf_counter_ns()
+            result = client._parse_response(sig, resp_body, 200)
+            times.append(time.perf_counter_ns() - t0)
+        assert result == 42
+
+        stats = _percentiles(times)
+        _print_table("BENCH: client response parse (~170 KiB, N=50)", stats)
+        # A single hardened parse of this document takes a few ms; the budget
+        # leaves ample headroom for CI noise while still catching a 2x regression
+        # of the kind #221 described.
+        assert stats["p99_us"] < 100_000, (
+            f"Client response parse p99 too slow: {stats['p99_us']:.0f} µs"
+        )
