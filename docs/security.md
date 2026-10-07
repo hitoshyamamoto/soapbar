@@ -86,9 +86,9 @@ assert which workflow in which repository you expect:
 
 ```bash
 # Download the artifact and verify it was built by this repo's release workflow
-gh release download v0.15.3 --repo hitoshyamamoto/soapbar --pattern '*.whl'
+gh release download v0.20.0 --repo hitoshyamamoto/soapbar --pattern '*.whl'
 
-gh attestation verify soapbar-0.15.3-py3-none-any.whl \
+gh attestation verify soapbar-0.20.0-py3-none-any.whl \
     --repo hitoshyamamoto/soapbar \
     --signer-workflow hitoshyamamoto/soapbar/.github/workflows/release.yml
 ```

@@ -1077,13 +1077,38 @@ class TestEdgeCasesAndRobustness:
         assert status == 200
 
     def test_malformed_xml_returns_fault(self):
-        """Malformed XML MUST NOT crash the server — returns a SOAP Fault."""
+        """Malformed XML MUST NOT crash the server — it is a *Client* fault.
+
+        SOAP 1.1 §4.4: the request was not understood because of its content,
+        which is the Client faultcode. WS-I BP 1.1 R1126 keeps HTTP 500 for
+        every SOAP 1.1 fault, so the code — not the status — carries the
+        distinction (issue #214: it used to come back as a Server fault).
+        """
         app, _ = _make_app()
         status, _ct, body = app.handle_request(b"<unclosed>")
-        assert status in (400, 500), "Malformed XML must return 4xx or 5xx"
-        # Body must still be valid XML containing an Envelope
+        assert status == 500, "SOAP 1.1 faults stay HTTP 500 (WS-I BP 1.1 R1126)"
         root = _parse(body)
         assert local_name(root) == "Envelope"
+        fc = root.find(f".//{{{SOAP11_ENV}}}Fault/faultcode")
+        assert fc is not None and (fc.text or "").endswith(":Client")
+
+    def test_malformed_xml_soap12_is_sender_400(self):
+        """SOAP 1.2 §5.4.6: a message that cannot be parsed is an env:Sender fault.
+
+        [SOAP12-P2] §7.4 maps env:Sender to HTTP 400. Issue #214: lxml's
+        XMLSyntaxError is a SyntaxError, not a ValueError, so it bypassed the
+        Client-fault handler and surfaced as env:Receiver / 500.
+        """
+        app, _ = _make_app()
+        status, _ct, body = app.handle_request(
+            b"<unclosed>", content_type="application/soap+xml; charset=utf-8"
+        )
+        assert status == 400
+        root = _parse(body)
+        val = root.find(
+            f".//{{{SOAP12_ENV}}}Fault/{{{SOAP12_ENV}}}Code/{{{SOAP12_ENV}}}Value"
+        )
+        assert val is not None and (val.text or "").endswith(":Sender")
 
     def test_empty_soap_body(self):
         """Empty Body is structurally valid — application may return Client fault."""
