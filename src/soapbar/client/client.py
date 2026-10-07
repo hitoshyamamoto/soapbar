@@ -650,6 +650,7 @@ class SoapClient:
         )
         req_bytes, headers = self._build_request(sig, kwargs)
         status, content_type, resp_body = self._transport.send(self._address, req_bytes, headers)
+        self._log_response(status, content_type, resp_body)
         return self._parse_response(sig, resp_body, status, content_type)
 
     async def call_async(
@@ -671,6 +672,7 @@ class SoapClient:
         status, content_type, resp_body = await self._transport.send_async(
             self._address, req_bytes, headers
         )
+        self._log_response(status, content_type, resp_body)
         return self._parse_response(sig, resp_body, status, content_type)
 
     def _build_request(
@@ -725,6 +727,25 @@ class SoapClient:
                 soap_action=sig.soap_action or "",
             )
         return req_bytes, headers
+
+    @staticmethod
+    def _log_response(status: int, content_type: str, body: bytes) -> None:
+        """DEBUG-log one response, redacted, from the client side of the seam.
+
+        Response logging used to live in the four httpx/urllib call sites of
+        ``HttpTransport``. A caller-supplied transport — a test double, or the
+        in-process ``InlineTransport`` pattern from docs/testing.md — overrides
+        ``send()`` wholesale, so those sites never ran and only the request
+        half of the exchange was logged (issue #222). Logging here, right after
+        ``send``/``send_async`` return, covers every transport. The transport
+        keeps only what is transport-specific: which path it took and whether
+        an MTOM response was decoded.
+        """
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug(
+                "Response status=%s content-type=%s body=%s",
+                status, content_type, redact_envelope(body),
+            )
 
     def _check_known_operation(
         self, operation: str, kwargs: dict[str, Any], allow_unknown: bool

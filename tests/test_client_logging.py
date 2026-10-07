@@ -79,6 +79,92 @@ class TestDebugLoggingIsOptIn:
         assert any("Request envelope" in m for m in messages)
 
 
+class TestResponseLoggingCoversAnyTransport:
+    """The response half of the exchange is logged for *every* transport (issue #222).
+
+    Response logging used to live in the httpx/urllib call sites inside
+    ``HttpTransport``. A caller-supplied transport overrides ``send()``
+    wholesale — the stub above, the ``InlineTransport`` pattern in
+    docs/testing.md, every ``tests/test_contrib_*`` double — so those sites
+    never ran and a DEBUG log showed the request and no response at all.
+    """
+
+    def test_custom_sync_transport_logs_the_response(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger=CLIENT_LOGGER)
+        _make_client().call("op", Senha="x")
+        messages = [r.getMessage() for r in caplog.records if r.name == CLIENT_LOGGER]
+        responses = [m for m in messages if m.startswith("Response status=200")]
+        assert len(responses) == 1, messages
+        assert "content-type=text/xml" in responses[0]
+        assert "<result>7</result>" in responses[0]
+
+    async def test_custom_async_transport_logs_the_response(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class _AsyncStub(_StubTransport):
+            async def send_async(
+                self, url: str, body: bytes, headers: dict[str, str]
+            ) -> tuple[int, str, bytes]:
+                return 200, self._content_type, self._response
+
+        caplog.set_level(logging.DEBUG, logger=CLIENT_LOGGER)
+        string_type = xsd.resolve("string")
+        assert string_type is not None
+        client = SoapClient.manual("https://example.com/soap", transport=_AsyncStub())
+        client.register_operation(
+            OperationSignature(
+                name="op",
+                output_params=[OperationParameter("result", string_type, required=False)],
+            )
+        )
+        await client.call_async("op")
+        messages = [r.getMessage() for r in caplog.records if r.name == CLIENT_LOGGER]
+        assert any(m.startswith("Response status=200") for m in messages), messages
+
+    def test_response_credentials_are_redacted_on_the_client_path(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Moving the log site must not bypass redaction: a secret in the
+        response body is still scrubbed before it reaches the record."""
+        leaking = (
+            b'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">'
+            b"<soapenv:Body><opResponse><result>ok</result>"
+            b"<Senha>" + PASSWORD.encode() + b"</Senha></opResponse></soapenv:Body>"
+            b"</soapenv:Envelope>"
+        )
+        caplog.set_level(logging.DEBUG, logger=CLIENT_LOGGER)
+        string_type = xsd.resolve("string")
+        assert string_type is not None
+        client = SoapClient.manual(
+            "https://example.com/soap", transport=_StubTransport(response=leaking)
+        )
+        client.register_operation(
+            OperationSignature(
+                name="op",
+                output_params=[OperationParameter("result", string_type, required=False)],
+            )
+        )
+        client.call("op")
+        blob = "\n".join(r.getMessage() for r in caplog.records)
+        assert "Response status=200" in blob
+        assert PASSWORD not in blob
+        assert "redacted by soapbar" in blob
+
+    def test_transport_no_longer_logs_response_bodies(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The transport keeps only transport-specific records (path taken,
+        MTOM decode); the envelope itself is logged once, by the client."""
+        caplog.set_level(logging.DEBUG)
+        _make_client().call("op", Senha="x")
+        transport_msgs = [r.getMessage() for r in caplog.records if r.name == TRANSPORT_LOGGER]
+        assert not any(m.startswith("Response status=") for m in transport_msgs)
+        client_msgs = [r.getMessage() for r in caplog.records if r.name == CLIENT_LOGGER]
+        assert sum(m.startswith("Response status=") for m in client_msgs) == 1
+
+
 class TestCredentialsAreRedacted:
     def test_wsse_password_absent_from_log(
         self, caplog: pytest.LogCaptureFixture

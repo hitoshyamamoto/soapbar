@@ -27,8 +27,8 @@ result = client.service.Add(a=3, b=4)
 
 **Seeing the raw XML.** zeep's `HistoryPlugin` has no direct equivalent;
 soapbar logs full request and response envelopes at `DEBUG` on the
-`soapbar.client.client` and `soapbar.client.transport` loggers, with
-credentials redacted before they reach the log record:
+`soapbar.client.client` logger, with credentials redacted before they reach
+the log record:
 
 ```python
 import logging
