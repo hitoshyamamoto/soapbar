@@ -1,0 +1,53 @@
+name: Dependabot — auto-merge
+
+# Arms squash auto-merge on every Dependabot pull request, so a bump lands as
+# soon as the ruleset's eight required checks pass instead of waiting for a
+# human to click. Nothing is merged early: auto-merge is GitHub's own gate and
+# the branch ruleset (required checks, up-to-date branch, no bypass actors)
+# still applies in full.
+#
+# Why this exists: with `strict` up-to-date checks, every merge to main puts
+# the remaining Dependabot PRs behind; Dependabot rebases them, but if nobody
+# merges promptly the weekly run supersedes them (#279–#283 were closed unmerged
+# for exactly that reason). Arming auto-merge turns the backlog into a chain
+# that drains itself.
+#
+# Why `pull_request_target` and the release bot's App token:
+# - Workflows triggered by Dependabot on `pull_request` run with a read-only
+#   token and see no repository secrets, so the App key would be unavailable.
+#   `pull_request_target` runs in the base-branch context with secrets. This is
+#   safe here because the job checks out nothing and executes nothing from the
+#   PR — it only calls the GitHub API about the PR.
+# - A merge performed under the workflow's own GITHUB_TOKEN does not trigger
+#   other workflows, so `main` would get no CI — Push, docs or Scorecard run
+#   for the merge commit. Enabling auto-merge with the App token (the same one
+#   release-please.yml uses for the release PR) attributes the merge to the App
+#   and the push workflows fire as usual.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  enable-auto-merge:
+    name: Enable auto-merge
+    # Only Dependabot's own PRs; the App id variable doubles as the switch —
+    # unset it and this workflow is a no-op.
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && vars.RELEASE_BOT_APP_ID != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Enable squash auto-merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr merge --auto --squash "${PR}" --repo "${GITHUB_REPOSITORY}"
