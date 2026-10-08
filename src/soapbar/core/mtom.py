@@ -17,6 +17,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from lxml.etree import _Element
+
 from soapbar.core.namespaces import NS
 
 
@@ -145,34 +147,72 @@ def _resolve_xop_includes(
     many ``<xop:Include>`` elements, the resolved document can be orders of
     magnitude larger than the raw body. Exceeding the bound raises
     ``BodyTooLargeError``.
+
+    The base64 text lands exactly where the ``<xop:Include>`` stood, and the
+    element's tail text is preserved — an earlier version appended the data to
+    the parent's leading text and let lxml's ``remove()`` discard the tail,
+    which reordered or silently dropped content whenever the Include had
+    siblings or mixed content around it (issue #215).
+
+    :raises ValueError: if one element carries more than one resolvable
+        ``<xop:Include>``. XOP §3.1 optimises exactly one base64Binary value
+        per element, so two Includes in the same parent have no well-defined
+        meaning — and once both were inlined as adjacent text there would be no
+        way left to tell where one attachment ended and the next began.
     """
     from lxml import etree
 
-    from soapbar.core.xml import BodyTooLargeError, parse_xml
+    from soapbar.core.xml import BodyTooLargeError, local_name, parse_xml
 
     root = parse_xml(xml_bytes)
     xop_include_tag = f"{{{NS.XOP}}}Include"
 
-    inlined_total = 0
-    for elem in root.iter(xop_include_tag):
-        href = elem.get("href", "")
-        cid = href[4:] if href.startswith("cid:") else href
+    def _cid(include: _Element) -> str:
+        href = include.get("href", "")
+        return href[4:] if href.startswith("cid:") else href
 
-        idx = attachment_map.get(cid)
-        if idx is not None:
-            data = attachments[idx].data
-            encoded = base64.b64encode(data).decode()
-            if max_resolved_size is not None:
-                inlined_total += len(encoded)
-                if inlined_total > max_resolved_size:
-                    raise BodyTooLargeError(
-                        f"MTOM/XOP-resolved body exceeds the size limit "
-                        f"({max_resolved_size} bytes); possible XOP amplification."
-                    )
-            parent = elem.getparent()
-            if parent is not None:
-                parent.remove(elem)
-                parent.text = (parent.text or "") + encoded
+    # Snapshot first: the tree is mutated while the Includes are replaced.
+    includes = [e for e in root.iter(xop_include_tag) if _cid(e) in attachment_map]
+
+    # Bound the resolved volume before allocating any of it: base64 of n bytes
+    # is 4*ceil(n/3) characters, so the amplification check needs arithmetic
+    # only. This runs ahead of the structural check below on purpose — a
+    # hostile message must be refused for its size before anything else.
+    if max_resolved_size is not None:
+        inlined_total = 0
+        for elem in includes:
+            n = len(attachments[attachment_map[_cid(elem)]].data)
+            inlined_total += 4 * ((n + 2) // 3)
+            if inlined_total > max_resolved_size:
+                raise BodyTooLargeError(
+                    f"MTOM/XOP-resolved body exceeds the size limit "
+                    f"({max_resolved_size} bytes); possible XOP amplification."
+                )
+
+    for elem in includes:
+        parent = elem.getparent()
+        if parent is None:
+            continue
+        if sum(1 for c in parent if c.tag == xop_include_tag and _cid(c) in attachment_map) > 1:
+            raise ValueError(
+                f"Element <{local_name(parent)}> carries more than one xop:Include; "
+                f"XOP §3.1 allows a single optimised binary value per element, and "
+                f"inlining both would merge the attachments into one indistinguishable "
+                f"text node."
+            )
+
+        encoded = base64.b64encode(attachments[attachment_map[_cid(elem)]].data).decode()
+
+        # Replace in place: the decoded text takes the Include's position and
+        # keeps the Include's tail. In lxml a removed element takes its tail
+        # with it, so the tail is re-attached explicitly.
+        tail = elem.tail or ""
+        prev = elem.getprevious()
+        parent.remove(elem)
+        if prev is not None:
+            prev.tail = (prev.tail or "") + encoded + tail
+        else:
+            parent.text = (parent.text or "") + encoded + tail
 
     return etree.tostring(root, xml_declaration=True, encoding="utf-8")
 
