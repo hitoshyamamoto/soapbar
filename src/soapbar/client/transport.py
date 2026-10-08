@@ -10,7 +10,28 @@ from collections.abc import Callable
 from typing import Any, Union
 from urllib.parse import urlparse
 
+from soapbar.core.exceptions import SoapbarError
+
 _log = logging.getLogger(__name__)
+
+
+class WsdlFetchError(SoapbarError):
+    """A WSDL retrieval (``HttpTransport.fetch``) answered with a non-2xx status.
+
+    Raised on both the httpx and the urllib path, so one ``except`` covers a
+    failed fetch regardless of which HTTP stack is installed — previously the
+    same 404 surfaced as ``httpx.HTTPStatusError`` on one and
+    ``urllib.error.HTTPError`` on the other (issue #219). The library's own
+    exception is chained as ``__cause__``. Subclasses ``SoapbarError`` like
+    every other failure soapbar raises deliberately.
+    """
+
+    def __init__(self, url: str, status: int) -> None:
+        super().__init__(f"WSDL fetch failed: HTTP {status} for {url}")
+        self.url = url
+        """The URL that was requested."""
+        self.status = status
+        """The HTTP status code the server answered with."""
 
 # A client certificate may be given as httpx-native file paths (a single
 # combined PEM, or a ``(certfile, keyfile)`` / ``(certfile, keyfile, password)``
@@ -336,21 +357,31 @@ class HttpTransport:
         return resp.status_code, ct, content
 
     def fetch(self, url: str) -> bytes:
-        """GET request for WSDL retrieval."""
+        """GET request for WSDL retrieval.
+
+        :raises WsdlFetchError: for any non-2xx response, on both the httpx
+            and the urllib path, with the stack's own exception as the cause.
+        """
         _require_http_url(url)
         try:
-            import httpx  # noqa: F401
+            import httpx
         except ImportError:
             if self._mtls_requested():
                 raise RuntimeError(
                     "Client certificate / custom CA bundle require httpx. "
                     "Install soapbar[client]."
                 ) from None
-            with urllib.request.urlopen(url, timeout=self.timeout) as resp:  # noqa: S310 — scheme restricted to http(s) by _require_http_url
-                return bytes(resp.read())
+            try:
+                with urllib.request.urlopen(url, timeout=self.timeout) as resp:  # noqa: S310 — scheme restricted to http(s) by _require_http_url
+                    return bytes(resp.read())
+            except urllib.error.HTTPError as exc:
+                raise WsdlFetchError(url, exc.code) from exc
         client = self._get_httpx_client()
         resp = client.get(url)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise WsdlFetchError(url, resp.status_code) from exc
         return bytes(resp.content)
 
 

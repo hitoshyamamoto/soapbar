@@ -13,6 +13,7 @@ import pytest
 
 from soapbar import SoapbarError, SoapFault
 from soapbar.client.client import NonSoapResponseError
+from soapbar.client.transport import WsdlFetchError
 from soapbar.core.wssecurity import SecurityValidationError, XmlSecurityError
 from soapbar.core.xml import BodyTooLargeError
 
@@ -23,6 +24,7 @@ CORE_ERRORS = [
     SecurityValidationError,
     BodyTooLargeError,
     NonSoapResponseError,
+    WsdlFetchError,
 ]
 
 

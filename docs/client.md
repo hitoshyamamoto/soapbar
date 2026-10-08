@@ -133,6 +133,38 @@ For quick debugging, `transport.last_request` / `transport.last_response`
 mirror the most recent exchange — per-transport state, not thread-safe; use
 the callback for anything concurrent or durable.
 
+## Errors a call can raise
+
+Everything soapbar raises deliberately derives from `SoapbarError`, so one
+`except SoapbarError` catches any library-originated failure. The specific
+types worth distinguishing on the client side:
+
+| Exception | When |
+|---|---|
+| `SoapFault` | The peer answered with a SOAP Fault. `faultcode`, `faultstring` and `detail` carry what it said. |
+| `NonSoapResponseError` | The response is not a SOAP envelope at all — a proxy's HTML error page, an auth challenge, a gateway's JSON error, an empty body. Carries the HTTP `status`, the `content_type` and a truncated `body_excerpt`; read the excerpt first, it usually names the real problem. |
+| `WsdlFetchError` | WSDL retrieval (`SoapClient(wsdl_url=...)`, `HttpTransport.fetch`) answered with a non-2xx status. Raised on both the httpx and the urllib path, with the stack's own exception as `__cause__`, and carries `url` and `status`. |
+| `BodyTooLargeError` | A response's XOP-resolved size crossed `max_response_size`, or a remote WSDL import exceeded its 10 MB read ceiling. Also a `ValueError`. |
+| `ValueError` | Calling an operation the client does not know (keyword arguments would be silently dropped otherwise — pass `allow_unknown=True` to send a bare request deliberately), a URL with a scheme other than `http`/`https`, or a remote/local import the parser was not allowed to follow. |
+
+Transport-level failures that are not HTTP responses — DNS, connection refused,
+TLS handshake, timeouts — propagate from the HTTP stack unchanged
+(`httpx.ConnectError`, `httpx.ReadTimeout`, `urllib.error.URLError`).
+Diagnosing them is covered in the [debugging guide](debugging.md).
+
+```python
+from soapbar import SoapbarError, SoapClient, SoapFault, NonSoapResponseError
+
+try:
+    result = client.service.Add(a=3, b=5)
+except SoapFault as fault:
+    ...                         # the service said no: fault.faultcode / faultstring
+except NonSoapResponseError as err:
+    ...                         # something between you and the service answered: err.status, err.body_excerpt
+except SoapbarError:
+    ...                         # anything else soapbar raised on purpose
+```
+
 ## Advanced: manual client with explicit operation signature
 
 Use `register_operation` when you need full control over the operation schema without a WSDL:
