@@ -6,6 +6,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.21.0](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.5...v0.21.0) (2026-10-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **client:** raise WsdlFetchError for failed WSDL fetches and bound import reads ([#304](https://github.com/hitoshyamamoto/soapbar/issues/304))
+
+### Features
+
+* **client:** raise WsdlFetchError for failed WSDL fetches and bound import reads ([#304](https://github.com/hitoshyamamoto/soapbar/issues/304)) ([4702773](https://github.com/hitoshyamamoto/soapbar/commit/470277327125594961c948dbbfaf9435faa1a282))
+
 ## [0.20.5](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.4...v0.20.5) (2026-10-08)
 
 
