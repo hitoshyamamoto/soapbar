@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.20.5](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.4...v0.20.5) (2026-10-08)
+
+
+### Bug Fixes
+
+* **mtom:** resolve xop:Include in place and keep its tail text ([#294](https://github.com/hitoshyamamoto/soapbar/issues/294)) ([b265787](https://github.com/hitoshyamamoto/soapbar/commit/b265787297dc2354dd91ad292e963a67ee963c37))
+
 ## [0.20.4](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.3...v0.20.4) (2026-10-07)
 
 
