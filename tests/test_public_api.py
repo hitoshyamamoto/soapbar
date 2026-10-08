@@ -104,6 +104,7 @@ EXPECTED_ALL = {
     "HttpTransport",
     "SoapClient",
     "NonSoapResponseError",
+    "WsdlFetchError",
     "load_pkcs12",
 }
 

@@ -14,7 +14,7 @@ except Exception:
 from soapbar.client.client import NonSoapResponseError, SoapClient
 
 # Client
-from soapbar.client.transport import HttpTransport, load_pkcs12
+from soapbar.client.transport import HttpTransport, WsdlFetchError, load_pkcs12
 from soapbar.core.binding import (
     BindingStyle,
     OperationParameter,
@@ -165,6 +165,7 @@ __all__ = [  # noqa: RUF022
     "HttpTransport",
     "SoapClient",
     "NonSoapResponseError",
+    "WsdlFetchError",
     "load_pkcs12",
 ]
 

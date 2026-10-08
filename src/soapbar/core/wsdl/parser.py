@@ -87,12 +87,39 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 _no_redirect_opener = urllib.request.build_opener(_NoRedirectHandler)
 
 
+# Ceiling on the body of a remote import. The SSRF guard decides *whether* a
+# fetch happens; this bounds what is read once it does, so an authorised import
+# host cannot stream unboundedly into memory (issue #219). Mirrors the 10 MB
+# ``SoapApplication.max_body_size`` / ``HttpTransport.max_response_size``.
+_IMPORT_FETCH_MAX_BYTES = 10 * 1024 * 1024
+_IMPORT_FETCH_CHUNK = 64 * 1024
+
+
 def _fetch_wsdl_source(location: str) -> bytes:
     if location.startswith(("http://", "https://")):
+        from soapbar.core.xml import BodyTooLargeError
+
         with _no_redirect_opener.open(
             location, timeout=_IMPORT_FETCH_TIMEOUT
         ) as resp:
-            return resp.read()  # type: ignore[no-any-return]
+            # Read in chunks and stop at the ceiling: a Content-Length cannot
+            # be trusted (or may be absent under chunked encoding), so the
+            # bound is enforced on the bytes actually received, before they
+            # are joined into one document.
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                chunk = resp.read(_IMPORT_FETCH_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _IMPORT_FETCH_MAX_BYTES:
+                    raise BodyTooLargeError(
+                        f"Remote import {location!r} exceeds the size limit "
+                        f"({_IMPORT_FETCH_MAX_BYTES} bytes)."
+                    )
+                chunks.append(chunk)
+            return b"".join(chunks)
     if location.startswith("file://"):
         return Path(url2pathname(urlparse(location).path)).read_bytes()
     return Path(location).read_bytes()
