@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.20.4](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.3...v0.20.4) (2026-10-07)
+
+
+### Bug Fixes
+
+* **client:** log the response for caller-supplied transports too ([#295](https://github.com/hitoshyamamoto/soapbar/issues/295)) ([29eb79f](https://github.com/hitoshyamamoto/soapbar/commit/29eb79f7facce68a0075af3cb33eec2d12b42666))
+
 ## [0.20.3](https://github.com/hitoshyamamoto/soapbar/compare/v0.20.2...v0.20.3) (2026-10-07)
 
 

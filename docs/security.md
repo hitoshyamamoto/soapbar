@@ -35,9 +35,9 @@ Additional hardening:
 
 ## Client DEBUG logging and credentials
 
-`soapbar.client.client` and `soapbar.client.transport` emit request and response
-envelopes at `DEBUG`. Nothing is logged unless you opt in, and the envelopes are
-redacted before they reach a log record:
+`soapbar.client.client` emits request and response envelopes at `DEBUG`
+(`soapbar.client.transport` logs only transport-level events). Nothing is logged
+unless you opt in, and the envelopes are redacted before they reach a log record:
 
 - `wsse:Security` header blocks are emptied, so a `UsernameToken` password never
   appears.
