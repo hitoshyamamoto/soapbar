@@ -92,7 +92,7 @@ def test_wsdl_fetch_error_is_a_soapbar_error() -> None:
     err = WsdlFetchError("http://example.com/x?wsdl", 503)
     assert err.url == "http://example.com/x?wsdl"
     assert err.status == 503
-    assert "503" in str(err) and "example.com" in str(err)
+    assert str(err) == "WSDL fetch failed: HTTP 503 for http://example.com/x?wsdl"
 
 
 def test_fetch_404_on_the_urllib_path(

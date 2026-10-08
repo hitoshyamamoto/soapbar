@@ -543,8 +543,16 @@ class TestWsdl11Compliance:
         </definitions>"""
 
         class _FakeResp:
-            def read(self) -> bytes:
-                return fake_wsdl
+            # Models http.client.HTTPResponse.read(size): the parser reads
+            # remote imports in bounded chunks and stops at EOF (b"").
+            def __init__(self) -> None:
+                self._remaining = fake_wsdl
+            def read(self, size: int = -1) -> bytes:
+                if size is None or size < 0:
+                    chunk, self._remaining = self._remaining, b""
+                else:
+                    chunk, self._remaining = self._remaining[:size], self._remaining[size:]
+                return chunk
             def __enter__(self) -> _FakeResp:
                 return self
             def __exit__(self, *_: object) -> None:
